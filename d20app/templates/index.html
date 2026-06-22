@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kevin's Cat App — D20 Treat Roller</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>🎲🐱 Kevin's Cat App</h1>
+      <p class="tag">Roll a die when a person enters the kitchen — on a good roll, the speaker plays a chime: time for a treat!</p>
+    </header>
+
+    <section id="status-bar" class="card status">
+      <span id="status-dot" class="dot stopped"></span>
+      <span id="status-text">Stopped</span>
+      <span id="status-detail" class="muted"></span>
+    </section>
+
+    <section class="card">
+      <h2>1. Camera <span class="muted">(where to watch for a person)</span></h2>
+      <div class="row">
+        <select id="camera-select"></select>
+        <button id="camera-refresh" class="ghost" type="button">↻ Detect</button>
+      </div>
+      <details>
+        <summary>Camera not listed? Enter it manually</summary>
+        <label>Stream URL (RTSP/HTTP)
+          <input id="camera_url" type="text" placeholder="rtsp://192.168.1.50:554/stream1" />
+        </label>
+        <div class="row">
+          <label>Username <input id="camera_username" type="text" autocomplete="off" /></label>
+          <label>Password <input id="camera_password" type="password" autocomplete="off" placeholder="(unchanged)" /></label>
+        </div>
+        <p class="help">
+          <strong>How to find this:</strong> open your camera's app or its web page to find the
+          <em>RTSP URL</em> (often <code>rtsp://&lt;camera-ip&gt;:554/...</code>). The camera IP is in
+          your router's device list or the camera app. Auto-detect uses ONVIF — if your camera isn't
+          ONVIF or needs a login, type the URL and credentials here.
+        </p>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>2. Speaker <span class="muted">(where the chime plays)</span></h2>
+      <div class="row">
+        <select id="speaker-select"></select>
+        <button id="speaker-refresh" class="ghost" type="button">↻ Detect</button>
+        <button id="test-btn" class="primary" type="button">▶ Test sound</button>
+      </div>
+      <p id="speaker-warn" class="warn hidden"></p>
+      <p class="help">
+        Speakers are found automatically over WiFi (Google Cast — no account or login needed).
+        <strong>Both this device and the speaker must be on the same WiFi network.</strong>
+        The name shown matches the name in your Google Home app. Nothing here changes your speaker
+        permanently; the chime briefly interrupts playback and volume is restored afterward.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>3. Sound</h2>
+      <div class="row">
+        <select id="sound-select"></select>
+        <label class="upload ghost">
+          ⬆ Upload
+          <input id="sound-upload" type="file" accept=".wav,.mp3,.ogg,.m4a,.aac" hidden />
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4. Game rules</h2>
+      <div class="grid">
+        <label>Dice size (sides)
+          <input id="dice_sides" type="number" min="2" max="1000" />
+          <span class="hint">e.g. 20 = D20, 100 = D100</span>
+        </label>
+        <label>DC — treat on roll ≥
+          <input id="dc" type="number" min="1" max="1000" />
+          <span class="hint">e.g. DC18 on a D20 = treat on 18+</span>
+        </label>
+        <label>Frequency interval (seconds)
+          <input id="cooldown_seconds" type="number" min="0" max="86400" />
+          <span class="hint">minimum time between rolls</span>
+        </label>
+        <label>Person confidence (0–1)
+          <input id="person_confidence" type="number" min="0.1" max="1" step="0.05" />
+          <span class="hint">higher = fewer false triggers</span>
+        </label>
+      </div>
+      <label class="checkbox">
+        <input id="dont_interrupt_playback" type="checkbox" />
+        Don't interrupt the speaker if music is already playing
+      </label>
+    </section>
+
+    <section class="actions">
+      <button id="save-btn" class="primary" type="button">Save settings</button>
+      <button id="start-btn" class="go" type="button">Start watching</button>
+      <button id="stop-btn" class="stop" type="button" disabled>Stop</button>
+      <span id="save-note" class="muted"></span>
+    </section>
+
+    <footer>
+      <p class="muted">Odds of a treat each roll: <span id="odds">—</span>. See the README for autostart on OpenMediaVault and troubleshooting.</p>
+    </footer>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
