@@ -12,6 +12,14 @@ camera, speaker, sound, and game rules, and to Start/Stop detection.
 from __future__ import annotations
 
 import logging
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit(
+        "Kevin's Cat App requires Python 3.11+ (its dependencies do). "
+        f"You're running {sys.version.split()[0]}. "
+        "Run it via the venv created by setup.sh: ./venv/bin/python run.py"
+    )
 
 from d20app import config as config_mod
 from d20app.caster import detect_lan_ip

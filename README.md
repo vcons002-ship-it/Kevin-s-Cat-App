@@ -12,6 +12,16 @@ from a simple web page.
 
 ---
 
+## Requirements
+
+- **Python 3.11 or newer.** OpenMediaVault 7 (Debian 12) ships this already.
+  (On older OMV 6 / Debian 11 you'd need to install a newer Python first; the
+  setup script checks this and tells you.)
+- On a minimal Debian you may need two system packages once:
+  `sudo apt install python3-venv python3-pip`. If OpenCV later complains about a
+  missing library, also `sudo apt install libglib2.0-0`.
+- This computer and your Google Home + camera must be on the **same WiFi/subnet**.
+
 ## Quick start
 
 ```bash
