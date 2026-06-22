@@ -15,11 +15,12 @@ from a simple web page.
 ## Requirements
 
 - **Python 3.11 or newer.** OpenMediaVault 7 (Debian 12) ships this already.
-  (On older OMV 6 / Debian 11 you'd need to install a newer Python first; the
-  setup script checks this and tells you.)
-- On a minimal Debian you may need two system packages once:
-  `sudo apt install python3-venv python3-pip`. If OpenCV later complains about a
-  missing library, also `sudo apt install libglib2.0-0`.
+  (On older OMV 6 / Debian 11 you'd need a newer Python first — `setup.sh`
+  checks the version and tells you exactly what to do if it's too old.)
+- **`python3-venv` / `python3-pip`.** On a minimal Debian these may be missing;
+  if so, `setup.sh` detects it and **offers to install them for you (just answer
+  `Y`)**. If OpenCV ever complains about a missing library, run
+  `sudo apt install libglib2.0-0`.
 - This computer and your Google Home + camera must be on the **same WiFi/subnet**.
 
 ## Quick start
@@ -43,6 +44,12 @@ the **same WiFi**, then:
 4. **Game rules** — set the dice size, the DC (how high you must roll to win a
    treat), and how often it's allowed to roll.
 5. Press **Start watching**. Done!
+
+> **Keep it running:** `run.py` stays running in your terminal until you press
+> `Ctrl+C` (the camera-watching loop runs inside it; Start/Stop is in the GUI).
+> If you launched it over SSH, closing the session stops it. To keep it running
+> all the time and restart on boot, set up the
+> [systemd service](#run-it-automatically-on-boot-openmediavault--systemd) below.
 
 ---
 
@@ -114,7 +121,10 @@ interest, ports, etc.).
 
 ## Run it automatically on boot (OpenMediaVault / systemd)
 
-Optional. Create `/etc/systemd/system/kevins-cat-app.service`:
+Optional, but recommended for an always-on setup. Create
+`/etc/systemd/system/kevins-cat-app.service` — **replace both
+`/path/to/Kevin-s-Cat-App` with the real folder path** (run `pwd` inside it to
+get it):
 
 ```ini
 [Unit]
@@ -131,13 +141,15 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-Then:
+Then enable and start it:
 
 ```bash
+sudo systemctl daemon-reload
 sudo systemctl enable --now kevins-cat-app
 ```
 
-The GUI will always be available at `http://<nas-ip>:8080`.
+It now starts on boot and the GUI is always available at `http://<nas-ip>:8080`.
+Check it with `systemctl status kevins-cat-app` or `journalctl -u kevins-cat-app -f`.
 
 ---
 
