@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtualenv created by setup.sh
+venv/
+.venv/
+
+# Local runtime config (written by the GUI from config.example.yaml)
+config.yaml
+
+# User-uploaded sounds (keep only the bundled default chime)
+d20app/sounds/*
+!d20app/sounds/generate_chime.py
+!d20app/sounds/treat_chime.wav

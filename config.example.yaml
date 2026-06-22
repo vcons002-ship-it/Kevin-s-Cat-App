@@ -1,0 +1,33 @@
+# Kevin's Cat App — example configuration.
+#
+# You normally DON'T edit this by hand: run the app and use the web GUI, which
+# writes config.yaml for you. This file documents every setting and provides
+# sensible defaults. `setup.sh` copies it to config.yaml on first run.
+
+# --- Camera (where to watch for a person) ---
+camera_url: ""            # RTSP/HTTP stream, e.g. rtsp://192.168.1.50:554/stream1
+camera_name: ""           # friendly name (filled in by auto-detect; display only)
+camera_username: ""       # only if the stream needs a login
+camera_password: ""
+
+# --- Speaker (Google Home / Nest — where the chime plays) ---
+speaker_name: ""          # exact name from the Google Home app, e.g. "Kitchen speaker"
+
+# --- Sound ---
+sound_file: "treat_chime.wav"   # a file in d20app/sounds/ (upload your own in the GUI)
+
+# --- Game rules ---
+dice_sides: 20            # 20 = D20, 100 = D100, ...
+dc: 20                    # treat when the roll is >= this (DC20 on a D20 = only a natural 20)
+cooldown_seconds: 600     # minimum seconds between rolls (frequency interval)
+
+# --- Detection tuning ---
+person_confidence: 0.5    # 0..1; raise to reduce false triggers
+roi: null                 # optional [x, y, w, h] to limit detection to part of the frame
+
+# --- Casting behaviour ---
+dont_interrupt_playback: false   # if true, skip the chime when the speaker is already playing
+
+# --- Servers ---
+web_port: 8080            # the GUI
+file_server_port: 8081    # serves the sound file to the speaker
