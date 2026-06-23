@@ -121,6 +121,7 @@ class DetectionLoop:
     def _loop_body(self, cfg, detector, gate, caster) -> None:
         backoff = 1.0
         last_cam_error = ""        # so a flaky camera doesn't flood the log
+        connected = False          # log once when the first frame actually reads
         while not self._stop.is_set():
             try:
                 person = detector.read_and_detect()
@@ -140,6 +141,15 @@ class DetectionLoop:
                 self.activity.add("info", "Camera stream recovered.")
                 last_cam_error = ""
             backoff = 1.0
+
+            # Confirm — once — that frames are actually flowing, so a running
+            # loop that simply hasn't seen a person yet isn't silent.
+            if not connected and detector.frame_size:
+                w, h = detector.frame_size
+                self.activity.add(
+                    "info", f"📷 Camera connected ({w}×{h}) — watching for people."
+                )
+                connected = True
 
             if not person:
                 time.sleep(0.05)        # ~20 fps ceiling; cheap when idle

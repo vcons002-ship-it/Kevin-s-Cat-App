@@ -55,6 +55,24 @@ class CameraError(RuntimeError):
     """The camera stream could not be opened or read (bad URL, auth, network)."""
 
 
+_cv2_quieted = False
+
+
+def _quiet_cv2_logs(cv2) -> None:
+    """Hush OpenCV's own WARN chatter (e.g. the videoio backend warning) once.
+
+    This is separate from OPENCV_FFMPEG_LOGLEVEL, which only governs FFmpeg.
+    """
+    global _cv2_quieted
+    if _cv2_quieted:
+        return
+    try:
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+    except Exception:
+        pass
+    _cv2_quieted = True
+
+
 def mask_credentials(url: str) -> str:
     """Hide the password in an ``rtsp://user:pass@host`` URL for safe logging."""
     if "://" not in url or "@" not in url:
@@ -123,6 +141,7 @@ class PersonDetector:
         self._net = None
         self._cap = None
         self._read_fails = 0
+        self.frame_size = None  # (w, h) of the last good frame; None until one reads
         self._motion = MotionPrefilter()
 
     # -- model / stream lifecycle -------------------------------------------
@@ -141,6 +160,7 @@ class PersonDetector:
     def _ensure_cap(self):
         import cv2
 
+        _quiet_cv2_logs(cv2)
         if self._cap is None or not self._cap.isOpened():
             # Force the FFmpeg backend explicitly: some OpenCV builds otherwise
             # pick a backend that mishandles RTSP authentication, so a stream
@@ -202,6 +222,7 @@ class PersonDetector:
                 )
             return False
         self._read_fails = 0
+        self.frame_size = (frame.shape[1], frame.shape[0])
         gray = cv2.cvtColor(self._crop(frame), cv2.COLOR_BGR2GRAY)
         if not self._motion.update(gray):
             return False

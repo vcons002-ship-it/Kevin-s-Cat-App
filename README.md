@@ -130,6 +130,31 @@ dead camera after ~5 seconds and retries with a growing back-off (it no longer
 floods the console). To watch the raw FFmpeg decoder output while debugging,
 start it with `OPENCV_FFMPEG_LOGLEVEL=24 ./venv/bin/python run.py`.
 
+### The login works but nothing happens
+
+When the loop starts it logs **"▶ Started watching…"**, and as soon as frames
+arrive it logs **"📷 Camera connected (W×H)…"**. If you *don't* see the first
+line, the loop isn't running — press **Start watching** (not just **Test
+sound**) and check the status bar says **Watching**. If you see "Started" but
+never "Camera connected", frames aren't decoding.
+
+Run the built-in checker to see exactly where it breaks:
+
+```bash
+./venv/bin/python check_camera.py
+```
+
+It opens your configured camera, reports whether frames decode (and at what
+resolution), runs the person-detector on a frame, and saves `snapshot.jpg`.
+The two common findings:
+
+- **"decoded 0 frames"** — the stream opens but the codec won't decode. Most
+  cameras default the **main** stream to **H.265/HEVC**; point the app at the
+  camera's **H.264 sub-stream** URL instead.
+- **"no person above your threshold"** — frames are fine but the model didn't
+  see a person. Check `snapshot.jpg` for framing/lighting, stand clearly in
+  view, or lower **Person confidence** in the GUI.
+
 ---
 
 ## Configuration
