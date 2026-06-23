@@ -10,6 +10,10 @@ from a simple web page.
 - **One setup script**, then everything is point-and-click in a browser.
 - Runs happily on an **OpenMediaVault** NAS (or any computer on the same WiFi).
 
+![The Kevin's Cat App web GUI](docs/gui.png)
+
+<sub>The whole app is this one page (example shown with sample devices).</sub>
+
 ---
 
 ## Requirements
