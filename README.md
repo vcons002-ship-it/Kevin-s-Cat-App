@@ -128,7 +128,8 @@ interest, ports, etc.).
 Optional, but recommended for an always-on setup. Create
 `/etc/systemd/system/kevins-cat-app.service` — **replace both
 `/path/to/Kevin-s-Cat-App` with the real folder path** (run `pwd` inside it to
-get it):
+get it), and set `User=` to the account that owns that folder (the app doesn't
+need root):
 
 ```ini
 [Unit]
@@ -137,6 +138,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+User=youruser
 WorkingDirectory=/path/to/Kevin-s-Cat-App
 ExecStart=/path/to/Kevin-s-Cat-App/venv/bin/python run.py
 Restart=on-failure
@@ -154,6 +156,34 @@ sudo systemctl enable --now kevins-cat-app
 
 It now starts on boot and the GUI is always available at `http://<nas-ip>:8080`.
 Check it with `systemctl status kevins-cat-app` or `journalctl -u kevins-cat-app -f`.
+
+---
+
+## Stopping it & troubleshooting
+
+**To stop watching but keep the page open:** press **Stop** in the GUI. That
+halts the camera loop only; the web server stays up so you can reconfigure and
+Start again. To stop the whole program, use whichever matches how you started it:
+
+| How you started it | How to stop it |
+|---|---|
+| In a terminal / over SSH (`./venv/bin/python run.py`) | Press **Ctrl+C** (closing the SSH session also stops it). |
+| As a systemd service | `sudo systemctl stop kevins-cat-app` (add `sudo systemctl disable kevins-cat-app` to stop it starting on boot). |
+| In the background / lost the terminal | `pkill -f run.py`, or find it with `ps aux \| grep run.py` and `kill <pid>`. Since it holds port 8080, `sudo lsof -i :8080` also finds it. |
+
+It shuts down cleanly either way — the camera loop and sound server are
+background (daemon) threads, so they stop with the main process and leave
+nothing running. Your settings are already saved to `config.yaml`.
+
+**"Address already in use" on start?** Something else on the NAS is using port
+**8080** (the GUI) or **8081** (the sound server) — some OMV plugins and Docker
+containers use 8080. Pick free ports by setting `web_port` / `file_server_port`
+in `config.yaml`, then start again.
+
+**A note on access:** the GUI and the sound server have no password, so anyone
+already on your home WiFi can open the page. It's only reachable on your local
+network (nothing is exposed to the internet), which is fine for a home setup —
+just don't run it on an untrusted/shared network.
 
 ---
 
