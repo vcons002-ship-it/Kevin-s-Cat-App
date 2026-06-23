@@ -18,7 +18,7 @@ from . import config as config_mod
 from . import dice
 from .activitylog import ActivityLog
 from .caster import Caster, SoundServer
-from .detector import PersonDetector
+from .detector import PersonDetector, mask_credentials
 
 log = logging.getLogger("d20app.loop")
 
@@ -96,11 +96,14 @@ class DetectionLoop:
         )
         gate = dice.RollGate(cfg.cooldown_seconds)
 
+        # Never echo a password: prefer the friendly name, else the URL with
+        # any embedded credentials masked.
+        cam_label = cfg.camera_name or mask_credentials(cfg.camera_url)
         log.info("Detection loop started (camera=%s, speaker=%s)",
-                 cfg.camera_name or cfg.camera_url, cfg.speaker_name)
+                 cam_label, cfg.speaker_name)
         self.activity.add(
             "info",
-            f"▶ Started watching {cfg.camera_name or cfg.camera_url} "
+            f"▶ Started watching {cam_label} "
             f"(speaker: {cfg.speaker_name}, treat on d{cfg.dice_sides} ≥ {cfg.dc}).",
         )
         try:
