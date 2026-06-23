@@ -8,7 +8,8 @@ from a simple web page.
 
 - **No Docker, no Frigate, no cloud, no Google account.** Just Python.
 - **One setup script**, then everything is point-and-click in a browser.
-- **Live activity log** of every detection, roll, treat, and error — right in the page.
+- **Live activity log** of every roll, treat, error, and **non-human motion**
+  (so you can see when it's just the cats moving) — right in the page.
 - Runs happily on an **OpenMediaVault** NAS (or any computer on the same WiFi).
 
 ![The Kevin's Cat App web GUI](docs/gui.png)
@@ -82,7 +83,13 @@ Detection uses a small **MobileNet-SSD** neural network (bundled in
 `d20app/models/`, runs on CPU via OpenCV — no GPU, no extra services). It knows
 `person` and `cat` as separate categories, so it triggers on people and
 **ignores the cats**. A cheap motion check runs first so the network only fires
-when something actually moves, keeping CPU low.
+when something actually moves, keeping CPU low — and when that motion turns out
+**not** to be a person, it's noted in the Activity log (e.g. "*cat moved*").
+
+Measured on 170 real pedestrian images it detects a person **99.4%** of the time
+at the default confidence, with **no** cats mistaken for people. (See
+`tests/test_detection_accuracy.py`, which guards this with bundled sample
+photos.)
 
 ### Google Home integration
 

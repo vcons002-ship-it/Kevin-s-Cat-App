@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass, field
 
 # Make OpenCV's FFmpeg backend behave like VLC/ffplay for RTSP cameras:
 #   * rtsp_transport;tcp — use TCP (retransmitted, in-order packets) instead of
@@ -53,6 +54,15 @@ CAFFEMODEL = os.path.join(_MODELS_DIR, "mobilenet_ssd.caffemodel")
 
 class CameraError(RuntimeError):
     """The camera stream could not be opened or read (bad URL, auth, network)."""
+
+
+@dataclass
+class FrameOutcome:
+    """What one processed frame contained."""
+
+    motion: bool             # did the cheap motion pre-filter trigger?
+    person: bool             # was a person detected above the threshold?
+    labels: tuple = ()       # other classes seen (e.g. ("cat",)), best score first
 
 
 _cv2_quieted = False
@@ -184,8 +194,8 @@ class PersonDetector:
         return frame[y:y + h, x:x + w]
 
     # -- inference -----------------------------------------------------------
-    def detect_in_frame(self, frame) -> bool:
-        """Run the net on a single BGR frame and return True if a person shows."""
+    def _class_scores(self, frame, floor: float) -> dict:
+        """Best confidence per object class (≥ ``floor``) for one BGR frame."""
         import cv2
 
         frame = self._crop(frame)
@@ -197,14 +207,30 @@ class PersonDetector:
         )
         net = self._ensure_net()
         net.setInput(blob)
-        detections = net.forward()
-        return person_in_detections(detections, self.confidence)
+        det = net.forward()
+        best: dict = {}
+        for i in range(det.shape[2]):
+            score = float(det[0, 0, i, 2])
+            cid = int(det[0, 0, i, 1])
+            if score >= floor and 0 <= cid < len(CLASSES):
+                name = CLASSES[cid]
+                if score > best.get(name, 0.0):
+                    best[name] = score
+        return best
 
-    def read_and_detect(self) -> bool:
-        """Grab one frame, apply the motion pre-filter, then detect.
+    def detect_in_frame(self, frame) -> bool:
+        """Return True if a person is present in ``frame`` above the threshold."""
+        scores = self._class_scores(frame, floor=min(0.3, self.confidence))
+        return scores.get("person", 0.0) >= self.confidence
 
-        Returns True only when a person is detected. Returns False on read
-        failure (caller may back off and retry).
+    def read_and_detect(self) -> FrameOutcome:
+        """Grab one frame, apply the motion pre-filter, then classify it.
+
+        Returns a :class:`FrameOutcome`. ``motion`` is False when nothing moved
+        (or a frame couldn't be read); when motion is seen, ``person`` says
+        whether a person cleared the threshold and ``labels`` lists the other
+        things seen (e.g. ``("cat",)``) so the caller can report *what* moved.
+        Raises :class:`CameraError` when the stream is really gone.
         """
         import cv2
 
@@ -220,13 +246,21 @@ class PersonDetector:
                     f"lost the camera stream {mask_credentials(self.source)} "
                     "(no frames received)"
                 )
-            return False
+            return FrameOutcome(motion=False, person=False)
         self._read_fails = 0
         self.frame_size = (frame.shape[1], frame.shape[0])
         gray = cv2.cvtColor(self._crop(frame), cv2.COLOR_BGR2GRAY)
         if not self._motion.update(gray):
-            return False
-        return self.detect_in_frame(frame)
+            return FrameOutcome(motion=False, person=False)
+
+        scores = self._class_scores(frame, floor=min(0.3, self.confidence))
+        person = scores.get("person", 0.0) >= self.confidence
+        labels = tuple(
+            name
+            for name, score in sorted(scores.items(), key=lambda kv: -kv[1])
+            if name != "person" and score >= self.confidence
+        )
+        return FrameOutcome(motion=True, person=person, labels=labels)
 
     def release(self) -> None:
         if self._cap is not None:

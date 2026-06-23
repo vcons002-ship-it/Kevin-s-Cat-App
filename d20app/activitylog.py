@@ -23,7 +23,7 @@ _REPO_ROOT = os.path.dirname(_PKG_DIR)
 LOG_PATH = os.environ.get("D20_ACTIVITY_LOG", os.path.join(_REPO_ROOT, "activity.log"))
 
 # Entry kinds the GUI colour-codes by. Anything else is treated as "info".
-KINDS = ("info", "roll", "treat", "error")
+KINDS = ("info", "roll", "treat", "error", "motion")
 MAX_ENTRIES = 1000
 
 

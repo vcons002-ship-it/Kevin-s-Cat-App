@@ -22,6 +22,9 @@ from .detector import PersonDetector, mask_credentials
 
 log = logging.getLogger("d20app.loop")
 
+# Don't log every frame of a wandering cat — at most one motion note this often.
+_MOTION_LOG_INTERVAL = 10.0
+
 
 @dataclass
 class Status:
@@ -122,9 +125,10 @@ class DetectionLoop:
         backoff = 1.0
         last_cam_error = ""        # so a flaky camera doesn't flood the log
         connected = False          # log once when the first frame actually reads
+        motion_gate = dice.RollGate(_MOTION_LOG_INTERVAL)   # throttle motion notes
         while not self._stop.is_set():
             try:
-                person = detector.read_and_detect()
+                outcome = detector.read_and_detect()
             except FileNotFoundError as exc:
                 self.status.last_error = str(exc)
                 self.activity.add("error", str(exc))
@@ -151,8 +155,20 @@ class DetectionLoop:
                 )
                 connected = True
 
-            if not person:
+            if not outcome.motion:
                 time.sleep(0.05)        # ~20 fps ceiling; cheap when idle
+                continue
+
+            # Motion, but not a person: report what moved (the cats!), throttled
+            # so a pacing pet doesn't flood the log.
+            if not outcome.person:
+                if motion_gate.allow():
+                    what = outcome.labels[0] if outcome.labels else "something"
+                    self.activity.add(
+                        "motion",
+                        f"Non-human motion — {what} moved (no person, no roll).",
+                    )
+                time.sleep(0.05)
                 continue
 
             result = dice.attempt_roll(gate, cfg.dice_sides, cfg.dc)
