@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from . import config as config_mod
 from . import dice
+from .activitylog import ActivityLog
 from .caster import Caster, SoundServer
 from .detector import PersonDetector
 
@@ -39,6 +40,7 @@ class DetectionLoop:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self.status = Status()
+        self.activity = ActivityLog()
         self._sound_server: SoundServer | None = None
 
     # -- lifecycle -----------------------------------------------------------
@@ -73,10 +75,12 @@ class DetectionLoop:
         cfg = config_mod.load()
         if not cfg.camera_url:
             self.status.last_error = "No camera selected — choose one in the GUI."
+            self.activity.add("error", "Can't start: no camera selected.")
             self.status.running = False
             return
         if not cfg.speaker_name:
             self.status.last_error = "No speaker selected — choose one in the GUI."
+            self.activity.add("error", "Can't start: no speaker selected.")
             self.status.running = False
             return
 
@@ -93,29 +97,44 @@ class DetectionLoop:
 
         log.info("Detection loop started (camera=%s, speaker=%s)",
                  cfg.camera_name or cfg.camera_url, cfg.speaker_name)
+        self.activity.add(
+            "info",
+            f"▶ Started watching {cfg.camera_name or cfg.camera_url} "
+            f"(speaker: {cfg.speaker_name}, treat on d{cfg.dice_sides} ≥ {cfg.dc}).",
+        )
         try:
             self._loop_body(cfg, detector, gate, caster)
         except Exception as exc:  # keep the GUI informed rather than dying silently
             log.exception("Detection loop crashed")
             self.status.last_error = str(exc)
+            self.activity.add("error", f"Detection loop crashed: {exc}")
         finally:
             detector.release()
             self.status.running = False
             log.info("Detection loop stopped")
+            self.activity.add("info", "■ Stopped watching.")
 
     def _loop_body(self, cfg, detector, gate, caster) -> None:
         backoff = 1.0
+        last_cam_error = ""        # so a flaky camera doesn't flood the log
         while not self._stop.is_set():
             try:
                 person = detector.read_and_detect()
             except FileNotFoundError as exc:
                 self.status.last_error = str(exc)
+                self.activity.add("error", str(exc))
                 return
             except Exception as exc:
                 self.status.last_error = f"camera error: {exc}"
+                if str(exc) != last_cam_error:        # log only on change
+                    self.activity.add("error", f"Camera problem: {exc} (retrying…)")
+                    last_cam_error = str(exc)
                 time.sleep(min(backoff, 30))
                 backoff = min(backoff * 2, 30)
                 continue
+            if last_cam_error:
+                self.activity.add("info", "Camera stream recovered.")
+                last_cam_error = ""
             backoff = 1.0
 
             if not person:
@@ -131,17 +150,38 @@ class DetectionLoop:
             self.status.last_roll_at = time.time()
             log.info("Person detected: %s", result.describe())
 
-            if result.treat:
-                self.status.treats += 1
-                try:
-                    caster.play_sound(
-                        cfg.speaker_name,
-                        cfg.sound_file,
-                        dont_interrupt=cfg.dont_interrupt_playback,
+            roll_desc = f"rolled {result.value} on d{cfg.dice_sides} (need ≥ {cfg.dc})"
+            if not result.treat:
+                self.activity.add("roll", f"Person detected — {roll_desc}: no treat.")
+                continue
+
+            self.status.treats += 1
+            try:
+                cast = caster.play_sound(
+                    cfg.speaker_name,
+                    cfg.sound_file,
+                    dont_interrupt=cfg.dont_interrupt_playback,
+                )
+                if cast:
+                    self.activity.add(
+                        "treat",
+                        f"Person detected — {roll_desc}: TREAT! 🎉 "
+                        f"Chime sent to {cfg.speaker_name}.",
                     )
-                except Exception as exc:
-                    self.status.last_error = f"cast error: {exc}"
-                    log.warning("Failed to cast sound: %s", exc)
+                else:
+                    self.activity.add(
+                        "roll",
+                        f"Person detected — {roll_desc}: TREAT, but "
+                        f"{cfg.speaker_name} was already playing — chime skipped.",
+                    )
+            except Exception as exc:
+                self.status.last_error = f"cast error: {exc}"
+                log.warning("Failed to cast sound: %s", exc)
+                self.activity.add(
+                    "error",
+                    f"Rolled a treat ({result.value}) but couldn't reach "
+                    f"{cfg.speaker_name}: {exc}",
+                )
 
     # -- one-off test --------------------------------------------------------
     def test_cast(self) -> None:
@@ -151,7 +191,12 @@ class DetectionLoop:
             raise ValueError("No speaker selected.")
         if self._sound_server is None:
             self._sound_server = SoundServer(port=cfg.file_server_port)
-        Caster(self._sound_server).play_sound(cfg.speaker_name, cfg.sound_file)
+        try:
+            Caster(self._sound_server).play_sound(cfg.speaker_name, cfg.sound_file)
+        except Exception as exc:
+            self.activity.add("error", f"Test sound failed on {cfg.speaker_name}: {exc}")
+            raise
+        self.activity.add("info", f"🔊 Test sound played on {cfg.speaker_name}.")
 
 
 def _camera_source(cfg) -> str:

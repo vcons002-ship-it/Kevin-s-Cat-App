@@ -158,6 +158,45 @@ async function refreshStatus() {
   detail.textContent = parts.join("  ·  ");
 }
 
+// ---- activity log ----------------------------------------------------------
+let lastLogKey = "";
+
+function fmtTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+
+async function loadLog() {
+  const { body } = await api("/api/log?limit=200");
+  const entries = body || [];
+  // Skip the re-render (and preserve scroll position) when nothing changed.
+  const key = entries.length ? `${entries.length}:${entries[0].ts}` : "0";
+  if (key === lastLogKey) return;
+  lastLogKey = key;
+
+  const list = $("log-list");
+  if (!entries.length) {
+    list.innerHTML = `<p class="muted">No activity yet.</p>`;
+    return;
+  }
+  list.innerHTML = "";
+  for (const e of entries) {
+    const row = document.createElement("div");
+    row.className = `log-row log-${e.kind || "info"}`;
+    const t = document.createElement("span");
+    t.className = "log-time";
+    t.textContent = fmtTime(e.ts);
+    const m = document.createElement("span");
+    m.className = "log-msg";
+    m.textContent = e.message;
+    row.append(t, m);
+    list.appendChild(row);
+  }
+}
+
 // ---- wiring ----------------------------------------------------------------
 function wire() {
   $("speaker-refresh").onclick = () => loadSpeakers(true);
@@ -184,15 +223,23 @@ function wire() {
     if (!ok) alert((body && body.error) || "Could not play on the speaker.");
   };
 
+  $("log-clear").onclick = async () => {
+    await api("/api/log/clear", { method: "POST" });
+    lastLogKey = "";
+    loadLog();
+  };
+
   $("save-btn").onclick = saveConfig;
   $("start-btn").onclick = async () => {
     await saveConfig();
     await api("/api/start", { method: "POST" });
     refreshStatus();
+    loadLog();
   };
   $("stop-btn").onclick = async () => {
     await api("/api/stop", { method: "POST" });
     refreshStatus();
+    loadLog();
   };
 }
 
@@ -201,7 +248,8 @@ async function init() {
   await loadConfig();
   await Promise.all([loadSpeakers(false), loadCameras(false), loadSounds()]);
   refreshStatus();
-  setInterval(refreshStatus, 3000);
+  loadLog();
+  setInterval(() => { refreshStatus(); loadLog(); }, 3000);
 }
 
 init();

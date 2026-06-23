@@ -77,3 +77,32 @@ summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
 .warn { color: var(--warn); font-size: 0.86rem; margin: 6px 0 0; }
 .hidden { display: none; }
 footer { margin-top: 20px; }
+
+/* Activity log */
+.log-head { justify-content: space-between; }
+.log-head h2 { margin: 0; }
+.log-list {
+  max-height: 300px;
+  overflow-y: auto;
+  background: #0f1424;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.log-list > .muted { padding: 12px; margin: 0; }
+.log-row {
+  display: flex;
+  gap: 12px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  border-bottom: 1px solid rgba(42, 51, 80, 0.45);
+}
+.log-row:last-child { border-bottom: none; }
+.log-time {
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.log-msg { flex: 1; word-break: break-word; }
+.log-treat .log-msg { color: var(--go); font-weight: 600; }
+.log-error .log-msg { color: var(--stop); }
+.log-info .log-msg { color: var(--muted); }

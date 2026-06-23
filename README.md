@@ -8,6 +8,7 @@ from a simple web page.
 
 - **No Docker, no Frigate, no cloud, no Google account.** Just Python.
 - **One setup script**, then everything is point-and-click in a browser.
+- **Live activity log** of every detection, roll, treat, and error — right in the page.
 - Runs happily on an **OpenMediaVault** NAS (or any computer on the same WiFi).
 
 ![The Kevin's Cat App web GUI](docs/gui.png)
@@ -70,7 +71,10 @@ the **same WiFi**, then:
 ```
 
 Everything is one Python process. It serves the web GUI **and** runs the
-camera-watching loop in the background.
+camera-watching loop in the background. Every event (start/stop, each roll, every
+treat, and any camera/speaker error) is recorded in the **Activity log** at the
+bottom of the page — it persists to `activity.log` so it survives restarts, and
+there's a **Clear** button to wipe it.
 
 ### Person vs. cat
 
@@ -199,6 +203,7 @@ just don't run it on an untrusted/shared network.
 - `d20app/caster.py` — Google Cast playback + local sound file server.
 - `d20app/discovery.py` — speaker (Cast) and camera (ONVIF) auto-detection.
 - `d20app/loop.py` — the background watch→roll→cast loop.
+- `d20app/activitylog.py` — the persistent, file-backed event log shown in the GUI.
 - `d20app/webapp.py` + `templates/` + `static/` — the web GUI.
 
 A spoken-message option ("Give the cat a treat!") is stubbed in

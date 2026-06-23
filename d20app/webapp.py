@@ -118,4 +118,15 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             }
         )
 
+    # -- activity log -------------------------------------------------------
+    @app.get("/api/log")
+    def api_log():
+        limit = request.args.get("limit", default=200, type=int)
+        return jsonify(app.config["loop"].activity.entries(limit=limit))
+
+    @app.post("/api/log/clear")
+    def api_log_clear():
+        app.config["loop"].activity.clear()
+        return jsonify({"ok": True})
+
     return app
