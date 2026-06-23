@@ -19,6 +19,22 @@ from __future__ import annotations
 import os
 import time
 
+# Make OpenCV's FFmpeg backend behave like VLC/ffplay for RTSP cameras:
+#   * rtsp_transport;tcp — use TCP (retransmitted, in-order packets) instead of
+#     the lossy UDP default, which eliminates most "error while decoding MB…"
+#     and "missing reference picture" decoder spam.
+#   * timeout;5000000 — fail a dead/unreachable camera after 5s (microseconds)
+#     instead of blocking the loop on the OS default of a minute or more.
+#   * a quiet log level — stop libavcodec printing cosmetic decode errors and
+#     repeated "401 Unauthorized" lines straight to the console; the app reports
+#     real failures in its own Activity log instead.
+# All use setdefault() so an advanced user can override them from the shell,
+# e.g. OPENCV_FFMPEG_LOGLEVEL=24 to see warnings again while debugging.
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|timeout;5000000"
+)
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "8")   # 8 = AV_LOG_FATAL
+
 # The 21 classes of the standard MobileNet-SSD (VOC-style) model shipped in
 # d20app/models/. Index 15 is "person"; index 8 is "cat".
 CLASSES = [
@@ -33,6 +49,22 @@ PERSON_CLASS_ID = CLASSES.index("person")
 _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 PROTOTXT = os.path.join(_MODELS_DIR, "deploy.prototxt")
 CAFFEMODEL = os.path.join(_MODELS_DIR, "mobilenet_ssd.caffemodel")
+
+
+class CameraError(RuntimeError):
+    """The camera stream could not be opened or read (bad URL, auth, network)."""
+
+
+def mask_credentials(url: str) -> str:
+    """Hide the password in an ``rtsp://user:pass@host`` URL for safe logging."""
+    if "://" not in url or "@" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    creds, host = rest.rsplit("@", 1)        # host never contains '@'
+    if ":" in creds:
+        user, _ = creds.split(":", 1)
+        creds = f"{user}:***"
+    return f"{scheme}://{creds}@{host}"
 
 
 def person_in_detections(detections, confidence: float) -> bool:
@@ -90,6 +122,7 @@ class PersonDetector:
         self.roi = roi          # optional [x, y, w, h]
         self._net = None
         self._cap = None
+        self._read_fails = 0
         self._motion = MotionPrefilter()
 
     # -- model / stream lifecycle -------------------------------------------
@@ -109,7 +142,19 @@ class PersonDetector:
         import cv2
 
         if self._cap is None or not self._cap.isOpened():
-            self._cap = cv2.VideoCapture(self.source)
+            # Force the FFmpeg backend explicitly: some OpenCV builds otherwise
+            # pick a backend that mishandles RTSP authentication, so a stream
+            # that works in VLC fails here with "401 Unauthorized". FFmpeg does
+            # the same Basic/Digest auth VLC does.
+            cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                cap.release()
+                raise CameraError(
+                    f"could not open the camera stream "
+                    f"{mask_credentials(self.source)} — check the URL, and the "
+                    "username/password if the camera needs a login"
+                )
+            self._cap = cap
         return self._cap
 
     def _crop(self, frame):
@@ -143,11 +188,20 @@ class PersonDetector:
         """
         import cv2
 
-        cap = self._ensure_cap()
+        cap = self._ensure_cap()        # raises CameraError if it can't open
         ok, frame = cap.read()
         if not ok or frame is None:
-            self._cap = None        # force reconnect next call
+            self._read_fails += 1
+            self._cap = None            # force a reconnect next call
+            # Tolerate a brief hiccup, but a run of empty reads means the
+            # stream is really gone — surface it so the loop can back off.
+            if self._read_fails >= 3:
+                raise CameraError(
+                    f"lost the camera stream {mask_credentials(self.source)} "
+                    "(no frames received)"
+                )
             return False
+        self._read_fails = 0
         gray = cv2.cvtColor(self._crop(frame), cv2.COLOR_BGR2GRAY)
         if not self._motion.update(gray):
             return False

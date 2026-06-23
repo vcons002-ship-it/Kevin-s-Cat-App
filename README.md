@@ -116,6 +116,20 @@ If something doesn't appear:
   camera's app or web page (often `rtsp://<camera-ip>:554/...`); the camera's IP
   is in your **router's device list** or the camera app.
 
+### Camera connects in VLC but not here
+
+The app opens streams with **FFmpeg over RTSP/TCP**, the same way VLC does, and
+**percent-encodes** any username/password you enter (so symbols like `@ : /` in
+a password work). If a stream still won't open, the **Activity log** shows the
+exact URL it tried with the **password masked**, e.g.:
+
+> Camera problem: could not open the camera stream `rtsp://admin:***@192.168.1.50:554/stream` — check the URL, and the username/password if the camera needs a login
+
+Use that to confirm the address and login are what you expect. The app fails a
+dead camera after ~5 seconds and retries with a growing back-off (it no longer
+floods the console). To watch the raw FFmpeg decoder output while debugging,
+start it with `OPENCV_FFMPEG_LOGLEVEL=24 ./venv/bin/python run.py`.
+
 ---
 
 ## Configuration

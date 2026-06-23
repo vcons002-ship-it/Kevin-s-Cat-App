@@ -12,6 +12,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 from . import config as config_mod
 from . import dice
@@ -200,12 +201,17 @@ class DetectionLoop:
 
 
 def _camera_source(cfg) -> str:
-    """Inject username/password into an rtsp:// URL if provided separately."""
+    """Inject username/password into an rtsp:// URL if provided separately.
+
+    Credentials are percent-encoded so a password containing URL-significant
+    characters (``@ : / ? #``) doesn't corrupt the URL and cause a spurious
+    401 / connection failure.
+    """
     url = cfg.camera_url
     if cfg.camera_username and "://" in url and "@" not in url:
         scheme, rest = url.split("://", 1)
-        cred = cfg.camera_username
+        cred = quote(cfg.camera_username, safe="")
         if cfg.camera_password:
-            cred += f":{cfg.camera_password}"
+            cred += ":" + quote(cfg.camera_password, safe="")
         return f"{scheme}://{cred}@{rest}"
     return url
