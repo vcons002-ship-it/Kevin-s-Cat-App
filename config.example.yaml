@@ -24,6 +24,7 @@ cooldown_seconds: 600     # minimum seconds between rolls (frequency interval)
 # --- Detection tuning ---
 person_confidence: 0.5    # 0..1; raise to reduce false triggers
 confirm_frames: 3         # require a person in this many frames in a row (cuts false positives)
+detect_size: 512          # neural-net input size; 512 detects distant cats, 300 is lighter on CPU
 roi: null                 # optional [x, y, w, h] to limit detection to part of the frame
 
 # --- Quiet time (no chimes during this daily window; leave blank to disable) ---

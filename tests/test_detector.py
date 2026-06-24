@@ -52,14 +52,23 @@ def test_confidence_threshold_boundary():
 
 
 def test_motion_prefilter_first_frame_and_change():
-    # First frame always reports motion; an identical frame reports none; a
-    # very different frame reports motion. (Uses real numpy arrays, no OpenCV
-    # dependency beyond absdiff/threshold which cv2 provides at runtime.)
-    cv2 = __import__("cv2")
+    # First frame reports NO motion (nothing to compare yet); an identical frame
+    # reports none; a large solid change reports motion.
     mp = detector.MotionPrefilter(min_area_frac=0.01)
-    blank = np.zeros((100, 100), dtype=np.uint8)
-    assert mp.update(blank) is True            # first frame
+    blank = np.zeros((200, 200), dtype=np.uint8)
+    assert mp.update(blank) is False           # first frame: no baseline
     assert mp.update(blank.copy()) is False    # no change
     moved = blank.copy()
-    moved[0:60, 0:60] = 255                     # 36% of pixels change
+    moved[0:120, 0:120] = 255                   # 36% of pixels change
     assert mp.update(moved) is True
+
+
+def test_motion_prefilter_ignores_sensor_noise():
+    # Random per-pixel grain (like night-vision noise / compression) must NOT
+    # register as motion after the Gaussian blur — this is the false-trigger fix.
+    rng = np.random.default_rng(0)
+    mp = detector.MotionPrefilter()
+    base = np.full((300, 300), 120, dtype=np.uint8)
+    mp.update(base)                                    # prime baseline
+    noisy = np.clip(base.astype(int) + rng.integers(-30, 31, base.shape), 0, 255)
+    assert mp.update(noisy.astype(np.uint8)) is False

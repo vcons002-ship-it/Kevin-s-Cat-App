@@ -122,6 +122,7 @@ class DetectionLoop:
             source=_camera_source(cfg),
             confidence=cfg.person_confidence,
             roi=cfg.roi,
+            detect_size=cfg.detect_size,
         )
         gate = dice.RollGate(cfg.cooldown_seconds)
 

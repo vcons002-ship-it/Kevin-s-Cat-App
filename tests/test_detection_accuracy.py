@@ -45,6 +45,28 @@ def test_cats_do_not_trigger():
         assert not det.detect_in_frame(cv2.imread(p)), f"cat triggered person: {p}"
 
 
+def test_distant_cats_are_identified():
+    """A cat occupying ~1/4 of the frame must still be detected as a cat.
+
+    This guards the 512px input size — at 300px a distant cat scores 0 and the
+    app would never report it (the "no cat ever detected" bug).
+    """
+    import numpy as np
+
+    det = _detector()                     # detect_size defaults to 512
+    hits = 0
+    for p in CATS:
+        cat = cv2.imread(p)
+        bg = np.full((720, 1280, 3), 110, np.uint8)
+        ch = 150                          # ~1/4 of the 720px-tall frame
+        cw = int(cat.shape[1] * ch / cat.shape[0])
+        bg[285:285 + ch, 560:560 + cw] = cv2.resize(cat, (cw, ch))
+        boxes = det._detect_boxes(bg, floor=0.3)
+        if any(label == "cat" for label, _, _ in boxes):
+            hits += 1
+    assert hits >= 3, f"distant cats not detected at 512px: {hits}/{len(CATS)}"
+
+
 @pytest.mark.parametrize("path", PEOPLE)
 def test_each_person_reports_motion_person_outcome(path):
     """detect_in_frame returns a real boolean True on these clear photos."""

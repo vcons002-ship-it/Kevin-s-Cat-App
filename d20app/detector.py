@@ -51,6 +51,10 @@ _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 PROTOTXT = os.path.join(_MODELS_DIR, "deploy.prototxt")
 CAFFEMODEL = os.path.join(_MODELS_DIR, "mobilenet_ssd.caffemodel")
 
+# Confidence floor for *naming* a non-person mover (e.g. "cat") in the log.
+# Lower than the person threshold so distant/uncertain cats still get identified.
+_LABEL_FLOOR = 0.3
+
 
 class CameraError(RuntimeError):
     """The camera stream could not be opened or read (bad URL, auth, network)."""
@@ -115,7 +119,11 @@ class MotionPrefilter:
     """Detect motion by comparing consecutive grayscale frames.
 
     Returns True when the fraction of changed pixels exceeds ``min_area_frac``.
-    The first frame always reports "motion" so detection can run immediately.
+    Frames are Gaussian-blurred first so sensor noise, compression grain and a
+    ticking timestamp overlay don't register as "motion" (a common cause of
+    false triggers on a scene where nothing actually moved). The very first
+    frame reports **no** motion — there's nothing to compare it against yet, so
+    a static scene never triggers detection until something really moves.
     """
 
     def __init__(self, min_area_frac: float = 0.003, diff_threshold: int = 25) -> None:
@@ -126,11 +134,12 @@ class MotionPrefilter:
     def update(self, gray) -> bool:
         import cv2  # local import: keep module importable without OpenCV
 
+        blurred = cv2.GaussianBlur(gray, (21, 21), 0)
         if self._prev is None:
-            self._prev = gray
-            return True
-        delta = cv2.absdiff(self._prev, gray)
-        self._prev = gray
+            self._prev = blurred
+            return False
+        delta = cv2.absdiff(self._prev, blurred)
+        self._prev = blurred
         _, thresh = cv2.threshold(delta, self.diff_threshold, 255, cv2.THRESH_BINARY)
         changed = int((thresh > 0).sum())
         total = thresh.shape[0] * thresh.shape[1]
@@ -144,10 +153,14 @@ class PersonDetector:
     stream reconnection with backoff so a flaky camera doesn't kill the loop.
     """
 
-    def __init__(self, source: str, confidence: float = 0.5, roi=None) -> None:
+    def __init__(self, source: str, confidence: float = 0.5, roi=None,
+                 detect_size: int = 512) -> None:
         self.source = source
         self.confidence = confidence
         self.roi = roi          # optional [x, y, w, h]
+        # Net input resolution. 512 (vs the classic 300) recovers small/distant
+        # subjects — e.g. a cat across the room — at a modest CPU cost.
+        self.detect_size = int(detect_size) if detect_size else 512
         self._net = None
         self._cap = None
         self._read_fails = 0
@@ -205,10 +218,11 @@ class PersonDetector:
 
         cropped = self._crop(frame)
         h, w = cropped.shape[:2]
+        s = self.detect_size
         blob = cv2.dnn.blobFromImage(
-            cv2.resize(cropped, (300, 300)),
+            cv2.resize(cropped, (s, s)),
             scalefactor=0.007843,        # 1/127.5
-            size=(300, 300),
+            size=(s, s),
             mean=127.5,
         )
         net = self._ensure_net()
@@ -288,10 +302,12 @@ class PersonDetector:
         self._last_frame = self._crop(frame)   # what the net saw (box coords match)
         self._last_boxes = boxes
         person = self._best(boxes, "person") >= self.confidence
+        # Identify non-person movers (cats!) at a lower bar than a person needs,
+        # so a smaller/less-certain cat is still named rather than "something".
         labels = tuple(
             label
             for label, score, _ in sorted(boxes, key=lambda b: -b[1])
-            if label != "person" and score >= self.confidence
+            if label != "person" and score >= _LABEL_FLOOR
         )
         return FrameOutcome(motion=True, person=person, labels=labels)
 

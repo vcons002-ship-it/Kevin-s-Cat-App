@@ -94,6 +94,12 @@ at the default confidence, with **no** cats mistaken for people. (See
 `tests/test_detection_accuracy.py`, which guards this with bundled sample
 photos.)
 
+**Spotting distant cats.** A small cat across the room nearly vanishes once the
+frame is shrunk for the network, so the net input size is **512px** by default
+(`detect_size` in config) rather than the classic 300 — that recovers
+across-the-room cats that would otherwise score zero. Drop it to `300` if you
+need to save CPU on a very low-power NAS (at the cost of missing far-away cats).
+
 ### Snapshots & taming false positives
 
 Every detection event in the Activity log carries an **annotated snapshot** — a
@@ -101,7 +107,12 @@ thumbnail of the exact frame with a labelled box around what was found
 (green = person, orange = cat). Click it for the full image. This is the fastest
 way to see *why* something triggered (a coat on a chair, a reflection, the cat).
 
-Two settings keep noise down:
+**Nothing fires without real movement.** Detection only runs after a motion
+check passes, and that check first **Gaussian-blurs** each frame so sensor
+grain, compression noise and a ticking on-screen clock don't count as motion —
+the usual cause of a "trigger with nothing moving". The first frame and a
+static scene both report *no* motion. So a roll requires genuine movement **and**
+a person seen across several frames in a row:
 
 - **Confirm over N frames** (default 3): a person must be seen in that many
   frames *in a row* before it counts, so a single-frame fluke never fires a
