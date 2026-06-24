@@ -11,6 +11,12 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.3.1] — 2026-06-24
+
+### Added
+- **App version shown in the GUI footer** (and at `GET /api/version`, and printed
+  on startup) so it's easy to confirm which build is running when troubleshooting.
+
 ## [0.3.0] — 2026-06-24
 
 ### Added

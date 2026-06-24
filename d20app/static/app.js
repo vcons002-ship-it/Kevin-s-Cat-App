@@ -351,12 +351,18 @@ function wire() {
   };
 }
 
+async function loadVersion() {
+  const { body } = await api("/api/version");
+  if (body && body.version) $("app-version").textContent = "v" + body.version;
+}
+
 async function init() {
   wire();
   await loadConfig();
   await Promise.all([loadSpeakers(false), loadCameras(false), loadSounds()]);
   refreshStatus();
   loadLog();
+  loadVersion();
   setInterval(() => { refreshStatus(); loadLog(); }, 3000);
 }
 

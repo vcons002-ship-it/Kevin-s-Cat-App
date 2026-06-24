@@ -21,6 +21,7 @@ import os
 from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.utils import secure_filename
 
+from . import __version__
 from . import config as config_mod
 from . import discovery
 from .detector import grab_frame_jpeg
@@ -37,6 +38,10 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     @app.get("/")
     def index():
         return send_from_directory(app.template_folder, "index.html")
+
+    @app.get("/api/version")
+    def api_version():
+        return jsonify({"version": __version__})
 
     # -- detection snapshots (annotated images shown in the activity log) ----
     @app.get("/snapshots/<path:name>")
