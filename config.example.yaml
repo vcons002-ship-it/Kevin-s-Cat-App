@@ -23,7 +23,12 @@ cooldown_seconds: 600     # minimum seconds between rolls (frequency interval)
 
 # --- Detection tuning ---
 person_confidence: 0.5    # 0..1; raise to reduce false triggers
+confirm_frames: 3         # require a person in this many frames in a row (cuts false positives)
 roi: null                 # optional [x, y, w, h] to limit detection to part of the frame
+
+# --- Quiet time (no chimes during this daily window; leave blank to disable) ---
+quiet_start: ""           # "HH:MM" 24h, e.g. "22:00"
+quiet_end: ""             # "HH:MM" 24h, e.g. "07:00" (may wrap past midnight)
 
 # --- Casting behaviour ---
 dont_interrupt_playback: false   # if true, skip the chime when the speaker is already playing

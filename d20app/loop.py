@@ -8,6 +8,7 @@ state, last roll, last treat) back to the GUI.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import threading
 import time
@@ -19,11 +20,35 @@ from . import dice
 from .activitylog import ActivityLog
 from .caster import Caster, SoundServer
 from .detector import PersonDetector, mask_credentials
+from .snapshots import SnapshotStore
 
 log = logging.getLogger("d20app.loop")
 
 # Don't log every frame of a wandering cat — at most one motion note this often.
 _MOTION_LOG_INTERVAL = 10.0
+
+
+def _parse_hhmm(value: str):
+    """Parse 'HH:MM' to a datetime.time, or None if blank/invalid."""
+    try:
+        h, m = value.strip().split(":")
+        return datetime.time(int(h), int(m))
+    except (ValueError, AttributeError):
+        return None
+
+
+def in_quiet_window(now: datetime.time, start: str, end: str) -> bool:
+    """True if ``now`` falls in the [start, end) quiet window.
+
+    Handles a window that wraps past midnight (e.g. 22:00 → 07:00). If either
+    bound is blank/invalid, quiet time is disabled and this returns False.
+    """
+    s, e = _parse_hhmm(start), _parse_hhmm(end)
+    if s is None or e is None or s == e:
+        return False
+    if s < e:
+        return s <= now < e
+    return now >= s or now < e        # wraps midnight
 
 
 @dataclass
@@ -45,6 +70,7 @@ class DetectionLoop:
         self._lock = threading.Lock()
         self.status = Status()
         self.activity = ActivityLog()
+        self.snapshots = SnapshotStore()
         self._sound_server: SoundServer | None = None
 
     # -- lifecycle -----------------------------------------------------------
@@ -126,6 +152,8 @@ class DetectionLoop:
         last_cam_error = ""        # so a flaky camera doesn't flood the log
         connected = False          # log once when the first frame actually reads
         motion_gate = dice.RollGate(_MOTION_LOG_INTERVAL)   # throttle motion notes
+        streak = 0                 # consecutive person frames (false-positive guard)
+        confirm_frames = max(1, int(cfg.confirm_frames))
         while not self._stop.is_set():
             try:
                 outcome = detector.read_and_detect()
@@ -156,33 +184,58 @@ class DetectionLoop:
                 connected = True
 
             if not outcome.motion:
+                streak = 0          # nothing moving — reset the person streak
                 time.sleep(0.05)        # ~20 fps ceiling; cheap when idle
                 continue
 
             # Motion, but not a person: report what moved (the cats!), throttled
-            # so a pacing pet doesn't flood the log.
+            # so a pacing pet doesn't flood the log, with an annotated snapshot.
             if not outcome.person:
+                streak = 0
                 if motion_gate.allow():
                     what = outcome.labels[0] if outcome.labels else "something"
                     self.activity.add(
                         "motion",
                         f"Non-human motion — {what} moved (no person, no roll).",
+                        image=self.snapshots.save(detector.annotated_jpeg()),
                     )
+                time.sleep(0.05)
+                continue
+
+            # A person was seen — require it to persist across several frames
+            # before acting. Single-frame false positives never reach the count.
+            streak += 1
+            if streak < confirm_frames:
                 time.sleep(0.05)
                 continue
 
             result = dice.attempt_roll(gate, cfg.dice_sides, cfg.dc)
             if not result.rolled:
+                time.sleep(0.05)
                 continue        # within cooldown window
 
             self.status.rolls += 1
             self.status.last_roll = result.describe()
             self.status.last_roll_at = time.time()
             log.info("Person detected: %s", result.describe())
+            image = self.snapshots.save(detector.annotated_jpeg())
 
             roll_desc = f"rolled {result.value} on d{cfg.dice_sides} (need ≥ {cfg.dc})"
             if not result.treat:
-                self.activity.add("roll", f"Person detected — {roll_desc}: no treat.")
+                self.activity.add(
+                    "roll", f"Person detected — {roll_desc}: no treat.", image=image
+                )
+                continue
+
+            # A treat — but stay silent during quiet time.
+            now = datetime.datetime.now().time()
+            if in_quiet_window(now, cfg.quiet_start, cfg.quiet_end):
+                self.activity.add(
+                    "roll",
+                    f"Person detected — {roll_desc}: TREAT, but it's quiet "
+                    f"time ({cfg.quiet_start}–{cfg.quiet_end}) — chime suppressed.",
+                    image=image,
+                )
                 continue
 
             self.status.treats += 1
@@ -197,12 +250,14 @@ class DetectionLoop:
                         "treat",
                         f"Person detected — {roll_desc}: TREAT! 🎉 "
                         f"Chime sent to {cfg.speaker_name}.",
+                        image=image,
                     )
                 else:
                     self.activity.add(
                         "roll",
                         f"Person detected — {roll_desc}: TREAT, but "
                         f"{cfg.speaker_name} was already playing — chime skipped.",
+                        image=image,
                     )
             except Exception as exc:
                 self.status.last_error = f"cast error: {exc}"
@@ -211,6 +266,7 @@ class DetectionLoop:
                     "error",
                     f"Rolled a treat ({result.value}) but couldn't reach "
                     f"{cfg.speaker_name}: {exc}",
+                    image=image,
                 )
 
     # -- one-off test --------------------------------------------------------

@@ -21,3 +21,6 @@ activity.log
 
 # Diagnostic snapshot from check_camera.py
 snapshot.jpg
+
+# Detection snapshots written at runtime
+snapshots/

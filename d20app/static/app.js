@@ -12,6 +12,7 @@ const api = async (path, opts) => {
 const FIELDS = [
   "camera_url", "camera_username", "camera_password",
   "dice_sides", "dc", "cooldown_seconds", "person_confidence",
+  "confirm_frames", "quiet_start", "quiet_end",
 ];
 
 let speakers = [];
@@ -120,6 +121,9 @@ function gatherConfig() {
     dc: Number($("dc").value),
     cooldown_seconds: Number($("cooldown_seconds").value),
     person_confidence: Number($("person_confidence").value),
+    confirm_frames: Number($("confirm_frames").value),
+    quiet_start: $("quiet_start").value,
+    quiet_end: $("quiet_end").value,
     dont_interrupt_playback: $("dont_interrupt_playback").checked,
   };
   const pw = $("camera_password").value;
@@ -193,6 +197,18 @@ async function loadLog() {
     m.className = "log-msg";
     m.textContent = e.message;
     row.append(t, m);
+    if (e.image) {
+      const a = document.createElement("a");
+      a.href = `/snapshots/${e.image}`;
+      a.target = "_blank";
+      a.title = "Open full snapshot";
+      const img = document.createElement("img");
+      img.className = "log-thumb";
+      img.src = `/snapshots/${e.image}`;
+      img.alt = "detection snapshot";
+      a.appendChild(img);
+      row.appendChild(a);
+    }
     list.appendChild(row);
   }
 }
@@ -204,6 +220,7 @@ function wire() {
   $("speaker-select").onchange = updateSpeakerWarning;
   $("dice_sides").oninput = updateOdds;
   $("dc").oninput = updateOdds;
+  $("quiet-clear").onclick = () => { $("quiet_start").value = ""; $("quiet_end").value = ""; };
 
   $("sound-upload").onchange = async (e) => {
     const file = e.target.files[0];

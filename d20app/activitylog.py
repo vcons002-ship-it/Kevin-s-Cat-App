@@ -84,13 +84,25 @@ class ActivityLog:
             pass
 
     # -- public API ----------------------------------------------------------
-    def add(self, kind: str, message: str, ts: float | None = None) -> dict:
-        """Append an event and persist it. Returns the stored entry."""
+    def add(
+        self,
+        kind: str,
+        message: str,
+        ts: float | None = None,
+        image: str | None = None,
+    ) -> dict:
+        """Append an event and persist it. Returns the stored entry.
+
+        ``image`` is an optional snapshot filename (served by the web app) that
+        the GUI shows as a thumbnail — used for detection events.
+        """
         entry = {
             "ts": time.time() if ts is None else float(ts),
             "kind": kind if kind in KINDS else "info",
             "message": str(message),
         }
+        if image:
+            entry["image"] = str(image)
         with self._lock:
             self._entries.append(entry)
             self._append_to_file(entry)

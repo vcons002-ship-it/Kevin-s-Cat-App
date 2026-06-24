@@ -37,6 +37,14 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     def index():
         return send_from_directory(app.template_folder, "index.html")
 
+    # -- detection snapshots (annotated images shown in the activity log) ----
+    @app.get("/snapshots/<path:name>")
+    def snapshot(name):
+        directory = app.config["loop"].snapshots.directory
+        if not os.path.exists(os.path.join(directory, name)):
+            return jsonify({"error": "not found"}), 404
+        return send_from_directory(directory, name)
+
     # -- discovery ----------------------------------------------------------
     @app.get("/api/speakers")
     def api_speakers():

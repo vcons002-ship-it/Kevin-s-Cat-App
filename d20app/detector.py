@@ -152,6 +152,8 @@ class PersonDetector:
         self._cap = None
         self._read_fails = 0
         self.frame_size = None  # (w, h) of the last good frame; None until one reads
+        self._last_frame = None    # last frame the net analysed (for snapshots)
+        self._last_boxes = []      # detections on that frame: [(label, score, box)]
         self._motion = MotionPrefilter()
 
     # -- model / stream lifecycle -------------------------------------------
@@ -194,13 +196,17 @@ class PersonDetector:
         return frame[y:y + h, x:x + w]
 
     # -- inference -----------------------------------------------------------
-    def _class_scores(self, frame, floor: float) -> dict:
-        """Best confidence per object class (≥ ``floor``) for one BGR frame."""
+    def _detect_boxes(self, frame, floor: float) -> list:
+        """Return ``[(label, score, (x1, y1, x2, y2))]`` for one BGR frame.
+
+        Coordinates are pixels within the (ROI-cropped) frame the net analysed.
+        """
         import cv2
 
-        frame = self._crop(frame)
+        cropped = self._crop(frame)
+        h, w = cropped.shape[:2]
         blob = cv2.dnn.blobFromImage(
-            cv2.resize(frame, (300, 300)),
+            cv2.resize(cropped, (300, 300)),
             scalefactor=0.007843,        # 1/127.5
             size=(300, 300),
             mean=127.5,
@@ -208,20 +214,45 @@ class PersonDetector:
         net = self._ensure_net()
         net.setInput(blob)
         det = net.forward()
-        best: dict = {}
+        boxes = []
         for i in range(det.shape[2]):
             score = float(det[0, 0, i, 2])
             cid = int(det[0, 0, i, 1])
             if score >= floor and 0 <= cid < len(CLASSES):
-                name = CLASSES[cid]
-                if score > best.get(name, 0.0):
-                    best[name] = score
-        return best
+                x1 = int(det[0, 0, i, 3] * w)
+                y1 = int(det[0, 0, i, 4] * h)
+                x2 = int(det[0, 0, i, 5] * w)
+                y2 = int(det[0, 0, i, 6] * h)
+                boxes.append((CLASSES[cid], score, (x1, y1, x2, y2)))
+        return boxes
+
+    @staticmethod
+    def _best(boxes, label: str) -> float:
+        return max((s for lab, s, _ in boxes if lab == label), default=0.0)
 
     def detect_in_frame(self, frame) -> bool:
         """Return True if a person is present in ``frame`` above the threshold."""
-        scores = self._class_scores(frame, floor=min(0.3, self.confidence))
-        return scores.get("person", 0.0) >= self.confidence
+        boxes = self._detect_boxes(frame, floor=min(0.3, self.confidence))
+        return self._best(boxes, "person") >= self.confidence
+
+    # Colours (BGR) for drawing boxes: person = green, cat = orange, other = grey.
+    _BOX_COLORS = {"person": (80, 220, 80), "cat": (40, 170, 240)}
+
+    def annotated_jpeg(self) -> bytes | None:
+        """JPEG of the last analysed frame with labelled detection boxes drawn."""
+        import cv2
+
+        if self._last_frame is None:
+            return None
+        img = self._last_frame.copy()
+        for label, score, (x1, y1, x2, y2) in self._last_boxes:
+            color = self._BOX_COLORS.get(label, (160, 160, 160))
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+            tag = f"{label} {score:.2f}"
+            ty = max(y1 - 6, 12)
+            cv2.putText(img, tag, (x1, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return buf.tobytes() if ok else None
 
     def read_and_detect(self) -> FrameOutcome:
         """Grab one frame, apply the motion pre-filter, then classify it.
@@ -253,12 +284,14 @@ class PersonDetector:
         if not self._motion.update(gray):
             return FrameOutcome(motion=False, person=False)
 
-        scores = self._class_scores(frame, floor=min(0.3, self.confidence))
-        person = scores.get("person", 0.0) >= self.confidence
+        boxes = self._detect_boxes(frame, floor=min(0.3, self.confidence))
+        self._last_frame = self._crop(frame)   # what the net saw (box coords match)
+        self._last_boxes = boxes
+        person = self._best(boxes, "person") >= self.confidence
         labels = tuple(
-            name
-            for name, score in sorted(scores.items(), key=lambda kv: -kv[1])
-            if name != "person" and score >= self.confidence
+            label
+            for label, score, _ in sorted(boxes, key=lambda b: -b[1])
+            if label != "person" and score >= self.confidence
         )
         return FrameOutcome(motion=True, person=person, labels=labels)
 

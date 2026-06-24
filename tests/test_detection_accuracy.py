@@ -50,3 +50,21 @@ def test_each_person_reports_motion_person_outcome(path):
     """detect_in_frame returns a real boolean True on these clear photos."""
     det = _detector()
     assert det.detect_in_frame(cv2.imread(path)) is True
+
+
+def test_boxes_and_annotated_snapshot():
+    """A person image yields a person box and an annotated JPEG we can decode."""
+    import numpy as np
+
+    det = _detector()
+    img = cv2.imread(PEOPLE[0])
+    boxes = det._detect_boxes(img, floor=0.3)
+    assert any(label == "person" for label, _, _ in boxes)
+
+    # Prime the detector's "last frame" state and render the annotated JPEG.
+    det._last_frame = img
+    det._last_boxes = boxes
+    jpeg = det.annotated_jpeg()
+    assert jpeg and jpeg[:2] == b"\xff\xd8"          # JPEG magic
+    decoded = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    assert decoded is not None and decoded.shape[0] > 0

@@ -103,6 +103,15 @@ footer { margin-top: 20px; }
   font-variant-numeric: tabular-nums;
 }
 .log-msg { flex: 1; word-break: break-word; }
+.log-thumb {
+  height: 52px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  margin-left: auto;
+  display: block;
+  cursor: pointer;
+}
+.log-thumb:hover { border-color: var(--accent); }
 .log-treat .log-msg { color: var(--go); font-weight: 600; }
 .log-error .log-msg { color: var(--stop); }
 .log-motion .log-msg { color: var(--warn); }

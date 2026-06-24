@@ -41,7 +41,12 @@ class Config:
 
     # --- Detection tuning ---
     person_confidence: float = 0.5   # min DNN confidence to count as a person
+    confirm_frames: int = 3          # require a person in this many frames in a row
     roi: list | None = None          # optional [x, y, w, h] crop of the frame
+
+    # --- Quiet time (no chimes during this daily window; "" = disabled) ---
+    quiet_start: str = ""            # "HH:MM", e.g. "22:00"
+    quiet_end: str = ""              # "HH:MM", e.g. "07:00" (may wrap past midnight)
 
     # --- Casting behaviour ---
     dont_interrupt_playback: bool = False   # skip a treat if media is playing

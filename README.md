@@ -8,8 +8,11 @@ from a simple web page.
 
 - **No Docker, no Frigate, no cloud, no Google account.** Just Python.
 - **One setup script**, then everything is point-and-click in a browser.
-- **Live activity log** of every roll, treat, error, and **non-human motion**
-  (so you can see when it's just the cats moving) — right in the page.
+- **Live activity log** of every roll, treat, error, and **non-human motion**,
+  each with an **annotated snapshot** (boxes around the detected person/cat) so
+  you can see exactly what triggered it — right in the page.
+- **Quiet time** to silence chimes overnight, and a **confirm-over-N-frames**
+  setting to stamp out false positives.
 - Runs happily on an **OpenMediaVault** NAS (or any computer on the same WiFi).
 
 ![The Kevin's Cat App web GUI](docs/gui.png)
@@ -90,6 +93,27 @@ Measured on 170 real pedestrian images it detects a person **99.4%** of the time
 at the default confidence, with **no** cats mistaken for people. (See
 `tests/test_detection_accuracy.py`, which guards this with bundled sample
 photos.)
+
+### Snapshots & taming false positives
+
+Every detection event in the Activity log carries an **annotated snapshot** — a
+thumbnail of the exact frame with a labelled box around what was found
+(green = person, orange = cat). Click it for the full image. This is the fastest
+way to see *why* something triggered (a coat on a chair, a reflection, the cat).
+
+Two settings keep noise down:
+
+- **Confirm over N frames** (default 3): a person must be seen in that many
+  frames *in a row* before it counts, so a single-frame fluke never fires a
+  chime. Raise it if you still get false positives.
+- **Person confidence** (default 0.5): raise toward 0.7+ if the snapshots show
+  low-confidence boxes on non-people.
+
+### Quiet time
+
+Set a **From/To** window (e.g. 22:00 → 07:00, wraps past midnight) and the app
+keeps watching and logging through the night but **won't play the chime**. Leave
+both blank to disable.
 
 ### Google Home integration
 
@@ -250,6 +274,7 @@ just don't run it on an untrusted/shared network.
 - `d20app/discovery.py` — speaker (Cast) and camera (ONVIF) auto-detection.
 - `d20app/loop.py` — the background watch→roll→cast loop.
 - `d20app/activitylog.py` — the persistent, file-backed event log shown in the GUI.
+- `d20app/snapshots.py` — saves the annotated detection images the log displays.
 - `d20app/webapp.py` + `templates/` + `static/` — the web GUI.
 
 A spoken-message option ("Give the cat a treat!") is stubbed in
