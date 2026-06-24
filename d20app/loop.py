@@ -155,6 +155,7 @@ class DetectionLoop:
         motion_gate = dice.RollGate(_MOTION_LOG_INTERVAL)   # throttle motion notes
         streak = 0                 # consecutive person frames (false-positive guard)
         confirm_frames = max(1, int(cfg.confirm_frames))
+        interval = 1.0 / max(1.0, float(cfg.scan_fps))      # seconds between reads
         while not self._stop.is_set():
             try:
                 outcome = detector.read_and_detect()
@@ -186,7 +187,7 @@ class DetectionLoop:
 
             if not outcome.motion:
                 streak = 0          # nothing moving — reset the person streak
-                time.sleep(0.05)        # ~20 fps ceiling; cheap when idle
+                time.sleep(interval)    # scan-rate ceiling; cheap when idle
                 continue
 
             # Motion, but not a person: report what moved (the cats!), throttled
@@ -200,19 +201,19 @@ class DetectionLoop:
                         f"Non-human motion — {what} moved (no person, no roll).",
                         image=self.snapshots.save(detector.annotated_jpeg()),
                     )
-                time.sleep(0.05)
+                time.sleep(interval)
                 continue
 
             # A person was seen — require it to persist across several frames
             # before acting. Single-frame false positives never reach the count.
             streak += 1
             if streak < confirm_frames:
-                time.sleep(0.05)
+                time.sleep(interval)
                 continue
 
             result = dice.attempt_roll(gate, cfg.dice_sides, cfg.dc)
             if not result.rolled:
-                time.sleep(0.05)
+                time.sleep(interval)
                 continue        # within cooldown window
 
             self.status.rolls += 1

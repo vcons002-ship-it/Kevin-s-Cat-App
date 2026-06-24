@@ -87,6 +87,32 @@ def _quiet_cv2_logs(cv2) -> None:
     _cv2_quieted = True
 
 
+def grab_frame_jpeg(source: str, skip: int = 4):
+    """Open ``source``, grab one frame, and return it as JPEG bytes (or None).
+
+    Used by the GUI's region-of-interest picker to show a still from the camera.
+    A few frames are skipped so the returned image isn't the codec's first
+    (often grey/partial) frame.
+    """
+    import cv2
+
+    _quiet_cv2_logs(cv2)
+    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    frame = None
+    for _ in range(skip + 1):
+        ok, f = cap.read()
+        if ok and f is not None:
+            frame = f
+    cap.release()
+    if frame is None:
+        return None
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return buf.tobytes() if ok else None
+
+
 def mask_credentials(url: str) -> str:
     """Hide the password in an ``rtsp://user:pass@host`` URL for safe logging."""
     if "://" not in url or "@" not in url:

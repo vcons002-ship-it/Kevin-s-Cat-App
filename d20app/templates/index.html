@@ -39,6 +39,9 @@
           <em>RTSP URL</em> (often <code>rtsp://&lt;camera-ip&gt;:554/...</code>). The camera IP is in
           your router's device list or the camera app. Auto-detect uses ONVIF — if your camera isn't
           ONVIF or needs a login, type the URL and credentials here.
+          <br /><strong>Main vs sub feed:</strong> the high-res <em>main</em> stream spots distant
+          cats better but uses more CPU; the <em>sub</em> stream is lighter. Paste whichever URL you
+          prefer — then tune "Detection detail" and "Scan rate" below to balance quality vs CPU.
         </p>
       </details>
     </section>
@@ -93,6 +96,18 @@
           <input id="confirm_frames" type="number" min="1" max="30" />
           <span class="hint">must see a person this many frames in a row</span>
         </label>
+        <label>Detection detail
+          <select id="detect_size">
+            <option value="300">Fast — low CPU</option>
+            <option value="512">Balanced — spots distant cats</option>
+            <option value="768">Detailed — max range, high CPU</option>
+          </select>
+          <span class="hint">bigger = sees smaller/farther subjects, more CPU</span>
+        </label>
+        <label>Scan rate (frames/sec)
+          <input id="scan_fps" type="number" min="1" max="30" step="1" />
+          <span class="hint">lower = less CPU (good for the main feed)</span>
+        </label>
       </div>
       <label class="checkbox">
         <input id="dont_interrupt_playback" type="checkbox" />
@@ -111,6 +126,25 @@
         During these hours the app still watches and logs detections, but
         <strong>won't play the chime</strong>. Leave both blank to disable. A
         window like 22:00 → 07:00 correctly spans midnight.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>6. Region of interest <span class="muted">(optional — only watch part of the view)</span></h2>
+      <div class="row">
+        <button id="roi-grab" class="ghost" type="button">📷 Grab frame</button>
+        <button id="roi-clear" class="ghost" type="button">Clear region</button>
+        <span id="roi-note" class="muted"></span>
+      </div>
+      <div id="roi-stage" class="roi-stage hidden">
+        <img id="roi-img" alt="camera preview" />
+        <canvas id="roi-canvas"></canvas>
+      </div>
+      <p class="help">
+        Click <strong>Grab frame</strong> to pull a still from the camera, then
+        <strong>drag a box</strong> over the area to watch (e.g. the kitchen floor).
+        Everything outside the box is ignored — this cuts false positives and, by
+        zooming in, helps spot distant cats. Leave unset to watch the whole frame.
       </p>
     </section>
 

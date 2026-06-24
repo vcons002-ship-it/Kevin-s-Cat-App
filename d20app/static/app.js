@@ -12,8 +12,11 @@ const api = async (path, opts) => {
 const FIELDS = [
   "camera_url", "camera_username", "camera_password",
   "dice_sides", "dc", "cooldown_seconds", "person_confidence",
-  "confirm_frames", "quiet_start", "quiet_end",
+  "confirm_frames", "detect_size", "scan_fps", "quiet_start", "quiet_end",
 ];
+
+// Region of interest [x, y, w, h] in original-frame pixels (null = whole frame).
+let roi = null;
 
 let speakers = [];
 
@@ -100,10 +103,73 @@ async function loadConfig() {
     if ($(f) && cfg[f] !== undefined && cfg[f] !== null) $(f).value = cfg[f];
   }
   $("dont_interrupt_playback").checked = !!cfg.dont_interrupt_playback;
+  roi = Array.isArray(cfg.roi) && cfg.roi.length === 4 ? cfg.roi.slice() : null;
+  $("roi-note").textContent = roi ? `Region set: ${roi[2]}×${roi[3]}px` : "";
   savedSpeaker = cfg.speaker_name || "";
   savedCameraUrl = cfg.camera_url || "";
   savedSound = cfg.sound_file || "";
   updateOdds();
+}
+
+// ---- region-of-interest picker --------------------------------------------
+function drawRoiBox() {
+  const cv = $("roi-canvas"), img = $("roi-img");
+  if (!cv.getContext) return;
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!roi || !img.naturalWidth) return;
+  const sx = cv.width / img.naturalWidth, sy = cv.height / img.naturalHeight;
+  ctx.strokeStyle = "#7c5cff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(roi[0] * sx, roi[1] * sy, roi[2] * sx, roi[3] * sy);
+}
+
+async function grabPreview() {
+  const note = $("roi-note");
+  note.textContent = "Grabbing a frame…";
+  await saveConfig();                 // make sure the camera URL/login are saved
+  const img = $("roi-img");
+  img.onload = () => {
+    $("roi-stage").classList.remove("hidden");
+    const cv = $("roi-canvas");
+    cv.width = img.clientWidth;
+    cv.height = img.clientHeight;
+    drawRoiBox();
+    note.textContent = roi
+      ? `Region set: ${roi[2]}×${roi[3]}px — drag to change`
+      : "Drag a box over the area to watch";
+  };
+  img.onerror = () => {
+    note.textContent = "Couldn't grab a frame — is the camera reachable?";
+  };
+  img.src = "/api/preview?ts=" + Date.now();
+}
+
+function wireRoiCanvas() {
+  const cv = $("roi-canvas"), img = $("roi-img");
+  let start = null;
+  const toImg = (e) => {
+    const r = cv.getBoundingClientRect();
+    const sx = img.naturalWidth / cv.width, sy = img.naturalHeight / cv.height;
+    return [
+      Math.round(Math.max(0, e.clientX - r.left) * sx),
+      Math.round(Math.max(0, e.clientY - r.top) * sy),
+    ];
+  };
+  cv.onmousedown = (e) => { start = toImg(e); };
+  cv.onmousemove = (e) => {
+    if (!start) return;
+    const [x, y] = toImg(e);
+    roi = [Math.min(start[0], x), Math.min(start[1], y),
+           Math.abs(x - start[0]), Math.abs(y - start[1])];
+    drawRoiBox();
+  };
+  cv.onmouseup = () => {
+    start = null;
+    if (roi && (roi[2] < 8 || roi[3] < 8)) roi = null;   // ignore stray clicks
+    drawRoiBox();
+    $("roi-note").textContent = roi ? `Region set: ${roi[2]}×${roi[3]}px` : "Cleared";
+  };
 }
 
 function gatherConfig() {
@@ -122,8 +188,11 @@ function gatherConfig() {
     cooldown_seconds: Number($("cooldown_seconds").value),
     person_confidence: Number($("person_confidence").value),
     confirm_frames: Number($("confirm_frames").value),
+    detect_size: Number($("detect_size").value),
+    scan_fps: Number($("scan_fps").value),
     quiet_start: $("quiet_start").value,
     quiet_end: $("quiet_end").value,
+    roi: roi,
     dont_interrupt_playback: $("dont_interrupt_playback").checked,
   };
   const pw = $("camera_password").value;
@@ -221,6 +290,9 @@ function wire() {
   $("dice_sides").oninput = updateOdds;
   $("dc").oninput = updateOdds;
   $("quiet-clear").onclick = () => { $("quiet_start").value = ""; $("quiet_end").value = ""; };
+  $("roi-grab").onclick = grabPreview;
+  $("roi-clear").onclick = () => { roi = null; drawRoiBox(); $("roi-note").textContent = "Region cleared"; };
+  wireRoiCanvas();
 
   $("sound-upload").onchange = async (e) => {
     const file = e.target.files[0];

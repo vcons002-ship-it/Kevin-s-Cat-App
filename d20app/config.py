@@ -43,7 +43,8 @@ class Config:
     person_confidence: float = 0.5   # min DNN confidence to count as a person
     confirm_frames: int = 3          # require a person in this many frames in a row
     detect_size: int = 512           # net input size; 512 spots distant cats (300 = lighter CPU)
-    roi: list | None = None          # optional [x, y, w, h] crop of the frame
+    scan_fps: float = 10.0           # frames/sec to read from the camera (lower = less CPU)
+    roi: list | None = None          # optional [x, y, w, h] crop of the frame (set in the GUI)
 
     # --- Quiet time (no chimes during this daily window; "" = disabled) ---
     quiet_start: str = ""            # "HH:MM", e.g. "22:00"

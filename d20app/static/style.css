@@ -78,6 +78,17 @@ summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
 .hidden { display: none; }
 footer { margin-top: 20px; }
 
+/* Region-of-interest picker */
+.roi-stage { position: relative; display: inline-block; margin-top: 12px; max-width: 100%; }
+.roi-stage img {
+  display: block; max-width: 100%; height: auto;
+  border-radius: 8px; border: 1px solid var(--line);
+}
+.roi-stage canvas {
+  position: absolute; left: 0; top: 0;
+  cursor: crosshair; touch-action: none;
+}
+
 /* Activity log */
 .log-head { justify-content: space-between; }
 .log-head h2 { margin: 0; }

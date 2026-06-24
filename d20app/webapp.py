@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import os
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.utils import secure_filename
 
 from . import config as config_mod
 from . import discovery
-from .loop import DetectionLoop
+from .detector import grab_frame_jpeg
+from .loop import DetectionLoop, _camera_source
 
 ALLOWED_SOUND_EXT = {".wav", ".mp3", ".ogg", ".m4a", ".aac"}
 
@@ -44,6 +45,17 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         if not os.path.exists(os.path.join(directory, name)):
             return jsonify({"error": "not found"}), 404
         return send_from_directory(directory, name)
+
+    # -- live preview frame (for the region-of-interest picker) -------------
+    @app.get("/api/preview")
+    def api_preview():
+        cfg = config_mod.load()
+        if not cfg.camera_url:
+            return jsonify({"error": "No camera configured yet."}), 400
+        jpeg = grab_frame_jpeg(_camera_source(cfg))
+        if jpeg is None:
+            return jsonify({"error": "Couldn't grab a frame from the camera."}), 502
+        return Response(jpeg, mimetype="image/jpeg")
 
     # -- discovery ----------------------------------------------------------
     @app.get("/api/speakers")

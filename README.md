@@ -46,13 +46,17 @@ from a simple web page.
 the **same WiFi**, then:
 
 1. **Camera** — pick your kitchen camera from the auto-detected list (or enter
-   its stream URL manually).
+   its stream URL manually — main or sub feed; see *Detection detail* below).
 2. **Speaker** — pick your Google Home from the auto-detected list, and press
    **Test sound** to hear the chime play on it.
 3. **Sound** — keep the default chime or upload your own.
 4. **Game rules** — set the dice size, the DC (how high you must roll to win a
-   treat), and how often it's allowed to roll.
-5. Press **Start watching**. Done!
+   treat), how often it's allowed to roll, and the detection knobs
+   (*Detection detail* and *Scan rate* — quality vs CPU).
+5. **Quiet time** *(optional)* — silence chimes overnight.
+6. **Region of interest** *(optional)* — **Grab frame** and drag a box to watch
+   just part of the view.
+7. Press **Start watching**. Done!
 
 > **Keep it running:** `run.py` stays running in your terminal until you press
 > `Ctrl+C` (the camera-watching loop runs inside it; Start/Stop is in the GUI).
@@ -125,6 +129,24 @@ a person seen across several frames in a row:
 Set a **From/To** window (e.g. 22:00 → 07:00, wraps past midnight) and the app
 keeps watching and logging through the night but **won't play the chime**. Leave
 both blank to disable.
+
+### Camera feed, scan rate & region of interest
+
+All tunable from the GUI (no config-file editing):
+
+- **Camera feed (main vs sub):** paste whichever stream URL you want in the
+  Camera box. The high-res **main** feed spots distant cats better; the **sub**
+  feed is lighter on CPU.
+- **Detection detail** (`detect_size`): how big a frame the neural net sees —
+  *Fast (300)*, *Balanced (512, default)*, or *Detailed (768)*. Bigger sees
+  smaller/farther subjects at more CPU.
+- **Scan rate** (`scan_fps`): frames read per second (default 10). Lower it to
+  reclaim CPU when using the main feed.
+- **Region of interest:** click **Grab frame** to pull a still, then **drag a
+  box** over the area to watch. Everything outside is ignored — this cuts false
+  positives and, by zooming in, makes distant cats much easier to detect.
+
+![Drawing a region of interest on a grabbed camera frame](docs/roi.png)
 
 ### Google Home integration
 
