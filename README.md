@@ -325,4 +325,5 @@ just don't run it on an untrusted/shared network.
 - `d20app/webapp.py` + `templates/` + `static/` — the web GUI.
 - `check_camera.py` — standalone camera/detection diagnostic.
 
-See [`ROADMAP.md`](ROADMAP.md) for the full feature list and planned ideas.
+See [`ROADMAP.md`](ROADMAP.md) for the full feature list and planned ideas, and
+[`CHANGELOG.md`](CHANGELOG.md) for the release history.
