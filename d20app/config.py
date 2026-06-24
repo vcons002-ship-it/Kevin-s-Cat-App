@@ -29,10 +29,13 @@ class Config:
     camera_password: str = ""
 
     # --- Speaker (Google Home / Cast) ---
-    speaker_name: str = ""            # Cast device friendly name
+    speaker_name: str = ""            # legacy single speaker (kept for back-compat)
+    speaker_names: list = field(default_factory=list)   # one or more Cast device names
 
-    # --- Sound ---
+    # --- Sound / speech ---
     sound_file: str = "treat_chime.wav"   # filename within d20app/sounds/
+    use_speech: bool = False          # speak a message instead of playing the chime
+    speech_text: str = "Give the cat a treat!"   # what to say when use_speech is on
 
     # --- Game rules (GUI-tunable) ---
     dice_sides: int = 20             # D20, D100, ...
@@ -59,6 +62,14 @@ class Config:
 
     def asdict(self) -> dict:
         return asdict(self)
+
+
+def speaker_targets(cfg: "Config") -> list:
+    """Cast device names to play on: the new list, else the legacy single name."""
+    names = [n for n in (cfg.speaker_names or []) if n]
+    if not names and cfg.speaker_name:
+        names = [cfg.speaker_name]
+    return names
 
 
 _KNOWN_FIELDS = set(Config().asdict().keys())

@@ -30,9 +30,13 @@
         <label>Stream URL (RTSP/HTTP)
           <input id="camera_url" type="text" placeholder="rtsp://192.168.1.50:554/stream1" />
         </label>
-        <div class="row">
-          <label>Username <input id="camera_username" type="text" autocomplete="off" /></label>
-          <label>Password <input id="camera_password" type="password" autocomplete="off" placeholder="(unchanged)" /></label>
+        <div class="grid">
+          <label>Username
+            <input id="camera_username" type="text" autocomplete="off" />
+          </label>
+          <label>Password
+            <input id="camera_password" type="password" autocomplete="off" placeholder="(unchanged)" />
+          </label>
         </div>
         <p class="help">
           <strong>How to find this:</strong> open your camera's app or its web page to find the
@@ -47,23 +51,24 @@
     </section>
 
     <section class="card">
-      <h2>2. Speaker <span class="muted">(where the chime plays)</span></h2>
+      <h2>2. Speaker(s) <span class="muted">(where the chime plays)</span></h2>
+      <select id="speaker-select" class="multi" multiple size="4"></select>
       <div class="row">
-        <select id="speaker-select"></select>
         <button id="speaker-refresh" class="ghost" type="button">↻ Detect</button>
-        <button id="test-btn" class="primary" type="button">▶ Test sound</button>
+        <button id="test-btn" class="primary" type="button">▶ Test</button>
       </div>
       <p id="speaker-warn" class="warn hidden"></p>
       <p class="help">
-        Speakers are found automatically over WiFi (Google Cast — no account or login needed).
-        <strong>Both this device and the speaker must be on the same WiFi network.</strong>
-        The name shown matches the name in your Google Home app. Nothing here changes your speaker
-        permanently; the chime briefly interrupts playback and volume is restored afterward.
+        Found automatically over WiFi (Google Cast — no account or login needed).
+        <strong>Pick one or more</strong> — Ctrl/Cmd-click (or drag) to select several and the
+        treat plays on all of them. <strong>This device and the speakers must be on the same
+        WiFi network.</strong> Names match your Google Home app. Connections are kept open so
+        there's no "connecting" chime each time.
       </p>
     </section>
 
     <section class="card">
-      <h2>3. Sound</h2>
+      <h2>3. Sound or spoken message</h2>
       <div class="row">
         <select id="sound-select"></select>
         <label class="upload ghost">
@@ -71,6 +76,14 @@
           <input id="sound-upload" type="file" accept=".wav,.mp3,.ogg,.m4a,.aac" hidden />
         </label>
       </div>
+      <label class="checkbox">
+        <input id="use_speech" type="checkbox" />
+        Speak a message instead of playing a sound
+      </label>
+      <label id="speech-row" class="hidden">Spoken message
+        <input id="speech_text" type="text" placeholder="Give the cat a treat!" />
+        <span class="hint">spoken aloud on the speaker (needs internet to synthesize)</span>
+      </label>
     </section>
 
     <section class="card">
@@ -109,6 +122,7 @@
           <span class="hint">lower = less CPU (good for the main feed)</span>
         </label>
       </div>
+      <p id="odds-msg" class="odds-msg"></p>
       <label class="checkbox">
         <input id="dont_interrupt_playback" type="checkbox" />
         Don't interrupt the speaker if music is already playing

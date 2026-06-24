@@ -23,21 +23,25 @@ let speakers = [];
 // ---- populate dropdowns ----------------------------------------------------
 async function loadSpeakers(detect) {
   const sel = $("speaker-select");
-  sel.innerHTML = `<option>${detect ? "Detecting…" : "Loading…"}</option>`;
+  sel.innerHTML = `<option disabled>${detect ? "Detecting…" : "Loading…"}</option>`;
   const { body } = await api("/api/speakers");
   speakers = body || [];
   sel.innerHTML = "";
   if (!speakers.length) {
-    sel.innerHTML = `<option value="">No speakers found — check same WiFi</option>`;
+    sel.innerHTML = `<option value="" disabled>No speakers found — check same WiFi</option>`;
   }
   for (const s of speakers) {
     const opt = document.createElement("option");
     opt.value = s.name;
     opt.textContent = s.is_group ? `${s.name}  (group)` : s.name;
+    if (savedSpeakers.includes(s.name)) opt.selected = true;
     sel.appendChild(opt);
   }
-  if (savedSpeaker) sel.value = savedSpeaker;
   updateSpeakerWarning();
+}
+
+function selectedSpeakers() {
+  return Array.from($("speaker-select").selectedOptions).map((o) => o.value).filter(Boolean);
 }
 
 async function loadCameras(detect) {
@@ -69,11 +73,12 @@ async function loadSounds() {
 }
 
 function updateSpeakerWarning() {
-  const sel = $("speaker-select");
+  const chosen = selectedSpeakers();
+  const groups = speakers.filter((s) => s.is_group && chosen.includes(s.name));
   const warn = $("speaker-warn");
-  const chosen = speakers.find((s) => s.name === sel.value);
-  if (chosen && chosen.is_group) {
-    warn.textContent = "⚠ This is a speaker group — the chime will play on every speaker in it.";
+  if (groups.length) {
+    warn.textContent = `⚠ ${groups.map((g) => g.name).join(", ")} `
+      + `${groups.length > 1 ? "are groups" : "is a group"} — plays on every speaker in it.`;
     warn.classList.remove("hidden");
   } else {
     warn.classList.add("hidden");
@@ -87,13 +92,19 @@ function updateOdds() {
     const winning = Math.max(0, Math.min(sides, sides - dc + 1));
     const pct = ((winning / sides) * 100).toFixed(1);
     $("odds").textContent = `${winning} in ${sides} (${pct}%)`;
+    $("odds-msg").textContent = `For those who are mathematically challenged: ${pct}%`;
   } else {
     $("odds").textContent = "—";
+    $("odds-msg").textContent = "";
   }
 }
 
 // ---- config load/save ------------------------------------------------------
-let savedSpeaker = "", savedCameraUrl = "", savedSound = "";
+let savedSpeakers = [], savedCameraUrl = "", savedSound = "";
+
+function applySpeechVisibility() {
+  $("speech-row").classList.toggle("hidden", !$("use_speech").checked);
+}
 
 async function loadConfig() {
   const { body: cfg } = await api("/api/config");
@@ -103,9 +114,14 @@ async function loadConfig() {
     if ($(f) && cfg[f] !== undefined && cfg[f] !== null) $(f).value = cfg[f];
   }
   $("dont_interrupt_playback").checked = !!cfg.dont_interrupt_playback;
+  $("use_speech").checked = !!cfg.use_speech;
+  if (cfg.speech_text) $("speech_text").value = cfg.speech_text;
+  applySpeechVisibility();
   roi = Array.isArray(cfg.roi) && cfg.roi.length === 4 ? cfg.roi.slice() : null;
   $("roi-note").textContent = roi ? `Region set: ${roi[2]}×${roi[3]}px` : "";
-  savedSpeaker = cfg.speaker_name || "";
+  savedSpeakers = Array.isArray(cfg.speaker_names) && cfg.speaker_names.length
+    ? cfg.speaker_names.slice()
+    : (cfg.speaker_name ? [cfg.speaker_name] : []);
   savedCameraUrl = cfg.camera_url || "";
   savedSound = cfg.sound_file || "";
   updateOdds();
@@ -181,8 +197,10 @@ function gatherConfig() {
     camera_url: cameraUrl,
     camera_name: camName,
     camera_username: $("camera_username").value.trim(),
-    speaker_name: $("speaker-select").value,
+    speaker_names: selectedSpeakers(),
     sound_file: $("sound-select").value,
+    use_speech: $("use_speech").checked,
+    speech_text: $("speech_text").value.trim() || "Give the cat a treat!",
     dice_sides: Number($("dice_sides").value),
     dc: Number($("dc").value),
     cooldown_seconds: Number($("cooldown_seconds").value),
@@ -287,6 +305,7 @@ function wire() {
   $("speaker-refresh").onclick = () => loadSpeakers(true);
   $("camera-refresh").onclick = () => loadCameras(true);
   $("speaker-select").onchange = updateSpeakerWarning;
+  $("use_speech").onchange = applySpeechVisibility;
   $("dice_sides").oninput = updateOdds;
   $("dc").oninput = updateOdds;
   $("quiet-clear").onclick = () => { $("quiet_start").value = ""; $("quiet_end").value = ""; };
@@ -305,11 +324,11 @@ function wire() {
   };
 
   $("test-btn").onclick = async () => {
-    await saveConfig(); // ensure chosen speaker/sound are persisted first
+    await saveConfig(); // ensure chosen speakers/sound/message are persisted first
     $("test-btn").textContent = "Playing…";
     const { ok, body } = await api("/api/test", { method: "POST" });
-    $("test-btn").textContent = "▶ Test sound";
-    if (!ok) alert((body && body.error) || "Could not play on the speaker.");
+    $("test-btn").textContent = "▶ Test";
+    if (!ok) alert((body && body.error) || "Could not play on the speaker(s).");
   };
 
   $("log-clear").onclick = async () => {

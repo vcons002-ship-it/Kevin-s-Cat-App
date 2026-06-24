@@ -3,6 +3,7 @@ flask>=3.0
 opencv-python-headless>=4.8     # camera capture, motion pre-filter, cv2.dnn person detection
 pychromecast>=14.0              # Google Cast (speaker discovery + playback)
 PyYAML>=6.0                     # config.yaml persistence
+gTTS>=2.5                       # optional spoken-message text-to-speech (needs internet)
 
 # Camera auto-discovery (optional but recommended). If these fail to install on
 # your NAS, the app still works — you just enter the camera URL manually in the GUI.

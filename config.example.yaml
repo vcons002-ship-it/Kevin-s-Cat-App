@@ -10,11 +10,14 @@ camera_name: ""           # friendly name (filled in by auto-detect; display onl
 camera_username: ""       # only if the stream needs a login
 camera_password: ""
 
-# --- Speaker (Google Home / Nest — where the chime plays) ---
-speaker_name: ""          # exact name from the Google Home app, e.g. "Kitchen speaker"
+# --- Speaker(s) (Google Home / Nest — where the chime plays) ---
+speaker_names: []         # one or more exact names, e.g. ["Kitchen speaker", "Office"]
+speaker_name: ""          # legacy single name (still honoured if speaker_names is empty)
 
-# --- Sound ---
+# --- Sound / speech ---
 sound_file: "treat_chime.wav"   # a file in d20app/sounds/ (upload your own in the GUI)
+use_speech: false         # speak a message instead of playing the chime
+speech_text: "Give the cat a treat!"   # what to say when use_speech is true
 
 # --- Game rules ---
 dice_sides: 20            # 20 = D20, 100 = D100, ...

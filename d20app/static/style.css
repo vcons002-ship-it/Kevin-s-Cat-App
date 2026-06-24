@@ -45,6 +45,9 @@ select, input[type=text], input[type=password], input[type=number] {
   min-width: 0;
 }
 select { flex: 1; min-width: 180px; }
+.grid label input, .grid label select { width: 100%; }
+select.multi { width: 100%; min-height: 92px; flex: none; }
+.odds-msg { color: var(--accent); font-weight: 600; margin: 8px 0 0; font-size: 0.95rem; }
 button, .upload {
   border: none;
   border-radius: 8px;

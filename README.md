@@ -8,6 +8,8 @@ from a simple web page.
 
 - **No Docker, no Frigate, no cloud, no Google account.** Just Python.
 - **One setup script**, then everything is point-and-click in a browser.
+- **Plays on one or many speakers** (connections held open — no reconnect chime),
+  with an optional **spoken message** ("Give the cat a treat!") instead of a sound.
 - **Live activity log** of every roll, treat, error, and **non-human motion**,
   each with an **annotated snapshot** (boxes around the detected person/cat) so
   you can see exactly what triggered it — right in the page.
@@ -150,19 +152,26 @@ All tunable from the GUI (no config-file editing):
 
 ### Google Home integration
 
-The app talks to your speaker over the local network using the **Google Cast**
+The app talks to your speakers over the local network using the **Google Cast**
 protocol (the same thing the "Cast" button uses). There is **no account, no
-cloud login, and no API key**. It finds your speaker by the name shown in the
-Google Home app. To play the sound it briefly serves the audio file from your
-NAS and tells the speaker to play it.
+cloud login, and no API key**. It finds them by the names shown in the Google
+Home app. To play audio it briefly serves the file from your NAS and tells the
+speaker(s) to play it.
 
-**Will it interfere with my devices?** It only affects the *one* speaker you
-choose. The short chime briefly interrupts whatever that speaker is playing
-(it won't resume it), and the app **saves and restores the speaker's volume**,
-so it leaves the device as it found it. Other speakers are untouched — unless
-you pick a **speaker *group***, which plays on every speaker in it (the GUI
-warns you when a choice is a group). There's also an optional "don't interrupt
-if music is already playing" toggle.
+- **Multiple speakers:** pick one or several in the Speaker(s) box (Ctrl/Cmd-click
+  or drag) and the treat plays on **all** of them at once.
+- **No "connecting" chime:** the app **holds each Cast connection open** between
+  treats, so you don't hear the little reconnect bong or the start-up delay every
+  time (a stale connection is rebuilt automatically).
+- **Spoken message:** instead of a sound, tick *Speak a message instead* and type
+  what to say (e.g. "Give the cat a treat!"). It's synthesized with **gTTS** and
+  spoken on the speakers. Synthesis needs internet the first time a given message
+  is used; after that it's cached.
+
+**Will it interfere with my devices?** It only affects the speakers you choose,
+briefly interrupting whatever they're playing (it won't resume it). A **speaker
+*group*** plays on every speaker in it (the GUI flags groups). There's also a
+"don't interrupt if music is already playing" toggle.
 
 ---
 

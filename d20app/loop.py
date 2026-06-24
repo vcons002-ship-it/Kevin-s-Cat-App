@@ -72,6 +72,15 @@ class DetectionLoop:
         self.activity = ActivityLog()
         self.snapshots = SnapshotStore()
         self._sound_server: SoundServer | None = None
+        self._caster: Caster | None = None
+
+    def _caster_for(self, cfg) -> Caster:
+        """A single long-lived Caster so speaker connections stay open."""
+        if self._sound_server is None:
+            self._sound_server = SoundServer(port=cfg.file_server_port)
+        if self._caster is None:
+            self._caster = Caster(self._sound_server)
+        return self._caster
 
     # -- lifecycle -----------------------------------------------------------
     def start(self) -> bool:
@@ -108,15 +117,14 @@ class DetectionLoop:
             self.activity.add("error", "Can't start: no camera selected.")
             self.status.running = False
             return
-        if not cfg.speaker_name:
+        targets = config_mod.speaker_targets(cfg)
+        if not targets:
             self.status.last_error = "No speaker selected — choose one in the GUI."
             self.activity.add("error", "Can't start: no speaker selected.")
             self.status.running = False
             return
 
-        if self._sound_server is None:
-            self._sound_server = SoundServer(port=cfg.file_server_port)
-        caster = Caster(self._sound_server)
+        caster = self._caster_for(cfg)
 
         detector = PersonDetector(
             source=_camera_source(cfg),
@@ -129,12 +137,13 @@ class DetectionLoop:
         # Never echo a password: prefer the friendly name, else the URL with
         # any embedded credentials masked.
         cam_label = cfg.camera_name or mask_credentials(cfg.camera_url)
-        log.info("Detection loop started (camera=%s, speaker=%s)",
-                 cam_label, cfg.speaker_name)
+        speakers_label = ", ".join(targets)
+        log.info("Detection loop started (camera=%s, speakers=%s)",
+                 cam_label, speakers_label)
         self.activity.add(
             "info",
             f"▶ Started watching {cam_label} "
-            f"(speaker: {cfg.speaker_name}, treat on d{cfg.dice_sides} ≥ {cfg.dc}).",
+            f"(speakers: {speakers_label}, treat on d{cfg.dice_sides} ≥ {cfg.dc}).",
         )
         try:
             self._loop_body(cfg, detector, gate, caster)
@@ -241,24 +250,26 @@ class DetectionLoop:
                 continue
 
             self.status.treats += 1
+            what = "Spoke the message on" if cfg.use_speech else "Chime sent to"
             try:
-                cast = caster.play_sound(
-                    cfg.speaker_name,
-                    cfg.sound_file,
-                    dont_interrupt=cfg.dont_interrupt_playback,
-                )
+                if cfg.use_speech:
+                    cast = caster.say(targets, cfg.speech_text,
+                                      dont_interrupt=cfg.dont_interrupt_playback)
+                else:
+                    cast = caster.play_sound(targets, cfg.sound_file,
+                                             dont_interrupt=cfg.dont_interrupt_playback)
                 if cast:
                     self.activity.add(
                         "treat",
                         f"Person detected — {roll_desc}: TREAT! 🎉 "
-                        f"Chime sent to {cfg.speaker_name}.",
+                        f"{what} {speakers_label}.",
                         image=image,
                     )
                 else:
                     self.activity.add(
                         "roll",
-                        f"Person detected — {roll_desc}: TREAT, but "
-                        f"{cfg.speaker_name} was already playing — chime skipped.",
+                        f"Person detected — {roll_desc}: TREAT, but the "
+                        f"speaker(s) were already playing — skipped.",
                         image=image,
                     )
             except Exception as exc:
@@ -267,24 +278,29 @@ class DetectionLoop:
                 self.activity.add(
                     "error",
                     f"Rolled a treat ({result.value}) but couldn't reach "
-                    f"{cfg.speaker_name}: {exc}",
+                    f"{speakers_label}: {exc}",
                     image=image,
                 )
 
     # -- one-off test --------------------------------------------------------
     def test_cast(self) -> None:
-        """Force a treat sound on the configured speaker (GUI 'Test' button)."""
+        """Play the chime (or speak the message) on the configured speakers."""
         cfg = config_mod.load()
-        if not cfg.speaker_name:
+        targets = config_mod.speaker_targets(cfg)
+        if not targets:
             raise ValueError("No speaker selected.")
-        if self._sound_server is None:
-            self._sound_server = SoundServer(port=cfg.file_server_port)
+        caster = self._caster_for(cfg)
+        label = ", ".join(targets)
         try:
-            Caster(self._sound_server).play_sound(cfg.speaker_name, cfg.sound_file)
+            if cfg.use_speech:
+                caster.say(targets, cfg.speech_text)
+                self.activity.add("info", f"🗣 Spoke the message on {label}.")
+            else:
+                caster.play_sound(targets, cfg.sound_file)
+                self.activity.add("info", f"🔊 Test sound played on {label}.")
         except Exception as exc:
-            self.activity.add("error", f"Test sound failed on {cfg.speaker_name}: {exc}")
+            self.activity.add("error", f"Test failed on {label}: {exc}")
             raise
-        self.activity.add("info", f"🔊 Test sound played on {cfg.speaker_name}.")
 
 
 def _camera_source(cfg) -> str:
