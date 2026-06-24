@@ -21,6 +21,8 @@ from a simple web page.
 
 <sub>The whole app is this one page (example shown with sample devices).</sub>
 
+📋 **[Full feature list & roadmap →](ROADMAP.md)**
+
 ---
 
 ## Requirements
@@ -49,9 +51,10 @@ the **same WiFi**, then:
 
 1. **Camera** — pick your kitchen camera from the auto-detected list (or enter
    its stream URL manually — main or sub feed; see *Detection detail* below).
-2. **Speaker** — pick your Google Home from the auto-detected list, and press
-   **Test sound** to hear the chime play on it.
-3. **Sound** — keep the default chime or upload your own.
+2. **Speaker(s)** — pick one or more Google Home / Nest devices from the
+   auto-detected list, and press **Test** to hear it play.
+3. **Sound or spoken message** — keep the default chime, upload your own, or
+   tick *Speak a message instead* and type what to say.
 4. **Game rules** — set the dice size, the DC (how high you must roll to win a
    treat), how often it's allowed to roll, and the detection knobs
    (*Detection detail* and *Scan rate* — quality vs CPU).
@@ -307,17 +310,19 @@ just don't run it on an untrusted/shared network.
 
 ```bash
 ./venv/bin/python -m pip install pytest
-./venv/bin/python -m pytest        # dice/rate-limit + person-vs-cat tests
+./venv/bin/python -m pytest        # 59 tests: dice, detection accuracy, motion, etc.
 ```
 
+- `d20app/config.py` — load/save `config.yaml`; all settings + defaults.
 - `d20app/dice.py` — rolling, DC check, cooldown gate (pure, fully tested).
-- `d20app/detector.py` — motion pre-filter + person detection (cats ignored).
-- `d20app/caster.py` — Google Cast playback + local sound file server.
+- `d20app/detector.py` — motion pre-filter + person/cat detection, snapshots.
+- `d20app/caster.py` — Google Cast playback (multi-speaker, persistent
+  connections), local sound server, and gTTS spoken messages.
 - `d20app/discovery.py` — speaker (Cast) and camera (ONVIF) auto-detection.
 - `d20app/loop.py` — the background watch→roll→cast loop.
 - `d20app/activitylog.py` — the persistent, file-backed event log shown in the GUI.
 - `d20app/snapshots.py` — saves the annotated detection images the log displays.
 - `d20app/webapp.py` + `templates/` + `static/` — the web GUI.
+- `check_camera.py` — standalone camera/detection diagnostic.
 
-A spoken-message option ("Give the cat a treat!") is stubbed in
-`caster.say()` for a future update.
+See [`ROADMAP.md`](ROADMAP.md) for the full feature list and planned ideas.
