@@ -11,6 +11,26 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.3.6] — 2026-06-25
+
+### Fixed
+- **Treat-cast crash (`name 'speakers_label' is not defined`).** The cast path in
+  the detection loop referenced `targets`/`speakers_label` from `_run`'s scope
+  while running inside the separate `_loop_body` method, so **every won roll
+  crashed the loop**. The cast handling is now a `_cast_for_treat` method that
+  takes its speaker arguments explicitly. (Introduced with the multi-speaker work
+  in 0.3.0; the 0.3.2 casting revert only touched `caster.py`, so this lived on.)
+
+### Added
+- **Persistent speaker connections are back (no "connecting" chime).** The
+  `Caster` again caches each speaker's Cast connection and reuses it across
+  treats, so only the first cast pays the discover/connect cost. Hardened over the
+  original attempt: a cached connection is health-checked before use, and a play
+  that fails on a silently-dead socket is dropped and **retried once** on a fresh
+  connection before the speaker is reported failed. Held connections are released
+  when watching stops (`Caster.close()` from the loop's shutdown). Multiple
+  speakers and spoken messages keep working.
+
 ## [0.3.5] — 2026-06-25
 
 ### Changed
