@@ -29,7 +29,7 @@ def test_config_defaults_present():
     assert cfg.scan_fps == 10.0
     assert cfg.roi is None
     # New tuning defaults (v0.4.0).
-    assert cfg.label_floor == 0.5
+    assert cfg.label_floor == 0.55
     assert cfg.pause_during_cooldown is True
     assert cfg.motion_sensitivity == "medium"
     assert cfg.motion_min_area_frac == 0.003

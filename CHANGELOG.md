@@ -19,10 +19,11 @@ _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
   firing on shadows, lighting changes, or a swaying plant. The raw knobs
   (min change-area, brightness threshold, min blob size) are exposed under
   "Advanced motion tuning" for fine control.
-- **Configurable "Notify threshold" (`label_floor`, default raised 0.3 → 0.5).**
+- **Configurable "Notify threshold" (`label_floor`, default raised 0.3 → 0.55).**
   Only confident non-person detections get named in the log/snapshots, so stray
-  "pottedplant"/"sofa" guesses no longer clutter the activity log. (This never
-  affected treats — only a person triggers one — just the labels you saw.)
+  "pottedplant"/"sofa" guesses no longer clutter the activity log — including at
+  the higher detect-size, where a real kitchen frame put a plant at ~0.50. (This
+  never affected treats — only a person triggers one — just the labels you saw.)
 - **Pause detection during cooldown (on by default).** After a roll, the neural
   net is skipped for the cooldown window (nothing it sees can trigger anyway) —
   a large CPU saving on a NAS — and resumes automatically a few seconds before

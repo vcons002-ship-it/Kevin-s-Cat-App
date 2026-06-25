@@ -52,7 +52,7 @@ class Config:
     detect_size: int = 300           # net input size; 300 = reliable for people (512 = distant cats, heavier)
     scan_fps: float = 10.0           # frames/sec to read from the camera (lower = less CPU)
     roi: list | None = None          # optional [x, y, w, h] crop of the frame (set in the GUI)
-    label_floor: float = 0.5         # min confidence to NAME a non-person mover in the log/snapshot (higher = fewer stray "pottedplant"/"sofa" labels; no effect on treats)
+    label_floor: float = 0.55        # min confidence to NAME a non-person mover in the log/snapshot (higher = fewer stray "pottedplant"/"sofa" labels; no effect on treats)
 
     # --- Motion pre-filter (cheap gate before the neural net runs) ---
     motion_sensitivity: str = "medium"   # "low"|"medium"|"high"|"custom" — GUI preset that drives the three knobs below
