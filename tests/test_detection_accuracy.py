@@ -4,8 +4,9 @@ This is the guard that would have caught the shipped-broken model (a training
 snapshot whose weights didn't match the prototxt, so detection scored 0 on
 everything). It runs the real PersonDetector over a few bundled real photos.
 
-Fixtures: tests/fixtures/people/ (PennFudanPed pedestrians, downscaled) and
-tests/fixtures/cats/ (ImageNet domestic cats, downscaled).
+Fixtures: tests/fixtures/people/ (PennFudanPed pedestrians, many rear-view),
+tests/fixtures/people_hard/ (people in hats/helmets/headgear), and
+tests/fixtures/cats/ (ImageNet domestic cats). All downscaled.
 """
 
 import glob
@@ -18,11 +19,13 @@ from d20app.detector import PersonDetector
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 PEOPLE = sorted(glob.glob(os.path.join(FIXTURES, "people", "*.jpg")))
+PEOPLE_HARD = sorted(glob.glob(os.path.join(FIXTURES, "people_hard", "*.jpg")))
 CATS = sorted(glob.glob(os.path.join(FIXTURES, "cats", "*.jpg")))
 
 
 def _detector():
-    return PersonDetector(source="unused", confidence=0.5)
+    # Mirror the app defaults (detect_size 300, confidence 0.4).
+    return PersonDetector(source="unused", confidence=0.4)
 
 
 def test_fixtures_present():
@@ -45,15 +48,29 @@ def test_cats_do_not_trigger():
         assert not det.detect_in_frame(cv2.imread(p)), f"cat triggered person: {p}"
 
 
-def test_distant_cats_are_identified():
-    """A cat occupying ~1/4 of the frame must still be detected as a cat.
+def test_hard_pose_people_are_detected():
+    """People in head accessories (hats/helmets/headgear) must still trigger.
 
-    This guards the 512px input size — at 300px a distant cat scores 0 and the
-    app would never report it (the "no cat ever detected" bug).
+    Guards against detection regressing on harder real-world cases — the model
+    scores these 0.88–1.00. Back-turned people are covered by the PennFudan
+    `people/` fixtures (street pedestrians, many walking away from the camera).
+    """
+    det = _detector()
+    assert PEOPLE_HARD, "no hard-case fixtures found"
+    misses = [p for p in PEOPLE_HARD if not det.detect_in_frame(cv2.imread(p))]
+    assert not misses, f"hard-pose people missed: {[os.path.basename(p) for p in misses]}"
+
+
+def test_distant_cats_are_identified_at_high_detail():
+    """At the selectable 512px detail, a cat ~1/4 of the frame is detected.
+
+    512 is no longer the default (reverted to 300 to protect person recall), but
+    it stays available for users who want distant-cat detection — so we assert
+    the capability explicitly at detect_size=512.
     """
     import numpy as np
 
-    det = _detector()                     # detect_size defaults to 512
+    det = PersonDetector(source="unused", confidence=0.4, detect_size=512)
     hits = 0
     for p in CATS:
         cat = cv2.imread(p)

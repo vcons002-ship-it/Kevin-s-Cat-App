@@ -11,11 +11,11 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - **Person detection** on CPU via MobileNet-SSD (OpenCV `cv2.dnn`) — no GPU, no
   cloud, no extra services. **~99% recall** on 170 real pedestrian images.
 - **Cats ignored** — `person` and `cat` are separate classes; only people roll.
-- **Distant-subject detection** — configurable net input (300 / 512 / 768);
-  512 (default) catches a cat across the room that 300 misses.
-- **Motion pre-filter** — Gaussian-blurred frame differencing that ignores
-  sensor noise, compression grain and a ticking timestamp overlay, so a still
-  scene never triggers.
+- **Configurable detail** — net input size (300 / 512 / 768); **300 default**
+  for reliable person detection; 512 recovers distant cats.
+- **Motion pre-filter** — median blur + morphological opening + a solid-blob
+  check, so sensor noise, compression grain, a ticking timestamp overlay, and
+  **thin decode-artifact lines** don't register as motion.
 - **False-positive guard** — a person must persist across *N* consecutive frames
   (`confirm_frames`) before anything fires.
 - **Region of interest** — draw a box in the GUI to watch only part of the view.
@@ -33,8 +33,6 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 ### Speakers & output
 - **Google Cast** — no account, cloud login, or API key.
 - **Multiple speakers** at once (multi-select).
-- **Persistent connections** — held open between treats, so no "connecting"
-  chime or delay; stale connections rebuild automatically.
 - **Speaker-group** detection with a GUI warning.
 - **Custom sound upload** *or* an **optional spoken message** (gTTS).
 - **"Don't interrupt if already playing"** toggle.
@@ -71,6 +69,8 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [ ] "Trigger on entry only" tracking (ignore someone who lingers).
 
 ### Speakers & output
+- [ ] **No "connecting" chime** — hold Cast connections open safely between
+      treats (a first attempt was reverted for crashing; needs a stable redo).
 - [ ] **Per-speaker volume**, and a fixed "treat volume" that restores after.
 - [ ] **Preset spoken phrases** / a random message from a list.
 - [ ] TTS **voice/language** options and an **offline** fallback (e.g. pyttsx3).

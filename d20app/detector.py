@@ -144,32 +144,58 @@ def person_in_detections(detections, confidence: float) -> bool:
 class MotionPrefilter:
     """Detect motion by comparing consecutive grayscale frames.
 
-    Returns True when the fraction of changed pixels exceeds ``min_area_frac``.
-    Frames are Gaussian-blurred first so sensor noise, compression grain and a
-    ticking timestamp overlay don't register as "motion" (a common cause of
-    false triggers on a scene where nothing actually moved). The very first
-    frame reports **no** motion — there's nothing to compare it against yet, so
-    a static scene never triggers detection until something really moves.
+    Returns True only when there's a **solid, compact** region of change — not
+    just enough changed pixels. This rejects two common false triggers:
+
+    * **Sensor noise / compression grain** — removed by a median blur (which
+      also erases thin specks without smearing real edges) plus a morphological
+      opening of the change mask.
+    * **Decode-artifact bands** — a corrupt camera frame often shows a long,
+      *thin* line of bad pixels. That line has lots of changed pixels but is
+      only a few pixels tall, so we reject any blob whose shorter side is below
+      ``min_blob_px``.
+
+    The first frame reports **no** motion (nothing to compare against yet), so a
+    static scene never triggers detection until something really moves.
     """
 
-    def __init__(self, min_area_frac: float = 0.003, diff_threshold: int = 25) -> None:
+    def __init__(self, min_area_frac: float = 0.003, diff_threshold: int = 25,
+                 min_blob_px: int = 14) -> None:
         self.min_area_frac = min_area_frac
         self.diff_threshold = diff_threshold
+        self.min_blob_px = min_blob_px
         self._prev = None
+        self._kernel = None
 
     def update(self, gray) -> bool:
         import cv2  # local import: keep module importable without OpenCV
 
-        blurred = cv2.GaussianBlur(gray, (21, 21), 0)
+        # Median blur kills salt-and-pepper noise and thin corruption lines
+        # without widening real edges (a Gaussian blur would smear a 1px line
+        # into a band that survives later filtering).
+        clean = cv2.medianBlur(gray, 5)
         if self._prev is None:
-            self._prev = blurred
+            self._prev = clean
             return False
-        delta = cv2.absdiff(self._prev, blurred)
-        self._prev = blurred
+        delta = cv2.absdiff(self._prev, clean)
+        self._prev = clean
         _, thresh = cv2.threshold(delta, self.diff_threshold, 255, cv2.THRESH_BINARY)
-        changed = int((thresh > 0).sum())
-        total = thresh.shape[0] * thresh.shape[1]
-        return total > 0 and (changed / total) >= self.min_area_frac
+        if self._kernel is None:
+            self._kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, self._kernel)
+
+        h, w = thresh.shape[:2]
+        min_area = self.min_area_frac * h * w
+        contours, _ = cv2.findContours(
+            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        for c in contours:
+            if cv2.contourArea(c) < min_area:
+                continue
+            _, _, bw, bh = cv2.boundingRect(c)
+            if min(bw, bh) >= self.min_blob_px:   # a real blob, not a thin line
+                return True
+        return False
 
 
 class PersonDetector:
@@ -180,13 +206,14 @@ class PersonDetector:
     """
 
     def __init__(self, source: str, confidence: float = 0.5, roi=None,
-                 detect_size: int = 512) -> None:
+                 detect_size: int = 300) -> None:
         self.source = source
         self.confidence = confidence
         self.roi = roi          # optional [x, y, w, h]
-        # Net input resolution. 512 (vs the classic 300) recovers small/distant
-        # subjects — e.g. a cat across the room — at a modest CPU cost.
-        self.detect_size = int(detect_size) if detect_size else 512
+        # Net input resolution. 300 is the model's native size and most reliable
+        # for people; 512 recovers small/distant subjects (e.g. a far cat) at
+        # more CPU but can slightly hurt some person poses.
+        self.detect_size = int(detect_size) if detect_size else 300
         self._net = None
         self._cap = None
         self._read_fails = 0
@@ -286,6 +313,12 @@ class PersonDetector:
             return None
         img = self._last_frame.copy()
         for label, score, (x1, y1, x2, y2) in self._last_boxes:
+            # Only draw boxes that actually count — a person at the trigger
+            # threshold, other classes at the label floor — so a corrupt frame's
+            # low-confidence guesses don't litter the snapshot.
+            floor = self.confidence if label == "person" else _LABEL_FLOOR
+            if score < floor:
+                continue
             color = self._BOX_COLORS.get(label, (160, 160, 160))
             cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
             tag = f"{label} {score:.2f}"

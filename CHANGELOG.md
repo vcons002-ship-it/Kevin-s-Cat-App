@@ -11,6 +11,25 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.3.2] — 2026-06-24
+
+### Fixed
+- **Casting crash** — reverted the persistent Cast connections from 0.3.0; the
+  connection-reuse path could crash. Casts now reconnect each time (reliable).
+  Multiple speakers and spoken messages are kept. (The no-reconnect-chime goal
+  moves back to the roadmap, to be redone safely.)
+- **Camera decode artifacts no longer trigger motion** — the motion filter now
+  uses a median blur + morphological opening + a solid-blob (minimum-thickness)
+  check, so a thin line of corrupt pixels is ignored instead of firing motion.
+  Detection boxes are drawn only at the trigger threshold, so corrupt frames no
+  longer litter snapshots with low-confidence boxes.
+- **Human-detection regression** — reverted the default detection input size to
+  **300** (measured 99–100% person recall vs 98.8% at 512) and lowered the
+  default `person_confidence` to **0.4** for margin on hard poses. Verified
+  people in hats/helmets/headgear detect at 0.88–1.00 and back-turned
+  pedestrians at ~99%, while cats still never trigger. 512 stays selectable for
+  distant cats.
+
 ## [0.3.1] — 2026-06-24
 
 ### Added

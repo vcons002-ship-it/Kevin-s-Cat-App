@@ -25,9 +25,9 @@ dc: 20                    # treat when the roll is >= this (DC20 on a D20 = only
 cooldown_seconds: 600     # minimum seconds between rolls (frequency interval)
 
 # --- Detection tuning ---
-person_confidence: 0.5    # 0..1; raise to reduce false triggers
+person_confidence: 0.4    # 0..1; raise to reduce false triggers, lower to catch harder poses
 confirm_frames: 3         # require a person in this many frames in a row (cuts false positives)
-detect_size: 512          # neural-net input size; 512 detects distant cats, 300 is lighter on CPU
+detect_size: 300          # neural-net input size; 300 = reliable for people, 512 = distant cats (more CPU)
 scan_fps: 10.0            # frames/sec read from the camera; lower = less CPU (good for the main feed)
 roi: null                 # [x, y, w, h] region of interest — set this visually in the GUI
 

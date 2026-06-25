@@ -80,19 +80,17 @@ def _as_list(names) -> list:
 
 
 class Caster:
-    """Cast sounds/speech to one or more Cast devices, holding connections open.
+    """Cast sounds/speech to one or more Cast devices.
 
-    Connections are cached and reused across casts so we don't re-discover or
-    re-launch the receiver each time — that's what causes the little "connecting"
-    chime and the delay. A stale/broken connection is dropped and rebuilt lazily.
+    Each cast opens a fresh connection, plays, then disconnects — simple and
+    reliable. (A persistent-connection variant that avoids the brief
+    "connecting" chime is planned, but it was unstable and was reverted.)
     """
 
     def __init__(self, sound_server: SoundServer) -> None:
         self.sound_server = sound_server
-        self._lock = threading.Lock()
-        self._cache: dict = {}          # name -> (cast, browser)
 
-    # -- connection management ----------------------------------------------
+    # -- connection / playback ----------------------------------------------
     def _connect(self, name: str):
         import pychromecast
 
@@ -106,48 +104,27 @@ class Caster:
         cast.wait(timeout=15)
         return cast, browser
 
-    def _get(self, name: str):
-        """Return a connected cast for ``name``, reusing a live cached one."""
-        with self._lock:
-            entry = self._cache.get(name)
-        if entry is not None:
-            cast, _browser = entry
-            try:
-                if cast.socket_client and cast.socket_client.is_connected:
-                    return cast
-            except Exception:
-                pass
-            self._drop(name)        # stale — rebuild below
+    def _play_one(self, name: str, url: str, content_type: str,
+                  dont_interrupt: bool) -> bool:
+        """Open a fresh connection to one speaker, play, then disconnect."""
+        import pychromecast
+
         cast, browser = self._connect(name)
-        with self._lock:
-            self._cache[name] = (cast, browser)
-        return cast
-
-    def _drop(self, name: str) -> None:
-        with self._lock:
-            entry = self._cache.pop(name, None)
-        if not entry:
-            return
-        cast, browser = entry
         try:
-            import pychromecast
+            mc = cast.media_controller
+            if dont_interrupt:
+                mc.update_status()
+                if mc.status.player_is_playing:
+                    return False
+            mc.play_media(url, content_type)
+            mc.block_until_active(timeout=10)
+            return True
+        finally:
             pychromecast.discovery.stop_discovery(browser)
-        except Exception:
-            pass
-        try:
-            cast.disconnect(blocking=False)
-        except Exception:
-            pass
 
-    def close(self) -> None:
-        """Drop every held connection (e.g. on shutdown)."""
-        for name in list(self._cache):
-            self._drop(name)
-
-    # -- playback ------------------------------------------------------------
     def play_media(self, names, url: str, content_type: str,
                    dont_interrupt: bool = False) -> bool:
-        """Play ``url`` on every device in ``names`` (reusing connections).
+        """Play ``url`` on every device in ``names``.
 
         Returns True if it started on at least one device. Raises only if every
         target failed. With ``dont_interrupt`` a device already playing media is
@@ -157,17 +134,9 @@ class Caster:
         played, errors = 0, []
         for name in _as_list(names):
             try:
-                cast = self._get(name)
-                mc = cast.media_controller
-                if dont_interrupt:
-                    mc.update_status()
-                    if mc.status.player_is_playing:
-                        continue
-                mc.play_media(url, content_type)
-                mc.block_until_active(timeout=10)
-                played += 1
+                if self._play_one(name, url, content_type, dont_interrupt):
+                    played += 1
             except Exception as exc:        # noqa: BLE001
-                self._drop(name)            # force a fresh connection next time
                 errors.append(f"{name}: {exc}")
         if played == 0 and errors:
             raise RuntimeError("; ".join(errors))

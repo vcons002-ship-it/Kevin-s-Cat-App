@@ -8,8 +8,8 @@ from a simple web page.
 
 - **No Docker, no Frigate, no cloud, no Google account.** Just Python.
 - **One setup script**, then everything is point-and-click in a browser.
-- **Plays on one or many speakers** (connections held open — no reconnect chime),
-  with an optional **spoken message** ("Give the cat a treat!") instead of a sound.
+- **Plays on one or many speakers**, with an optional **spoken message**
+  ("Give the cat a treat!") instead of a sound.
 - **Live activity log** of every roll, treat, error, and **non-human motion**,
   each with an **annotated snapshot** (boxes around the detected person/cat) so
   you can see exactly what triggered it — right in the page.
@@ -103,11 +103,12 @@ at the default confidence, with **no** cats mistaken for people. (See
 `tests/test_detection_accuracy.py`, which guards this with bundled sample
 photos.)
 
-**Spotting distant cats.** A small cat across the room nearly vanishes once the
-frame is shrunk for the network, so the net input size is **512px** by default
-(`detect_size` in config) rather than the classic 300 — that recovers
-across-the-room cats that would otherwise score zero. Drop it to `300` if you
-need to save CPU on a very low-power NAS (at the cost of missing far-away cats).
+**Detection detail (`detect_size`).** The net input size defaults to **300px**,
+the model's native size — most reliable for **people** (measured 99–100% recall,
+slightly better than 512) and lighter on CPU. A small cat across the room can
+vanish at 300; raise the setting to **512** ("High") to recover across-the-room
+cats, at more CPU and a small hit to some person poses. People in hats, helmets,
+and headgear, and people with their back to the camera, all detect reliably.
 
 ### Snapshots & taming false positives
 
@@ -117,11 +118,12 @@ thumbnail of the exact frame with a labelled box around what was found
 way to see *why* something triggered (a coat on a chair, a reflection, the cat).
 
 **Nothing fires without real movement.** Detection only runs after a motion
-check passes, and that check first **Gaussian-blurs** each frame so sensor
-grain, compression noise and a ticking on-screen clock don't count as motion —
-the usual cause of a "trigger with nothing moving". The first frame and a
-static scene both report *no* motion. So a roll requires genuine movement **and**
-a person seen across several frames in a row:
+check passes. That check **median-blurs** each frame and keeps only **solid,
+compact** regions of change, so sensor grain, compression noise, a ticking
+on-screen clock, and **thin bands of decode-corruption pixels** don't count as
+motion — the usual causes of a "trigger with nothing moving". The first frame
+and a static scene both report *no* motion. So a roll requires genuine movement
+**and** a person seen across several frames in a row:
 
 - **Confirm over N frames** (default 3): a person must be seen in that many
   frames *in a row* before it counts, so a single-frame fluke never fires a
@@ -163,9 +165,6 @@ speaker(s) to play it.
 
 - **Multiple speakers:** pick one or several in the Speaker(s) box (Ctrl/Cmd-click
   or drag) and the treat plays on **all** of them at once.
-- **No "connecting" chime:** the app **holds each Cast connection open** between
-  treats, so you don't hear the little reconnect bong or the start-up delay every
-  time (a stale connection is rebuilt automatically).
 - **Spoken message:** instead of a sound, tick *Speak a message instead* and type
   what to say (e.g. "Give the cat a treat!"). It's synthesized with **gTTS** and
   spoken on the speakers. Synthesis needs internet the first time a given message
@@ -316,8 +315,8 @@ just don't run it on an untrusted/shared network.
 - `d20app/config.py` — load/save `config.yaml`; all settings + defaults.
 - `d20app/dice.py` — rolling, DC check, cooldown gate (pure, fully tested).
 - `d20app/detector.py` — motion pre-filter + person/cat detection, snapshots.
-- `d20app/caster.py` — Google Cast playback (multi-speaker, persistent
-  connections), local sound server, and gTTS spoken messages.
+- `d20app/caster.py` — Google Cast playback (multi-speaker), local sound
+  server, and gTTS spoken messages.
 - `d20app/discovery.py` — speaker (Cast) and camera (ONVIF) auto-detection.
 - `d20app/loop.py` — the background watch→roll→cast loop.
 - `d20app/activitylog.py` — the persistent, file-backed event log shown in the GUI.
