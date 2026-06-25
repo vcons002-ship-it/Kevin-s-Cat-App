@@ -55,18 +55,6 @@ CAFFEMODEL = os.path.join(_MODELS_DIR, "mobilenet_ssd.caffemodel")
 # Lower than the person threshold so distant/uncertain cats still get identified.
 _LABEL_FLOOR = 0.3
 
-# COCO/VOC animal classes. The model sometimes emits a weak ``person`` box over a
-# cat — most often a cluster of cats (several eating from one bowl, two cats
-# entangled) seen from an odd angle, which en masse reads as a vaguely
-# person-shaped blob. Such a box overlaps an animal detection and scores low. So
-# a ``person`` box *below* ``_PERSON_TRUST`` that is largely covered by an animal
-# box is treated as a misread and suppressed. A confident person box (e.g.
-# someone holding a cat) is at/above ``_PERSON_TRUST`` and always believed, so
-# this never costs a real person — see tests/test_detection_accuracy.py.
-_ANIMAL_CLASSES = frozenset({"bird", "cat", "cow", "dog", "horse", "sheep"})
-_PERSON_TRUST = 0.6
-_ANIMAL_COVER = 0.5      # fraction of the person box an animal box must cover
-
 
 class CameraError(RuntimeError):
     """The camera stream could not be opened or read (bad URL, auth, network)."""
@@ -306,41 +294,13 @@ class PersonDetector:
         return boxes
 
     @staticmethod
-    def _covered_fraction(person_box, animal_box) -> float:
-        """Fraction of ``person_box``'s area that lies inside ``animal_box``."""
-        px1, py1, px2, py2 = person_box
-        ax1, ay1, ax2, ay2 = animal_box
-        ix1, iy1 = max(px1, ax1), max(py1, ay1)
-        ix2, iy2 = min(px2, ax2), min(py2, ay2)
-        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
-        area = max(1, (px2 - px1) * (py2 - py1))
-        return inter / area
-
-    def _person_present(self, boxes) -> bool:
-        """True if a believable person box clears the threshold.
-
-        A person box at/above ``_PERSON_TRUST`` is always believed. A weaker one
-        (threshold..trust) is suppressed when an animal box largely covers it,
-        which is the cat-misread signature (see ``_ANIMAL_CLASSES``).
-        """
-        persons = [(s, box) for lab, s, box in boxes
-                   if lab == "person" and s >= self.confidence]
-        if not persons:
-            return False
-        animals = [box for lab, s, box in boxes
-                   if lab in _ANIMAL_CLASSES and s >= _LABEL_FLOOR]
-        for score, pbox in persons:
-            if score >= _PERSON_TRUST:
-                return True
-            if not any(self._covered_fraction(pbox, a) >= _ANIMAL_COVER
-                       for a in animals):
-                return True
-        return False
+    def _best(boxes, label: str) -> float:
+        return max((s for lab, s, _ in boxes if lab == label), default=0.0)
 
     def detect_in_frame(self, frame) -> bool:
         """Return True if a person is present in ``frame`` above the threshold."""
         boxes = self._detect_boxes(frame, floor=min(0.3, self.confidence))
-        return self._person_present(boxes)
+        return self._best(boxes, "person") >= self.confidence
 
     # Colours (BGR) for drawing boxes: person = green, cat = orange, other = grey.
     _BOX_COLORS = {"person": (80, 220, 80), "cat": (40, 170, 240)}
@@ -400,7 +360,7 @@ class PersonDetector:
         boxes = self._detect_boxes(frame, floor=min(0.3, self.confidence))
         self._last_frame = self._crop(frame)   # what the net saw (box coords match)
         self._last_boxes = boxes
-        person = self._person_present(boxes)
+        person = self._best(boxes, "person") >= self.confidence
         # Identify non-person movers (cats!) at a lower bar than a person needs,
         # so a smaller/less-certain cat is still named rather than "something".
         labels = tuple(

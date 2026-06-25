@@ -11,6 +11,18 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.3.4] — 2026-06-25
+
+### Reverted
+- **Cat-overlap person suppression (from 0.3.3) is removed.** Suppressing a
+  low-confidence `person` box that an animal box covers is indistinguishable
+  from a person *carrying* a cat, so it risked missing a real person — the one
+  failure this app can't tolerate. We now accept that a dense pile of cats may
+  occasionally trigger a (harmless) treat-roll rather than ever drop a person.
+  The broadened 45-image cat set stays; the multi-cat test now pins the small
+  set of tolerated cluster misreads (`tests/test_detection_accuracy.py`,
+  `KNOWN_CLUSTER_MISREADS`) so the rate can't grow unnoticed.
+
 ## [0.3.3] — 2026-06-25
 
 ### Fixed
