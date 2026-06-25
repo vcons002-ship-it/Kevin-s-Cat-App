@@ -18,6 +18,23 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass, field
+
+# Make OpenCV's FFmpeg backend behave like VLC/ffplay for RTSP cameras:
+#   * rtsp_transport;tcp — use TCP (retransmitted, in-order packets) instead of
+#     the lossy UDP default, which eliminates most "error while decoding MB…"
+#     and "missing reference picture" decoder spam.
+#   * timeout;5000000 — fail a dead/unreachable camera after 5s (microseconds)
+#     instead of blocking the loop on the OS default of a minute or more.
+#   * a quiet log level — stop libavcodec printing cosmetic decode errors and
+#     repeated "401 Unauthorized" lines straight to the console; the app reports
+#     real failures in its own Activity log instead.
+# All use setdefault() so an advanced user can override them from the shell,
+# e.g. OPENCV_FFMPEG_LOGLEVEL=24 to see warnings again while debugging.
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|timeout;5000000"
+)
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "8")   # 8 = AV_LOG_FATAL
 
 # The 21 classes of the standard MobileNet-SSD (VOC-style) model shipped in
 # d20app/models/. Index 15 is "person"; index 8 is "cat".
@@ -33,6 +50,79 @@ PERSON_CLASS_ID = CLASSES.index("person")
 _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 PROTOTXT = os.path.join(_MODELS_DIR, "deploy.prototxt")
 CAFFEMODEL = os.path.join(_MODELS_DIR, "mobilenet_ssd.caffemodel")
+
+# Confidence floor for *naming* a non-person mover (e.g. "cat") in the log.
+# Lower than the person threshold so distant/uncertain cats still get identified.
+_LABEL_FLOOR = 0.3
+
+
+class CameraError(RuntimeError):
+    """The camera stream could not be opened or read (bad URL, auth, network)."""
+
+
+@dataclass
+class FrameOutcome:
+    """What one processed frame contained."""
+
+    motion: bool             # did the cheap motion pre-filter trigger?
+    person: bool             # was a person detected above the threshold?
+    labels: tuple = ()       # other classes seen (e.g. ("cat",)), best score first
+
+
+_cv2_quieted = False
+
+
+def _quiet_cv2_logs(cv2) -> None:
+    """Hush OpenCV's own WARN chatter (e.g. the videoio backend warning) once.
+
+    This is separate from OPENCV_FFMPEG_LOGLEVEL, which only governs FFmpeg.
+    """
+    global _cv2_quieted
+    if _cv2_quieted:
+        return
+    try:
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+    except Exception:
+        pass
+    _cv2_quieted = True
+
+
+def grab_frame_jpeg(source: str, skip: int = 4):
+    """Open ``source``, grab one frame, and return it as JPEG bytes (or None).
+
+    Used by the GUI's region-of-interest picker to show a still from the camera.
+    A few frames are skipped so the returned image isn't the codec's first
+    (often grey/partial) frame.
+    """
+    import cv2
+
+    _quiet_cv2_logs(cv2)
+    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    frame = None
+    for _ in range(skip + 1):
+        ok, f = cap.read()
+        if ok and f is not None:
+            frame = f
+    cap.release()
+    if frame is None:
+        return None
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return buf.tobytes() if ok else None
+
+
+def mask_credentials(url: str) -> str:
+    """Hide the password in an ``rtsp://user:pass@host`` URL for safe logging."""
+    if "://" not in url or "@" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    creds, host = rest.rsplit("@", 1)        # host never contains '@'
+    if ":" in creds:
+        user, _ = creds.split(":", 1)
+        creds = f"{user}:***"
+    return f"{scheme}://{creds}@{host}"
 
 
 def person_in_detections(detections, confidence: float) -> bool:
@@ -54,27 +144,58 @@ def person_in_detections(detections, confidence: float) -> bool:
 class MotionPrefilter:
     """Detect motion by comparing consecutive grayscale frames.
 
-    Returns True when the fraction of changed pixels exceeds ``min_area_frac``.
-    The first frame always reports "motion" so detection can run immediately.
+    Returns True only when there's a **solid, compact** region of change — not
+    just enough changed pixels. This rejects two common false triggers:
+
+    * **Sensor noise / compression grain** — removed by a median blur (which
+      also erases thin specks without smearing real edges) plus a morphological
+      opening of the change mask.
+    * **Decode-artifact bands** — a corrupt camera frame often shows a long,
+      *thin* line of bad pixels. That line has lots of changed pixels but is
+      only a few pixels tall, so we reject any blob whose shorter side is below
+      ``min_blob_px``.
+
+    The first frame reports **no** motion (nothing to compare against yet), so a
+    static scene never triggers detection until something really moves.
     """
 
-    def __init__(self, min_area_frac: float = 0.003, diff_threshold: int = 25) -> None:
+    def __init__(self, min_area_frac: float = 0.003, diff_threshold: int = 25,
+                 min_blob_px: int = 14) -> None:
         self.min_area_frac = min_area_frac
         self.diff_threshold = diff_threshold
+        self.min_blob_px = min_blob_px
         self._prev = None
+        self._kernel = None
 
     def update(self, gray) -> bool:
         import cv2  # local import: keep module importable without OpenCV
 
+        # Median blur kills salt-and-pepper noise and thin corruption lines
+        # without widening real edges (a Gaussian blur would smear a 1px line
+        # into a band that survives later filtering).
+        clean = cv2.medianBlur(gray, 5)
         if self._prev is None:
-            self._prev = gray
-            return True
-        delta = cv2.absdiff(self._prev, gray)
-        self._prev = gray
+            self._prev = clean
+            return False
+        delta = cv2.absdiff(self._prev, clean)
+        self._prev = clean
         _, thresh = cv2.threshold(delta, self.diff_threshold, 255, cv2.THRESH_BINARY)
-        changed = int((thresh > 0).sum())
-        total = thresh.shape[0] * thresh.shape[1]
-        return total > 0 and (changed / total) >= self.min_area_frac
+        if self._kernel is None:
+            self._kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, self._kernel)
+
+        h, w = thresh.shape[:2]
+        min_area = self.min_area_frac * h * w
+        contours, _ = cv2.findContours(
+            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        for c in contours:
+            if cv2.contourArea(c) < min_area:
+                continue
+            _, _, bw, bh = cv2.boundingRect(c)
+            if min(bw, bh) >= self.min_blob_px:   # a real blob, not a thin line
+                return True
+        return False
 
 
 class PersonDetector:
@@ -84,12 +205,21 @@ class PersonDetector:
     stream reconnection with backoff so a flaky camera doesn't kill the loop.
     """
 
-    def __init__(self, source: str, confidence: float = 0.5, roi=None) -> None:
+    def __init__(self, source: str, confidence: float = 0.5, roi=None,
+                 detect_size: int = 300) -> None:
         self.source = source
         self.confidence = confidence
         self.roi = roi          # optional [x, y, w, h]
+        # Net input resolution. 300 is the model's native size and most reliable
+        # for people; 512 recovers small/distant subjects (e.g. a far cat) at
+        # more CPU but can slightly hurt some person poses.
+        self.detect_size = int(detect_size) if detect_size else 300
         self._net = None
         self._cap = None
+        self._read_fails = 0
+        self.frame_size = None  # (w, h) of the last good frame; None until one reads
+        self._last_frame = None    # last frame the net analysed (for snapshots)
+        self._last_boxes = []      # detections on that frame: [(label, score, box)]
         self._motion = MotionPrefilter()
 
     # -- model / stream lifecycle -------------------------------------------
@@ -108,8 +238,21 @@ class PersonDetector:
     def _ensure_cap(self):
         import cv2
 
+        _quiet_cv2_logs(cv2)
         if self._cap is None or not self._cap.isOpened():
-            self._cap = cv2.VideoCapture(self.source)
+            # Force the FFmpeg backend explicitly: some OpenCV builds otherwise
+            # pick a backend that mishandles RTSP authentication, so a stream
+            # that works in VLC fails here with "401 Unauthorized". FFmpeg does
+            # the same Basic/Digest auth VLC does.
+            cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                cap.release()
+                raise CameraError(
+                    f"could not open the camera stream "
+                    f"{mask_credentials(self.source)} — check the URL, and the "
+                    "username/password if the camera needs a login"
+                )
+            self._cap = cap
         return self._cap
 
     def _crop(self, frame):
@@ -119,39 +262,113 @@ class PersonDetector:
         return frame[y:y + h, x:x + w]
 
     # -- inference -----------------------------------------------------------
-    def detect_in_frame(self, frame) -> bool:
-        """Run the net on a single BGR frame and return True if a person shows."""
+    def _detect_boxes(self, frame, floor: float) -> list:
+        """Return ``[(label, score, (x1, y1, x2, y2))]`` for one BGR frame.
+
+        Coordinates are pixels within the (ROI-cropped) frame the net analysed.
+        """
         import cv2
 
-        frame = self._crop(frame)
+        cropped = self._crop(frame)
+        h, w = cropped.shape[:2]
+        s = self.detect_size
         blob = cv2.dnn.blobFromImage(
-            cv2.resize(frame, (300, 300)),
+            cv2.resize(cropped, (s, s)),
             scalefactor=0.007843,        # 1/127.5
-            size=(300, 300),
+            size=(s, s),
             mean=127.5,
         )
         net = self._ensure_net()
         net.setInput(blob)
-        detections = net.forward()
-        return person_in_detections(detections, self.confidence)
+        det = net.forward()
+        boxes = []
+        for i in range(det.shape[2]):
+            score = float(det[0, 0, i, 2])
+            cid = int(det[0, 0, i, 1])
+            if score >= floor and 0 <= cid < len(CLASSES):
+                x1 = int(det[0, 0, i, 3] * w)
+                y1 = int(det[0, 0, i, 4] * h)
+                x2 = int(det[0, 0, i, 5] * w)
+                y2 = int(det[0, 0, i, 6] * h)
+                boxes.append((CLASSES[cid], score, (x1, y1, x2, y2)))
+        return boxes
 
-    def read_and_detect(self) -> bool:
-        """Grab one frame, apply the motion pre-filter, then detect.
+    @staticmethod
+    def _best(boxes, label: str) -> float:
+        return max((s for lab, s, _ in boxes if lab == label), default=0.0)
 
-        Returns True only when a person is detected. Returns False on read
-        failure (caller may back off and retry).
+    def detect_in_frame(self, frame) -> bool:
+        """Return True if a person is present in ``frame`` above the threshold."""
+        boxes = self._detect_boxes(frame, floor=min(0.3, self.confidence))
+        return self._best(boxes, "person") >= self.confidence
+
+    # Colours (BGR) for drawing boxes: person = green, cat = orange, other = grey.
+    _BOX_COLORS = {"person": (80, 220, 80), "cat": (40, 170, 240)}
+
+    def annotated_jpeg(self) -> bytes | None:
+        """JPEG of the last analysed frame with labelled detection boxes drawn."""
+        import cv2
+
+        if self._last_frame is None:
+            return None
+        img = self._last_frame.copy()
+        for label, score, (x1, y1, x2, y2) in self._last_boxes:
+            # Only draw boxes that actually count — a person at the trigger
+            # threshold, other classes at the label floor — so a corrupt frame's
+            # low-confidence guesses don't litter the snapshot.
+            floor = self.confidence if label == "person" else _LABEL_FLOOR
+            if score < floor:
+                continue
+            color = self._BOX_COLORS.get(label, (160, 160, 160))
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+            tag = f"{label} {score:.2f}"
+            ty = max(y1 - 6, 12)
+            cv2.putText(img, tag, (x1, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return buf.tobytes() if ok else None
+
+    def read_and_detect(self) -> FrameOutcome:
+        """Grab one frame, apply the motion pre-filter, then classify it.
+
+        Returns a :class:`FrameOutcome`. ``motion`` is False when nothing moved
+        (or a frame couldn't be read); when motion is seen, ``person`` says
+        whether a person cleared the threshold and ``labels`` lists the other
+        things seen (e.g. ``("cat",)``) so the caller can report *what* moved.
+        Raises :class:`CameraError` when the stream is really gone.
         """
         import cv2
 
-        cap = self._ensure_cap()
+        cap = self._ensure_cap()        # raises CameraError if it can't open
         ok, frame = cap.read()
         if not ok or frame is None:
-            self._cap = None        # force reconnect next call
-            return False
+            self._read_fails += 1
+            self._cap = None            # force a reconnect next call
+            # Tolerate a brief hiccup, but a run of empty reads means the
+            # stream is really gone — surface it so the loop can back off.
+            if self._read_fails >= 3:
+                raise CameraError(
+                    f"lost the camera stream {mask_credentials(self.source)} "
+                    "(no frames received)"
+                )
+            return FrameOutcome(motion=False, person=False)
+        self._read_fails = 0
+        self.frame_size = (frame.shape[1], frame.shape[0])
         gray = cv2.cvtColor(self._crop(frame), cv2.COLOR_BGR2GRAY)
         if not self._motion.update(gray):
-            return False
-        return self.detect_in_frame(frame)
+            return FrameOutcome(motion=False, person=False)
+
+        boxes = self._detect_boxes(frame, floor=min(0.3, self.confidence))
+        self._last_frame = self._crop(frame)   # what the net saw (box coords match)
+        self._last_boxes = boxes
+        person = self._best(boxes, "person") >= self.confidence
+        # Identify non-person movers (cats!) at a lower bar than a person needs,
+        # so a smaller/less-certain cat is still named rather than "something".
+        labels = tuple(
+            label
+            for label, score, _ in sorted(boxes, key=lambda b: -b[1])
+            if label != "person" and score >= _LABEL_FLOOR
+        )
+        return FrameOutcome(motion=True, person=person, labels=labels)
 
     def release(self) -> None:
         if self._cap is not None:

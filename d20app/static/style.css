@@ -45,6 +45,9 @@ select, input[type=text], input[type=password], input[type=number] {
   min-width: 0;
 }
 select { flex: 1; min-width: 180px; }
+.grid label input, .grid label select { width: 100%; }
+select.multi { width: 100%; min-height: 92px; flex: none; }
+.odds-msg { color: var(--accent); font-weight: 600; margin: 8px 0 0; font-size: 0.95rem; }
 button, .upload {
   border: none;
   border-radius: 8px;
@@ -77,3 +80,53 @@ summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
 .warn { color: var(--warn); font-size: 0.86rem; margin: 6px 0 0; }
 .hidden { display: none; }
 footer { margin-top: 20px; }
+
+/* Region-of-interest picker */
+.roi-stage { position: relative; display: inline-block; margin-top: 12px; max-width: 100%; }
+.roi-stage img {
+  display: block; max-width: 100%; height: auto;
+  border-radius: 8px; border: 1px solid var(--line);
+}
+.roi-stage canvas {
+  position: absolute; left: 0; top: 0;
+  cursor: crosshair; touch-action: none;
+}
+
+/* Activity log */
+.log-head { justify-content: space-between; }
+.log-head h2 { margin: 0; }
+.log-list {
+  max-height: 300px;
+  overflow-y: auto;
+  background: #0f1424;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.log-list > .muted { padding: 12px; margin: 0; }
+.log-row {
+  display: flex;
+  gap: 12px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  border-bottom: 1px solid rgba(42, 51, 80, 0.45);
+}
+.log-row:last-child { border-bottom: none; }
+.log-time {
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.log-msg { flex: 1; word-break: break-word; }
+.log-thumb {
+  height: 52px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  margin-left: auto;
+  display: block;
+  cursor: pointer;
+}
+.log-thumb:hover { border-color: var(--accent); }
+.log-treat .log-msg { color: var(--go); font-weight: 600; }
+.log-error .log-msg { color: var(--stop); }
+.log-motion .log-msg { color: var(--warn); }
+.log-info .log-msg { color: var(--muted); }

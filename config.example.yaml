@@ -10,11 +10,14 @@ camera_name: ""           # friendly name (filled in by auto-detect; display onl
 camera_username: ""       # only if the stream needs a login
 camera_password: ""
 
-# --- Speaker (Google Home / Nest — where the chime plays) ---
-speaker_name: ""          # exact name from the Google Home app, e.g. "Kitchen speaker"
+# --- Speaker(s) (Google Home / Nest — where the chime plays) ---
+speaker_names: []         # one or more exact names, e.g. ["Kitchen speaker", "Office"]
+speaker_name: ""          # legacy single name (still honoured if speaker_names is empty)
 
-# --- Sound ---
+# --- Sound / speech ---
 sound_file: "treat_chime.wav"   # a file in d20app/sounds/ (upload your own in the GUI)
+use_speech: false         # speak a message instead of playing the chime
+speech_text: "Give the cat a treat!"   # what to say when use_speech is true
 
 # --- Game rules ---
 dice_sides: 20            # 20 = D20, 100 = D100, ...
@@ -22,8 +25,15 @@ dc: 20                    # treat when the roll is >= this (DC20 on a D20 = only
 cooldown_seconds: 600     # minimum seconds between rolls (frequency interval)
 
 # --- Detection tuning ---
-person_confidence: 0.5    # 0..1; raise to reduce false triggers
-roi: null                 # optional [x, y, w, h] to limit detection to part of the frame
+person_confidence: 0.4    # 0..1; raise to reduce false triggers, lower to catch harder poses
+confirm_frames: 3         # require a person in this many frames in a row (cuts false positives)
+detect_size: 300          # neural-net input size; 300 = reliable for people, 512 = distant cats (more CPU)
+scan_fps: 10.0            # frames/sec read from the camera; lower = less CPU (good for the main feed)
+roi: null                 # [x, y, w, h] region of interest — set this visually in the GUI
+
+# --- Quiet time (no chimes during this daily window; leave blank to disable) ---
+quiet_start: ""           # "HH:MM" 24h, e.g. "22:00"
+quiet_end: ""             # "HH:MM" 24h, e.g. "07:00" (may wrap past midnight)
 
 # --- Casting behaviour ---
 dont_interrupt_playback: false   # if true, skip the chime when the speaker is already playing

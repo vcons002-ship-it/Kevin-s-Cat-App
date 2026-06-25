@@ -12,28 +12,36 @@ const api = async (path, opts) => {
 const FIELDS = [
   "camera_url", "camera_username", "camera_password",
   "dice_sides", "dc", "cooldown_seconds", "person_confidence",
+  "confirm_frames", "detect_size", "scan_fps", "quiet_start", "quiet_end",
 ];
+
+// Region of interest [x, y, w, h] in original-frame pixels (null = whole frame).
+let roi = null;
 
 let speakers = [];
 
 // ---- populate dropdowns ----------------------------------------------------
 async function loadSpeakers(detect) {
   const sel = $("speaker-select");
-  sel.innerHTML = `<option>${detect ? "Detecting…" : "Loading…"}</option>`;
+  sel.innerHTML = `<option disabled>${detect ? "Detecting…" : "Loading…"}</option>`;
   const { body } = await api("/api/speakers");
   speakers = body || [];
   sel.innerHTML = "";
   if (!speakers.length) {
-    sel.innerHTML = `<option value="">No speakers found — check same WiFi</option>`;
+    sel.innerHTML = `<option value="" disabled>No speakers found — check same WiFi</option>`;
   }
   for (const s of speakers) {
     const opt = document.createElement("option");
     opt.value = s.name;
     opt.textContent = s.is_group ? `${s.name}  (group)` : s.name;
+    if (savedSpeakers.includes(s.name)) opt.selected = true;
     sel.appendChild(opt);
   }
-  if (savedSpeaker) sel.value = savedSpeaker;
   updateSpeakerWarning();
+}
+
+function selectedSpeakers() {
+  return Array.from($("speaker-select").selectedOptions).map((o) => o.value).filter(Boolean);
 }
 
 async function loadCameras(detect) {
@@ -65,11 +73,12 @@ async function loadSounds() {
 }
 
 function updateSpeakerWarning() {
-  const sel = $("speaker-select");
+  const chosen = selectedSpeakers();
+  const groups = speakers.filter((s) => s.is_group && chosen.includes(s.name));
   const warn = $("speaker-warn");
-  const chosen = speakers.find((s) => s.name === sel.value);
-  if (chosen && chosen.is_group) {
-    warn.textContent = "⚠ This is a speaker group — the chime will play on every speaker in it.";
+  if (groups.length) {
+    warn.textContent = `⚠ ${groups.map((g) => g.name).join(", ")} `
+      + `${groups.length > 1 ? "are groups" : "is a group"} — plays on every speaker in it.`;
     warn.classList.remove("hidden");
   } else {
     warn.classList.add("hidden");
@@ -83,13 +92,19 @@ function updateOdds() {
     const winning = Math.max(0, Math.min(sides, sides - dc + 1));
     const pct = ((winning / sides) * 100).toFixed(1);
     $("odds").textContent = `${winning} in ${sides} (${pct}%)`;
+    $("odds-msg").textContent = `For those who are mathematically challenged: ${pct}%`;
   } else {
     $("odds").textContent = "—";
+    $("odds-msg").textContent = "";
   }
 }
 
 // ---- config load/save ------------------------------------------------------
-let savedSpeaker = "", savedCameraUrl = "", savedSound = "";
+let savedSpeakers = [], savedCameraUrl = "", savedSound = "";
+
+function applySpeechVisibility() {
+  $("speech-row").classList.toggle("hidden", !$("use_speech").checked);
+}
 
 async function loadConfig() {
   const { body: cfg } = await api("/api/config");
@@ -99,10 +114,78 @@ async function loadConfig() {
     if ($(f) && cfg[f] !== undefined && cfg[f] !== null) $(f).value = cfg[f];
   }
   $("dont_interrupt_playback").checked = !!cfg.dont_interrupt_playback;
-  savedSpeaker = cfg.speaker_name || "";
+  $("use_speech").checked = !!cfg.use_speech;
+  if (cfg.speech_text) $("speech_text").value = cfg.speech_text;
+  applySpeechVisibility();
+  roi = Array.isArray(cfg.roi) && cfg.roi.length === 4 ? cfg.roi.slice() : null;
+  $("roi-note").textContent = roi ? `Region set: ${roi[2]}×${roi[3]}px` : "";
+  savedSpeakers = Array.isArray(cfg.speaker_names) && cfg.speaker_names.length
+    ? cfg.speaker_names.slice()
+    : (cfg.speaker_name ? [cfg.speaker_name] : []);
   savedCameraUrl = cfg.camera_url || "";
   savedSound = cfg.sound_file || "";
   updateOdds();
+}
+
+// ---- region-of-interest picker --------------------------------------------
+function drawRoiBox() {
+  const cv = $("roi-canvas"), img = $("roi-img");
+  if (!cv.getContext) return;
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!roi || !img.naturalWidth) return;
+  const sx = cv.width / img.naturalWidth, sy = cv.height / img.naturalHeight;
+  ctx.strokeStyle = "#7c5cff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(roi[0] * sx, roi[1] * sy, roi[2] * sx, roi[3] * sy);
+}
+
+async function grabPreview() {
+  const note = $("roi-note");
+  note.textContent = "Grabbing a frame…";
+  await saveConfig();                 // make sure the camera URL/login are saved
+  const img = $("roi-img");
+  img.onload = () => {
+    $("roi-stage").classList.remove("hidden");
+    const cv = $("roi-canvas");
+    cv.width = img.clientWidth;
+    cv.height = img.clientHeight;
+    drawRoiBox();
+    note.textContent = roi
+      ? `Region set: ${roi[2]}×${roi[3]}px — drag to change`
+      : "Drag a box over the area to watch";
+  };
+  img.onerror = () => {
+    note.textContent = "Couldn't grab a frame — is the camera reachable?";
+  };
+  img.src = "/api/preview?ts=" + Date.now();
+}
+
+function wireRoiCanvas() {
+  const cv = $("roi-canvas"), img = $("roi-img");
+  let start = null;
+  const toImg = (e) => {
+    const r = cv.getBoundingClientRect();
+    const sx = img.naturalWidth / cv.width, sy = img.naturalHeight / cv.height;
+    return [
+      Math.round(Math.max(0, e.clientX - r.left) * sx),
+      Math.round(Math.max(0, e.clientY - r.top) * sy),
+    ];
+  };
+  cv.onmousedown = (e) => { start = toImg(e); };
+  cv.onmousemove = (e) => {
+    if (!start) return;
+    const [x, y] = toImg(e);
+    roi = [Math.min(start[0], x), Math.min(start[1], y),
+           Math.abs(x - start[0]), Math.abs(y - start[1])];
+    drawRoiBox();
+  };
+  cv.onmouseup = () => {
+    start = null;
+    if (roi && (roi[2] < 8 || roi[3] < 8)) roi = null;   // ignore stray clicks
+    drawRoiBox();
+    $("roi-note").textContent = roi ? `Region set: ${roi[2]}×${roi[3]}px` : "Cleared";
+  };
 }
 
 function gatherConfig() {
@@ -114,12 +197,20 @@ function gatherConfig() {
     camera_url: cameraUrl,
     camera_name: camName,
     camera_username: $("camera_username").value.trim(),
-    speaker_name: $("speaker-select").value,
+    speaker_names: selectedSpeakers(),
     sound_file: $("sound-select").value,
+    use_speech: $("use_speech").checked,
+    speech_text: $("speech_text").value.trim() || "Give the cat a treat!",
     dice_sides: Number($("dice_sides").value),
     dc: Number($("dc").value),
     cooldown_seconds: Number($("cooldown_seconds").value),
     person_confidence: Number($("person_confidence").value),
+    confirm_frames: Number($("confirm_frames").value),
+    detect_size: Number($("detect_size").value),
+    scan_fps: Number($("scan_fps").value),
+    quiet_start: $("quiet_start").value,
+    quiet_end: $("quiet_end").value,
+    roi: roi,
     dont_interrupt_playback: $("dont_interrupt_playback").checked,
   };
   const pw = $("camera_password").value;
@@ -158,13 +249,69 @@ async function refreshStatus() {
   detail.textContent = parts.join("  ·  ");
 }
 
+// ---- activity log ----------------------------------------------------------
+let lastLogKey = "";
+
+function fmtTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+
+async function loadLog() {
+  const { body } = await api("/api/log?limit=200");
+  const entries = body || [];
+  // Skip the re-render (and preserve scroll position) when nothing changed.
+  const key = entries.length ? `${entries.length}:${entries[0].ts}` : "0";
+  if (key === lastLogKey) return;
+  lastLogKey = key;
+
+  const list = $("log-list");
+  if (!entries.length) {
+    list.innerHTML = `<p class="muted">No activity yet.</p>`;
+    return;
+  }
+  list.innerHTML = "";
+  for (const e of entries) {
+    const row = document.createElement("div");
+    row.className = `log-row log-${e.kind || "info"}`;
+    const t = document.createElement("span");
+    t.className = "log-time";
+    t.textContent = fmtTime(e.ts);
+    const m = document.createElement("span");
+    m.className = "log-msg";
+    m.textContent = e.message;
+    row.append(t, m);
+    if (e.image) {
+      const a = document.createElement("a");
+      a.href = `/snapshots/${e.image}`;
+      a.target = "_blank";
+      a.title = "Open full snapshot";
+      const img = document.createElement("img");
+      img.className = "log-thumb";
+      img.src = `/snapshots/${e.image}`;
+      img.alt = "detection snapshot";
+      a.appendChild(img);
+      row.appendChild(a);
+    }
+    list.appendChild(row);
+  }
+}
+
 // ---- wiring ----------------------------------------------------------------
 function wire() {
   $("speaker-refresh").onclick = () => loadSpeakers(true);
   $("camera-refresh").onclick = () => loadCameras(true);
   $("speaker-select").onchange = updateSpeakerWarning;
+  $("use_speech").onchange = applySpeechVisibility;
   $("dice_sides").oninput = updateOdds;
   $("dc").oninput = updateOdds;
+  $("quiet-clear").onclick = () => { $("quiet_start").value = ""; $("quiet_end").value = ""; };
+  $("roi-grab").onclick = grabPreview;
+  $("roi-clear").onclick = () => { roi = null; drawRoiBox(); $("roi-note").textContent = "Region cleared"; };
+  wireRoiCanvas();
 
   $("sound-upload").onchange = async (e) => {
     const file = e.target.files[0];
@@ -177,11 +324,17 @@ function wire() {
   };
 
   $("test-btn").onclick = async () => {
-    await saveConfig(); // ensure chosen speaker/sound are persisted first
+    await saveConfig(); // ensure chosen speakers/sound/message are persisted first
     $("test-btn").textContent = "Playing…";
     const { ok, body } = await api("/api/test", { method: "POST" });
-    $("test-btn").textContent = "▶ Test sound";
-    if (!ok) alert((body && body.error) || "Could not play on the speaker.");
+    $("test-btn").textContent = "▶ Test";
+    if (!ok) alert((body && body.error) || "Could not play on the speaker(s).");
+  };
+
+  $("log-clear").onclick = async () => {
+    await api("/api/log/clear", { method: "POST" });
+    lastLogKey = "";
+    loadLog();
   };
 
   $("save-btn").onclick = saveConfig;
@@ -189,11 +342,18 @@ function wire() {
     await saveConfig();
     await api("/api/start", { method: "POST" });
     refreshStatus();
+    loadLog();
   };
   $("stop-btn").onclick = async () => {
     await api("/api/stop", { method: "POST" });
     refreshStatus();
+    loadLog();
   };
+}
+
+async function loadVersion() {
+  const { body } = await api("/api/version");
+  if (body && body.version) $("app-version").textContent = "v" + body.version;
 }
 
 async function init() {
@@ -201,7 +361,9 @@ async function init() {
   await loadConfig();
   await Promise.all([loadSpeakers(false), loadCameras(false), loadSounds()]);
   refreshStatus();
-  setInterval(refreshStatus, 3000);
+  loadLog();
+  loadVersion();
+  setInterval(() => { refreshStatus(); loadLog(); }, 3000);
 }
 
 init();

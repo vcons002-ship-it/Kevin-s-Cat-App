@@ -15,3 +15,12 @@ config.yaml
 d20app/sounds/*
 !d20app/sounds/generate_chime.py
 !d20app/sounds/treat_chime.wav
+
+# Runtime activity log (written by the app)
+activity.log
+
+# Diagnostic snapshot from check_camera.py
+snapshot.jpg
+
+# Detection snapshots written at runtime
+snapshots/

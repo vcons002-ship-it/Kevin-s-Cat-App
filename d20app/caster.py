@@ -69,13 +69,29 @@ class SoundServer:
             self._httpd = None
 
 
+import hashlib
+
+
+def _as_list(names) -> list:
+    """Accept a single name or a list; return a clean list of names."""
+    if isinstance(names, str):
+        names = [names]
+    return [n for n in (names or []) if n]
+
+
 class Caster:
-    """Discover a speaker by name and cast sounds to it."""
+    """Cast sounds/speech to one or more Cast devices.
+
+    Each cast opens a fresh connection, plays, then disconnects — simple and
+    reliable. (A persistent-connection variant that avoids the brief
+    "connecting" chime is planned, but it was unstable and was reverted.)
+    """
 
     def __init__(self, sound_server: SoundServer) -> None:
         self.sound_server = sound_server
 
-    def _get_speaker(self, name: str):
+    # -- connection / playback ----------------------------------------------
+    def _connect(self, name: str):
         import pychromecast
 
         chromecasts, browser = pychromecast.get_listed_chromecasts(
@@ -85,54 +101,74 @@ class Caster:
             pychromecast.discovery.stop_discovery(browser)
             raise LookupError(f"Cast device named {name!r} not found on the network")
         cast = chromecasts[0]
-        cast.wait()
+        cast.wait(timeout=15)
         return cast, browser
 
-    def play_sound(
-        self,
-        speaker_name: str,
-        filename: str,
-        dont_interrupt: bool = False,
-        clip_seconds: float = 3.0,
-    ) -> bool:
-        """Cast ``filename`` to ``speaker_name``.
+    def _play_one(self, name: str, url: str, content_type: str,
+                  dont_interrupt: bool) -> bool:
+        """Open a fresh connection to one speaker, play, then disconnect."""
+        import pychromecast
 
-        Returns True if the sound was cast, False if skipped because
-        ``dont_interrupt`` is set and the speaker is actively playing media.
-        Restores the speaker's prior volume afterwards.
-        """
-        import pychromecast  # noqa: F401  (ensures dependency present early)
-
-        self.sound_server.start()
-        cast, browser = self._get_speaker(speaker_name)
+        cast, browser = self._connect(name)
         try:
             mc = cast.media_controller
             if dont_interrupt:
                 mc.update_status()
                 if mc.status.player_is_playing:
                     return False
-
-            prior_volume = cast.status.volume_level if cast.status else None
-
-            url = self.sound_server.url_for(filename)
-            content_type = mimetypes.guess_type(filename)[0] or "audio/wav"
             mc.play_media(url, content_type)
             mc.block_until_active(timeout=10)
-            # Let the short clip play out, then restore the speaker's volume.
-            time.sleep(clip_seconds)
-            if prior_volume is not None:
-                cast.set_volume(prior_volume)
             return True
         finally:
-            import pychromecast
-
             pychromecast.discovery.stop_discovery(browser)
 
-    def say(self, speaker_name: str, text: str) -> None:
-        """Optional future hook: speak a message (e.g. "Give the cat a treat!").
+    def play_media(self, names, url: str, content_type: str,
+                   dont_interrupt: bool = False) -> bool:
+        """Play ``url`` on every device in ``names``.
 
-        Disabled for now — Kevin chose a sound and will pick a spoken message
-        later. Would synthesise TTS (e.g. via gTTS) into SOUNDS_DIR and cast it
-        the same way as :meth:`play_sound`.
+        Returns True if it started on at least one device. Raises only if every
+        target failed. With ``dont_interrupt`` a device already playing media is
+        skipped.
         """
-        raise NotImplementedError("Spoken messages are not enabled yet.")
+        self.sound_server.start()
+        played, errors = 0, []
+        for name in _as_list(names):
+            try:
+                if self._play_one(name, url, content_type, dont_interrupt):
+                    played += 1
+            except Exception as exc:        # noqa: BLE001
+                errors.append(f"{name}: {exc}")
+        if played == 0 and errors:
+            raise RuntimeError("; ".join(errors))
+        return played > 0
+
+    def play_sound(self, names, filename: str, dont_interrupt: bool = False) -> bool:
+        """Cast a file from the sound folder to one or more speakers."""
+        url = self.sound_server.url_for(filename)
+        content_type = mimetypes.guess_type(filename)[0] or "audio/wav"
+        return self.play_media(names, url, content_type, dont_interrupt)
+
+    def say(self, names, text: str, dont_interrupt: bool = False) -> bool:
+        """Speak ``text`` on one or more speakers (synthesised once, then cached)."""
+        return self.play_sound(names, self._synthesize(text), dont_interrupt)
+
+    def _synthesize(self, text: str) -> str:
+        """Render ``text`` to an MP3 in SOUNDS_DIR (cached by content); return name."""
+        digest = hashlib.sha1(text.strip().encode("utf-8")).hexdigest()[:12]
+        filename = f"speech_{digest}.mp3"
+        path = os.path.join(self.sound_server.directory, filename)
+        if os.path.exists(path):
+            return filename
+        try:
+            from gtts import gTTS
+        except Exception as exc:        # noqa: BLE001
+            raise RuntimeError(
+                "Spoken messages need the gTTS package — run setup.sh again."
+            ) from exc
+        try:
+            gTTS(text=text, lang="en").save(path)
+        except Exception as exc:        # noqa: BLE001
+            raise RuntimeError(
+                f"Couldn't synthesize speech (needs internet access): {exc}"
+            ) from exc
+        return filename

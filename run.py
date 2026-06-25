@@ -21,6 +21,7 @@ if sys.version_info < (3, 11):
         "Run it via the venv created by setup.sh: ./venv/bin/python run.py"
     )
 
+from d20app import __version__
 from d20app import config as config_mod
 from d20app.caster import detect_lan_ip
 from d20app.loop import DetectionLoop
@@ -38,7 +39,7 @@ def main() -> None:
 
     lan_ip = detect_lan_ip()
     port = cfg.web_port
-    print("\n  Kevin's Cat App is running!")
+    print(f"\n  Kevin's Cat App v{__version__} is running!")
     print(f"  Open the GUI:  http://{lan_ip}:{port}   (or http://localhost:{port})\n")
 
     # threaded=True so discovery endpoints (which block) don't freeze the page.
