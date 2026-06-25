@@ -54,8 +54,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **59 automated tests**, including a detection-accuracy regression guard that
-  would catch a broken model.
+- **67 automated tests**, including a detection-accuracy regression guard over
+  45 cat images (incl. multi-cat scenes) — none read as a person at the default —
+  and a treat-cast regression guard so the speaker path can't silently break.
 
 ---
 
@@ -69,8 +70,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [ ] "Trigger on entry only" tracking (ignore someone who lingers).
 
 ### Speakers & output
-- [ ] **No "connecting" chime** — hold Cast connections open safely between
-      treats (a first attempt was reverted for crashing; needs a stable redo).
+- [x] **No "connecting" chime** — hold Cast connections open between treats.
+      Reimplemented in 0.3.6 with health-checked reuse, retry-once on a dead
+      socket, and release on stop. (The earlier revert was actually a misdiagnosed
+      `NameError`, fixed in 0.3.6.)
 - [ ] **Per-speaker volume**, and a fixed "treat volume" that restores after.
 - [ ] **Preset spoken phrases** / a random message from a list.
 - [ ] TTS **voice/language** options and an **offline** fallback (e.g. pyttsx3).

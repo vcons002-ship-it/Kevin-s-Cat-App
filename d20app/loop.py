@@ -146,18 +146,19 @@ class DetectionLoop:
             f"(speakers: {speakers_label}, treat on d{cfg.dice_sides} ≥ {cfg.dc}).",
         )
         try:
-            self._loop_body(cfg, detector, gate, caster)
+            self._loop_body(cfg, detector, gate, caster, targets, speakers_label)
         except Exception as exc:  # keep the GUI informed rather than dying silently
             log.exception("Detection loop crashed")
             self.status.last_error = str(exc)
             self.activity.add("error", f"Detection loop crashed: {exc}")
         finally:
             detector.release()
+            caster.close()          # drop held speaker connections when we stop
             self.status.running = False
             log.info("Detection loop stopped")
             self.activity.add("info", "■ Stopped watching.")
 
-    def _loop_body(self, cfg, detector, gate, caster) -> None:
+    def _loop_body(self, cfg, detector, gate, caster, targets, speakers_label) -> None:
         backoff = 1.0
         last_cam_error = ""        # so a flaky camera doesn't flood the log
         connected = False          # log once when the first frame actually reads
@@ -250,37 +251,48 @@ class DetectionLoop:
                 continue
 
             self.status.treats += 1
-            what = "Spoke the message on" if cfg.use_speech else "Chime sent to"
-            try:
-                if cfg.use_speech:
-                    cast = caster.say(targets, cfg.speech_text,
-                                      dont_interrupt=cfg.dont_interrupt_playback)
-                else:
-                    cast = caster.play_sound(targets, cfg.sound_file,
-                                             dont_interrupt=cfg.dont_interrupt_playback)
-                if cast:
-                    self.activity.add(
-                        "treat",
-                        f"Person detected — {roll_desc}: TREAT! 🎉 "
-                        f"{what} {speakers_label}.",
-                        image=image,
-                    )
-                else:
-                    self.activity.add(
-                        "roll",
-                        f"Person detected — {roll_desc}: TREAT, but the "
-                        f"speaker(s) were already playing — skipped.",
-                        image=image,
-                    )
-            except Exception as exc:
-                self.status.last_error = f"cast error: {exc}"
-                log.warning("Failed to cast sound: %s", exc)
+            self._cast_for_treat(cfg, caster, targets, speakers_label,
+                                 result, roll_desc, image)
+
+    def _cast_for_treat(self, cfg, caster, targets, speakers_label,
+                        result, roll_desc, image) -> None:
+        """Cast the chime/speech for a won roll and log the outcome.
+
+        Split out from the loop body so it takes its speaker arguments explicitly
+        (``targets`` / ``speakers_label``) rather than reaching for ``_run``'s
+        locals — that cross-method reference was the old ``NameError`` crash.
+        """
+        what = "Spoke the message on" if cfg.use_speech else "Chime sent to"
+        try:
+            if cfg.use_speech:
+                cast = caster.say(targets, cfg.speech_text,
+                                  dont_interrupt=cfg.dont_interrupt_playback)
+            else:
+                cast = caster.play_sound(targets, cfg.sound_file,
+                                         dont_interrupt=cfg.dont_interrupt_playback)
+            if cast:
                 self.activity.add(
-                    "error",
-                    f"Rolled a treat ({result.value}) but couldn't reach "
-                    f"{speakers_label}: {exc}",
+                    "treat",
+                    f"Person detected — {roll_desc}: TREAT! 🎉 "
+                    f"{what} {speakers_label}.",
                     image=image,
                 )
+            else:
+                self.activity.add(
+                    "roll",
+                    f"Person detected — {roll_desc}: TREAT, but the "
+                    f"speaker(s) were already playing — skipped.",
+                    image=image,
+                )
+        except Exception as exc:
+            self.status.last_error = f"cast error: {exc}"
+            log.warning("Failed to cast sound: %s", exc)
+            self.activity.add(
+                "error",
+                f"Rolled a treat ({result.value}) but couldn't reach "
+                f"{speakers_label}: {exc}",
+                image=image,
+            )
 
     # -- one-off test --------------------------------------------------------
     def test_cast(self) -> None:

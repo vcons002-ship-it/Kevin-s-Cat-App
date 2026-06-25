@@ -14,8 +14,12 @@ It runs through OpenCV's built-in `cv2.dnn` module — no PyTorch, no TensorFlow
 no GPU, and no separate AI service.
 
 Measured accuracy (MobileNetSSD_deploy weights): **99.4%** of 170 PennFudanPed
-pedestrian images detected at confidence 0.5, with **0** false-positive people
-across a set of cat images.
+pedestrian images detected at confidence 0.5. Across a 45-image cat set (35
+single cats + 10 multi-cat scenes, tested at 300px and 512px) no single cat is
+read as a person; a couple of dense cat *clusters* do produce a weak `person`
+box. We accept those rather than suppress them, because a weak person box over a
+cat is also what a person *carrying* a cat looks like — see the multi-cat test's
+`KNOWN_CLUSTER_MISREADS` in `tests/test_detection_accuracy.py`.
 
 ## Re-fetching the weights
 

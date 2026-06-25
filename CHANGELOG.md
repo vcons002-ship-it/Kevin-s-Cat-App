@@ -11,6 +11,74 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.3.6] — 2026-06-25
+
+### Fixed
+- **Treat-cast crash (`name 'speakers_label' is not defined`).** The cast path in
+  the detection loop referenced `targets`/`speakers_label` from `_run`'s scope
+  while running inside the separate `_loop_body` method, so **every won roll
+  crashed the loop**. The cast handling is now a `_cast_for_treat` method that
+  takes its speaker arguments explicitly. (Introduced with the multi-speaker work
+  in 0.3.0; the 0.3.2 casting revert only touched `caster.py`, so this lived on.)
+
+### Added
+- **Persistent speaker connections are back (no "connecting" chime).** The
+  `Caster` again caches each speaker's Cast connection and reuses it across
+  treats, so only the first cast pays the discover/connect cost. Hardened over the
+  original attempt: a cached connection is health-checked before use, and a play
+  that fails on a silently-dead socket is dropped and **retried once** on a fresh
+  connection before the speaker is reported failed. Held connections are released
+  when watching stops (`Caster.close()` from the loop's shutdown). Multiple
+  speakers and spoken messages keep working.
+
+## [0.3.5] — 2026-06-25
+
+### Changed
+- **Stricter detection defaults to keep cats from ever earning a treat.**
+  `person_confidence` 0.4 → **0.5** and `confirm_frames` 3 → **4**. Video testing
+  (people, cats, and person+cat clips replayed through the full pipeline) showed
+  two things: on still frames 0.5 cleanly separates cats (worst 0.474) from people
+  (all ≥ 0.71), but a cat *in motion* can briefly spike much higher — a sprawled
+  cat hit person=0.93 for a frame or two. A single high frame is therefore not
+  safe to trust, so requiring **4 consecutive** person frames (up from 3) is the
+  real guard; the nearest a cat came was 2 in a row. People sustain easily (a
+  walking person held 100+ frames), so the extra frame costs ~0.1 s of latency
+  and no missed detections. Existing configs are untouched; this only moves the
+  defaults for new installs (`d20app/config.py`, `config.example.yaml`).
+
+## [0.3.4] — 2026-06-25
+
+### Reverted
+- **Cat-overlap person suppression (from 0.3.3) is removed.** Suppressing a
+  low-confidence `person` box that an animal box covers is indistinguishable
+  from a person *carrying* a cat, so it risked missing a real person — the one
+  failure this app can't tolerate. We now accept that a dense pile of cats may
+  occasionally trigger a (harmless) treat-roll rather than ever drop a person.
+  The broadened 45-image cat set stays; the multi-cat test now pins the small
+  set of tolerated cluster misreads (`tests/test_detection_accuracy.py`,
+  `KNOWN_CLUSTER_MISREADS`) so the rate can't grow unnoticed.
+
+## [0.3.3] — 2026-06-25
+
+### Fixed
+- **Cat clusters no longer misread as a person** — a group of cats (several
+  eating from one bowl, two entangled cats) could make the model emit a weak,
+  low-confidence `person` box over the pile. The detector now suppresses a
+  `person` box that scores below a trust threshold when an animal detection
+  (`cat`/`dog`/`bird`/…) covers it, so cat scenes never trigger a treat. A
+  confident person box — e.g. someone *holding* a cat — is always believed, so
+  this costs no real-person detections (all people fixtures score ≥ 0.71 and are
+  unaffected).
+
+### Changed
+- **Broadened the cat regression set from 5 to 45 images** — added ~30 varied
+  single cats (breeds, indoor/outdoor, day/night, near/far) and a new
+  `tests/fixtures/cats_multi/` of 10 multi-cat scenes, all from Wikimedia Commons
+  (credited in `tests/fixtures/cats/CREDITS.md`). New tests assert **0** false
+  human flags across the whole set at both 300px and 512px, and a lenient floor
+  that the model still recognises cats as cats (so a future model swap can't go
+  silently blind to them).
+
 ## [0.3.2] — 2026-06-24
 
 ### Fixed

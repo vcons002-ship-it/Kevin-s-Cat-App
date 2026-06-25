@@ -80,17 +80,22 @@ def _as_list(names) -> list:
 
 
 class Caster:
-    """Cast sounds/speech to one or more Cast devices.
+    """Cast sounds/speech to one or more Cast devices, holding connections open.
 
-    Each cast opens a fresh connection, plays, then disconnects — simple and
-    reliable. (A persistent-connection variant that avoids the brief
-    "connecting" chime is planned, but it was unstable and was reverted.)
+    Connections are cached and reused across casts, so after the first play a
+    device doesn't re-discover/re-launch its receiver — that re-discovery is what
+    causes the brief "connecting" chime and delay. A cached connection that has
+    gone stale (or fails mid-play) is dropped and rebuilt lazily, so a flaky
+    network self-heals. Call :meth:`close` to release everything — the detection
+    loop does this when it stops watching.
     """
 
     def __init__(self, sound_server: SoundServer) -> None:
         self.sound_server = sound_server
+        self._lock = threading.Lock()
+        self._cache: dict = {}          # name -> (cast, browser)
 
-    # -- connection / playback ----------------------------------------------
+    # -- connection management ----------------------------------------------
     def _connect(self, name: str):
         import pychromecast
 
@@ -104,31 +109,71 @@ class Caster:
         cast.wait(timeout=15)
         return cast, browser
 
+    def _get(self, name: str):
+        """Return a connected cast for ``name``, reusing a live cached one."""
+        with self._lock:
+            entry = self._cache.get(name)
+        if entry is not None:
+            cast, _browser = entry
+            try:
+                if cast.socket_client and cast.socket_client.is_connected:
+                    return cast
+            except Exception:               # noqa: BLE001 — any probe error = stale
+                pass
+            self._drop(name)                # stale — rebuild below
+        cast, browser = self._connect(name)
+        with self._lock:
+            self._cache[name] = (cast, browser)
+        return cast
+
+    def _drop(self, name: str) -> None:
+        """Disconnect and forget the cached connection for ``name`` (if any)."""
+        with self._lock:
+            entry = self._cache.pop(name, None)
+        if not entry:
+            return
+        cast, browser = entry
+        try:
+            import pychromecast
+            pychromecast.discovery.stop_discovery(browser)
+        except Exception:                   # noqa: BLE001
+            pass
+        try:
+            cast.disconnect(blocking=False)
+        except Exception:                   # noqa: BLE001
+            pass
+
+    def close(self) -> None:
+        """Drop every held connection (on stop-watching / shutdown)."""
+        for name in list(self._cache):
+            self._drop(name)
+
+    # -- playback ------------------------------------------------------------
     def _play_one(self, name: str, url: str, content_type: str,
                   dont_interrupt: bool) -> bool:
-        """Open a fresh connection to one speaker, play, then disconnect."""
-        import pychromecast
+        """Play ``url`` on one speaker over its cached connection.
 
-        cast, browser = self._connect(name)
-        try:
-            mc = cast.media_controller
-            if dont_interrupt:
-                mc.update_status()
-                if mc.status.player_is_playing:
-                    return False
-            mc.play_media(url, content_type)
-            mc.block_until_active(timeout=10)
-            return True
-        finally:
-            pychromecast.discovery.stop_discovery(browser)
+        Returns True if playback started, False if skipped (``dont_interrupt``
+        and the device is already playing).
+        """
+        cast = self._get(name)
+        mc = cast.media_controller
+        if dont_interrupt:
+            mc.update_status()
+            if mc.status.player_is_playing:
+                return False
+        mc.play_media(url, content_type)
+        mc.block_until_active(timeout=10)
+        return True
 
     def play_media(self, names, url: str, content_type: str,
                    dont_interrupt: bool = False) -> bool:
-        """Play ``url`` on every device in ``names``.
+        """Play ``url`` on every device in ``names``, reusing held connections.
 
         Returns True if it started on at least one device. Raises only if every
         target failed. With ``dont_interrupt`` a device already playing media is
-        skipped.
+        skipped. A cached connection that fails is dropped and retried once with
+        a fresh one before the speaker is counted as failed.
         """
         self.sound_server.start()
         played, errors = 0, []
@@ -136,8 +181,14 @@ class Caster:
             try:
                 if self._play_one(name, url, content_type, dont_interrupt):
                     played += 1
-            except Exception as exc:        # noqa: BLE001
-                errors.append(f"{name}: {exc}")
+            except Exception:               # noqa: BLE001 — cached socket may be dead
+                self._drop(name)            # force a fresh connection and retry once
+                try:
+                    if self._play_one(name, url, content_type, dont_interrupt):
+                        played += 1
+                except Exception as exc:    # noqa: BLE001
+                    self._drop(name)
+                    errors.append(f"{name}: {exc}")
         if played == 0 and errors:
             raise RuntimeError("; ".join(errors))
         return played > 0
