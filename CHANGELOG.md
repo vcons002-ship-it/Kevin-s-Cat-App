@@ -11,6 +11,27 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.3.3] — 2026-06-25
+
+### Fixed
+- **Cat clusters no longer misread as a person** — a group of cats (several
+  eating from one bowl, two entangled cats) could make the model emit a weak,
+  low-confidence `person` box over the pile. The detector now suppresses a
+  `person` box that scores below a trust threshold when an animal detection
+  (`cat`/`dog`/`bird`/…) covers it, so cat scenes never trigger a treat. A
+  confident person box — e.g. someone *holding* a cat — is always believed, so
+  this costs no real-person detections (all people fixtures score ≥ 0.71 and are
+  unaffected).
+
+### Changed
+- **Broadened the cat regression set from 5 to 45 images** — added ~30 varied
+  single cats (breeds, indoor/outdoor, day/night, near/far) and a new
+  `tests/fixtures/cats_multi/` of 10 multi-cat scenes, all from Wikimedia Commons
+  (credited in `tests/fixtures/cats/CREDITS.md`). New tests assert **0** false
+  human flags across the whole set at both 300px and 512px, and a lenient floor
+  that the model still recognises cats as cats (so a future model swap can't go
+  silently blind to them).
+
 ## [0.3.2] — 2026-06-24
 
 ### Fixed

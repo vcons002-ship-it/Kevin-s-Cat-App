@@ -2,6 +2,9 @@
 
 We exercise ``person_in_detections`` directly with synthetic MobileNet-SSD
 output so we can prove the key requirement: trigger on a person, ignore a cat.
+We also exercise ``PersonDetector._person_present`` with synthetic boxes to
+prove the cat-cluster misread suppression (a weak person box covered by an
+animal box is dropped, but a confident one is always believed).
 """
 
 import numpy as np
@@ -49,6 +52,41 @@ def test_empty_detections_do_not_trigger():
 def test_confidence_threshold_boundary():
     det = _detections([(PERSON, 0.5)])
     assert detector.person_in_detections(det, confidence=0.5) is True   # >= is inclusive
+
+
+def _det(confidence=0.4):
+    return detector.PersonDetector(source="unused", confidence=confidence)
+
+
+def test_weak_person_box_over_a_cat_is_suppressed():
+    # The cat-cluster misread signature: a low-confidence person box almost
+    # entirely covered by an animal detection. It must be suppressed.
+    boxes = [("person", 0.45, (100, 100, 200, 300)),
+             ("cat", 0.40, (80, 80, 240, 320))]      # fully covers the person box
+    assert _det()._person_present(boxes) is False
+
+
+def test_confident_person_over_a_cat_still_triggers():
+    # Someone holding a cat: a confident person box (>= _PERSON_TRUST) is always
+    # believed, even when an animal box overlaps it.
+    boxes = [("person", 0.95, (100, 100, 200, 300)),
+             ("cat", 0.80, (80, 80, 240, 320))]
+    assert _det()._person_present(boxes) is True
+
+
+def test_weak_person_without_an_animal_still_triggers():
+    # No animal box to explain it, so a weak person box is taken at face value
+    # (preserves the 0.4 default's margin for hard human poses).
+    boxes = [("person", 0.45, (100, 100, 200, 300))]
+    assert _det()._person_present(boxes) is True
+
+
+def test_weak_person_barely_touching_a_cat_still_triggers():
+    # Only a sliver of the person box overlaps the cat box (< the cover
+    # threshold), so it is not treated as a misread.
+    boxes = [("person", 0.45, (100, 100, 200, 300)),
+             ("cat", 0.60, (190, 100, 260, 300))]     # overlaps ~10% of person box
+    assert _det()._person_present(boxes) is True
 
 
 def test_motion_prefilter_first_frame_and_change():

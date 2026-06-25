@@ -5,8 +5,11 @@ snapshot whose weights didn't match the prototxt, so detection scored 0 on
 everything). It runs the real PersonDetector over a few bundled real photos.
 
 Fixtures: tests/fixtures/people/ (PennFudanPed pedestrians, many rear-view),
-tests/fixtures/people_hard/ (people in hats/helmets/headgear), and
-tests/fixtures/cats/ (ImageNet domestic cats). All downscaled.
+tests/fixtures/people_hard/ (people in hats/helmets/headgear),
+tests/fixtures/cats/ (single cats — the original ImageNet five plus a broader
+Wikimedia Commons set of varied breeds/poses/lighting), and
+tests/fixtures/cats_multi/ (scenes with 2+ cats — clusters and pairs, the case
+most likely to be misread as a person). All downscaled; see cats/CREDITS.md.
 """
 
 import glob
@@ -21,6 +24,7 @@ FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 PEOPLE = sorted(glob.glob(os.path.join(FIXTURES, "people", "*.jpg")))
 PEOPLE_HARD = sorted(glob.glob(os.path.join(FIXTURES, "people_hard", "*.jpg")))
 CATS = sorted(glob.glob(os.path.join(FIXTURES, "cats", "*.jpg")))
+CATS_MULTI = sorted(glob.glob(os.path.join(FIXTURES, "cats_multi", "*.jpg")))
 
 
 def _detector():
@@ -31,6 +35,7 @@ def _detector():
 def test_fixtures_present():
     assert PEOPLE, "no people fixtures found"
     assert CATS, "no cat fixtures found"
+    assert CATS_MULTI, "no multi-cat fixtures found"
 
 
 def test_people_are_detected():
@@ -42,10 +47,45 @@ def test_people_are_detected():
 
 
 def test_cats_do_not_trigger():
-    """No cat image may be detected as a person (the whole point of the app)."""
+    """No single-cat image may be detected as a person (the whole point)."""
     det = _detector()
     for p in CATS:
         assert not det.detect_in_frame(cv2.imread(p)), f"cat triggered person: {p}"
+
+
+def test_multi_cat_scenes_do_not_trigger():
+    """Scenes with several cats must not be misread as a person.
+
+    A cluster of cats (e.g. several eating from one bowl, two entangled cats) is
+    the most person-shaped thing the camera will ever see that *isn't* a person,
+    and the model does sometimes emit a weak ``person`` box over one. The detector
+    suppresses such a box when an animal detection covers it (see
+    ``PersonDetector._person_present``); this is the regression guard for that.
+    Checked at both the 300px default and the selectable 512px detail.
+    """
+    assert CATS_MULTI, "no multi-cat fixtures found"
+    for size in (300, 512):
+        det = PersonDetector(source="unused", confidence=0.4, detect_size=size)
+        for p in CATS_MULTI:
+            assert not det.detect_in_frame(cv2.imread(p)), \
+                f"multi-cat scene triggered person at {size}px: {os.path.basename(p)}"
+
+
+def test_cats_are_recognised_as_cats():
+    """The model still *sees* cats (sanity that it isn't blind to them).
+
+    Recognising cats isn't the app's job — ignoring them is — so this floor is
+    deliberately lenient. It exists only so a future model swap that silently
+    stopped detecting cats entirely would be caught. Measured ~66% at 512px on
+    the single-cat set; we require at least half.
+    """
+    det = PersonDetector(source="unused", confidence=0.4, detect_size=512)
+    hits = 0
+    for p in CATS:
+        boxes = det._detect_boxes(cv2.imread(p), floor=0.3)
+        if any(label == "cat" for label, _, _ in boxes):
+            hits += 1
+    assert hits >= len(CATS) // 2, f"model recognised too few cats: {hits}/{len(CATS)}"
 
 
 def test_hard_pose_people_are_detected():

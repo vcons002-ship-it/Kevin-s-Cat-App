@@ -15,7 +15,10 @@ no GPU, and no separate AI service.
 
 Measured accuracy (MobileNetSSD_deploy weights): **99.4%** of 170 PennFudanPed
 pedestrian images detected at confidence 0.5, with **0** false-positive people
-across a set of cat images.
+across a 45-image cat set (35 single cats + 10 multi-cat scenes, tested at both
+300px and 512px). Cat *clusters* can fool the raw net into a weak `person` box,
+so the detector suppresses a low-confidence `person` box that an animal
+detection covers — see `PersonDetector._person_present` in `d20app/detector.py`.
 
 ## Re-fetching the weights
 

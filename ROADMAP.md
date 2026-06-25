@@ -54,8 +54,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **59 automated tests**, including a detection-accuracy regression guard that
-  would catch a broken model.
+- **68 automated tests**, including a detection-accuracy regression guard (45
+  cat images incl. multi-cat scenes — 0 false human flags) that would catch a
+  broken model or a cat misread as a person.
 
 ---
 
