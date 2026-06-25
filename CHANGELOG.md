@@ -11,6 +11,21 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.3.5] — 2026-06-25
+
+### Changed
+- **Stricter detection defaults to keep cats from ever earning a treat.**
+  `person_confidence` 0.4 → **0.5** and `confirm_frames` 3 → **4**. Video testing
+  (people, cats, and person+cat clips replayed through the full pipeline) showed
+  two things: on still frames 0.5 cleanly separates cats (worst 0.474) from people
+  (all ≥ 0.71), but a cat *in motion* can briefly spike much higher — a sprawled
+  cat hit person=0.93 for a frame or two. A single high frame is therefore not
+  safe to trust, so requiring **4 consecutive** person frames (up from 3) is the
+  real guard; the nearest a cat came was 2 in a row. People sustain easily (a
+  walking person held 100+ frames), so the extra frame costs ~0.1 s of latency
+  and no missed detections. Existing configs are untouched; this only moves the
+  defaults for new installs (`d20app/config.py`, `config.example.yaml`).
+
 ## [0.3.4] — 2026-06-25
 
 ### Reverted

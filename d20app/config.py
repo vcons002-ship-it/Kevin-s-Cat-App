@@ -43,8 +43,8 @@ class Config:
     cooldown_seconds: int = 600      # frequency interval between rolls
 
     # --- Detection tuning ---
-    person_confidence: float = 0.4   # min DNN confidence to count as a person (0.4 gives margin for hard poses)
-    confirm_frames: int = 3          # require a person in this many frames in a row
+    person_confidence: float = 0.5   # min DNN confidence to count as a person (0.5: clean person/cat split on stills, keeps hard poses ≥0.71)
+    confirm_frames: int = 4          # require a person in this many frames in a row (4 guards against a moving cat's transient high-confidence spike)
     detect_size: int = 300           # net input size; 300 = reliable for people (512 = distant cats, heavier)
     scan_fps: float = 10.0           # frames/sec to read from the camera (lower = less CPU)
     roi: list | None = None          # optional [x, y, w, h] crop of the frame (set in the GUI)

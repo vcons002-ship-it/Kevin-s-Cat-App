@@ -28,8 +28,8 @@ CATS_MULTI = sorted(glob.glob(os.path.join(FIXTURES, "cats_multi", "*.jpg")))
 
 
 def _detector():
-    # Mirror the app defaults (detect_size 300, confidence 0.4).
-    return PersonDetector(source="unused", confidence=0.4)
+    # Mirror the app defaults (detect_size 300, confidence 0.5).
+    return PersonDetector(source="unused", confidence=0.5)
 
 
 def test_fixtures_present():
@@ -53,32 +53,25 @@ def test_cats_do_not_trigger():
         assert not det.detect_in_frame(cv2.imread(p)), f"cat triggered person: {p}"
 
 
-# Dense cat scenes the detector tolerates as occasional false "person" triggers.
-# A low-confidence person box sitting on top of a pile of cats is exactly what a
-# person *carrying* a cat also looks like, so we deliberately do NOT suppress it:
-# a missed real person breaks the whole feature, while a stray treat-roll on a
-# clump of cats is harmless. This set is pinned so the misread rate can't grow
-# unnoticed as the model or fixtures change. (multi03: several cats around one
-# bowl, seen top-down; multi07: two entangled cats — both only at one detail size.)
-KNOWN_CLUSTER_MISREADS = {"multi03.jpg", "multi07.jpg"}
+def test_multi_cat_scenes_do_not_trigger():
+    """No multi-cat scene is read as a person at the 0.5 default.
 
+    Cat clusters are the most person-shaped non-person thing the camera sees, and
+    the raw model does emit a weak person box over some (the worst measured 0.474,
+    on a top-down pile around a bowl). The 0.5 default puts every such still-frame
+    misread below the trigger line, so none fire. Checked at the 300px default and
+    the selectable 512px detail.
 
-def test_multi_cat_scenes_rarely_trigger():
-    """Most multi-cat scenes are ignored; only the pinned cluster cases may fire.
-
-    Checked at both the 300px default and the selectable 512px detail. The point
-    is to catch *new* false triggers creeping in, not to force zero — see
-    ``KNOWN_CLUSTER_MISREADS`` for why a couple are accepted.
+    NB: this is a *still-frame* guarantee. A cat in motion can momentarily spike
+    much higher (a sprawled cat hit person=0.93 in video testing); the live-camera
+    safeguard for that is the temporal gate (``confirm_frames``), not this test.
     """
     assert CATS_MULTI, "no multi-cat fixtures found"
-    triggered = set()
     for size in (300, 512):
-        det = PersonDetector(source="unused", confidence=0.4, detect_size=size)
+        det = PersonDetector(source="unused", confidence=0.5, detect_size=size)
         for p in CATS_MULTI:
-            if det.detect_in_frame(cv2.imread(p)):
-                triggered.add(os.path.basename(p))
-    new = triggered - KNOWN_CLUSTER_MISREADS
-    assert not new, f"new multi-cat scenes misread as a person: {sorted(new)}"
+            assert not det.detect_in_frame(cv2.imread(p)), \
+                f"multi-cat scene triggered person at {size}px: {os.path.basename(p)}"
 
 
 def test_cats_are_recognised_as_cats():

@@ -25,6 +25,6 @@ def test_config_coerces_new_fields(tmp_path):
 def test_config_defaults_present():
     cfg = config_mod.Config()
     assert cfg.detect_size == 300        # reverted from 512 to protect person recall
-    assert cfg.person_confidence == 0.4
+    assert cfg.person_confidence == 0.5
     assert cfg.scan_fps == 10.0
     assert cfg.roi is None
