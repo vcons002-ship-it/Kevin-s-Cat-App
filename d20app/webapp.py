@@ -30,6 +30,28 @@ from .loop import DetectionLoop, _camera_source
 ALLOWED_SOUND_EXT = {".wav", ".mp3", ".ogg", ".m4a", ".aac"}
 
 
+def _mask_cameras(cameras) -> list:
+    """Saved cameras without raw passwords — a ``has_password`` flag instead."""
+    out = []
+    for c in cameras or []:
+        if not isinstance(c, dict):
+            continue
+        out.append({
+            "name": c.get("name", ""),
+            "url": c.get("url", ""),
+            "username": c.get("username", ""),
+            "has_password": bool(c.get("password")),
+        })
+    return out
+
+
+def _public_config(cfg_dict: dict) -> dict:
+    """Strip every stored password before sending config to the browser."""
+    cfg_dict.pop("camera_password", None)
+    cfg_dict["cameras"] = _mask_cameras(cfg_dict.get("cameras"))
+    return cfg_dict
+
+
 def create_app(loop: DetectionLoop | None = None) -> Flask:
     app = Flask(__name__)
     app.config["loop"] = loop or DetectionLoop()
@@ -94,9 +116,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     # -- config -------------------------------------------------------------
     @app.get("/api/config")
     def api_get_config():
-        cfg = config_mod.load().asdict()
-        cfg.pop("camera_password", None)        # never echo the password back
-        return jsonify(cfg)
+        return jsonify(_public_config(config_mod.load().asdict()))
 
     @app.post("/api/config")
     def api_set_config():
@@ -104,10 +124,67 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         # Don't overwrite a stored password with an empty form field.
         if not values.get("camera_password"):
             values.pop("camera_password", None)
+        # The saved-camera store is managed only via the /api/cameras/saved
+        # endpoints, so the main settings save can't clobber it (or its passwords).
+        values.pop("cameras", None)
         cfg = config_mod.update(values)
-        out = cfg.asdict()
-        out.pop("camera_password", None)
-        return jsonify(out)
+        return jsonify(_public_config(cfg.asdict()))
+
+    # -- saved cameras (a dropdown of manually-added cameras + credentials) --
+    @app.get("/api/cameras/saved")
+    def api_cameras_saved():
+        return jsonify(_mask_cameras(config_mod.load().cameras))
+
+    @app.post("/api/cameras/saved")
+    def api_cameras_save():
+        data = request.get_json(silent=True) or {}
+        name = (data.get("name") or "").strip()
+        url = (data.get("url") or "").strip()
+        if not name or not url:
+            return jsonify({"error": "A camera needs a name and a stream URL."}), 400
+        cfg = config_mod.load()
+        cams = [c for c in (cfg.cameras or []) if isinstance(c, dict)]
+        entry = {
+            "name": name,
+            "url": url,
+            "username": (data.get("username") or "").strip(),
+            "password": data.get("password") or "",
+        }
+        existing = next((c for c in cams if c.get("name") == name), None)
+        if existing is not None:
+            # A blank password on re-save keeps the previously-stored one.
+            if not entry["password"]:
+                entry["password"] = existing.get("password", "")
+            cams[cams.index(existing)] = entry
+        else:
+            cams.append(entry)
+        config_mod.update({"cameras": cams})
+        return jsonify(_mask_cameras(cams))
+
+    @app.post("/api/cameras/saved/select")
+    def api_cameras_select():
+        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        cfg = config_mod.load()
+        cam = next((c for c in (cfg.cameras or [])
+                    if isinstance(c, dict) and c.get("name") == name), None)
+        if cam is None:
+            return jsonify({"error": "camera not found"}), 404
+        config_mod.update({
+            "camera_name": cam.get("name", ""),
+            "camera_url": cam.get("url", ""),
+            "camera_username": cam.get("username", ""),
+            "camera_password": cam.get("password", ""),
+        })
+        return jsonify(_public_config(config_mod.load().asdict()))
+
+    @app.post("/api/cameras/saved/delete")
+    def api_cameras_delete():
+        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        cfg = config_mod.load()
+        cams = [c for c in (cfg.cameras or [])
+                if isinstance(c, dict) and c.get("name") != name]
+        config_mod.update({"cameras": cams})
+        return jsonify(_mask_cameras(cams))
 
     # -- control ------------------------------------------------------------
     @app.post("/api/test")

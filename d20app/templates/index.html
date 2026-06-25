@@ -21,12 +21,23 @@
 
     <section class="card">
       <h2>1. Camera <span class="muted">(where to watch for a person)</span></h2>
+      <label>Saved cameras
+        <div class="row">
+          <select id="camera-saved-select"></select>
+          <button id="camera-saved-use" class="ghost" type="button">Use</button>
+          <button id="camera-saved-delete" class="ghost" type="button">Delete</button>
+        </div>
+        <span class="hint">cameras you've added below — pick one to make it the active feed</span>
+      </label>
       <div class="row">
         <select id="camera-select"></select>
         <button id="camera-refresh" class="ghost" type="button">↻ Detect</button>
       </div>
       <details>
-        <summary>Camera not listed? Enter it manually</summary>
+        <summary>Add a camera / enter one manually</summary>
+        <label>Camera name
+          <input id="camera_name" type="text" placeholder="Kitchen cam" />
+        </label>
         <label>Stream URL (RTSP/HTTP)
           <input id="camera_url" type="text" placeholder="rtsp://192.168.1.50:554/stream1" />
         </label>
@@ -38,11 +49,18 @@
             <input id="camera_password" type="password" autocomplete="off" placeholder="(unchanged)" />
           </label>
         </div>
+        <div class="row">
+          <button id="camera-save" class="primary" type="button">＋ Save camera</button>
+          <span id="camera-save-note" class="muted"></span>
+        </div>
         <p class="help">
           <strong>How to find this:</strong> open your camera's app or its web page to find the
           <em>RTSP URL</em> (often <code>rtsp://&lt;camera-ip&gt;:554/...</code>). The camera IP is in
           your router's device list or the camera app. Auto-detect uses ONVIF — if your camera isn't
           ONVIF or needs a login, type the URL and credentials here.
+          <br /><strong>Save camera</strong> adds it (with its login) to the <em>Saved cameras</em>
+          dropdown above so you can switch between cameras quickly. Credentials are stored locally in
+          <code>config.yaml</code> in plain text.
           <br /><strong>Main vs sub feed:</strong> the high-res <em>main</em> stream spots distant
           cats better but uses more CPU; the <em>sub</em> stream is lighter. Paste whichever URL you
           prefer — then tune "Detection detail" and "Scan rate" below to balance quality vs CPU.
@@ -99,15 +117,15 @@
         </label>
         <label>Frequency interval (seconds)
           <input id="cooldown_seconds" type="number" min="0" max="86400" />
-          <span class="hint">minimum time between rolls</span>
+          <span class="hint">minimum time between rolls · also how long detection pauses to save CPU (below)</span>
         </label>
         <label>Person confidence (0–1)
           <input id="person_confidence" type="number" min="0.1" max="1" step="0.05" />
-          <span class="hint">higher = fewer false triggers</span>
+          <span class="hint">Detection: higher = fewer false triggers, but may miss hard poses · no CPU change</span>
         </label>
         <label>Confirm over N frames
           <input id="confirm_frames" type="number" min="1" max="30" />
-          <span class="hint">must see a person this many frames in a row</span>
+          <span class="hint">Detection: person must persist this many frames · higher = far fewer false triggers, slightly slower to fire</span>
         </label>
         <label>Detection detail
           <select id="detect_size">
@@ -115,11 +133,11 @@
             <option value="512">High — spots distant cats (more CPU)</option>
             <option value="768">Max — most CPU</option>
           </select>
-          <span class="hint">bigger = sees smaller/farther subjects, more CPU</span>
+          <span class="hint">Quality: bigger = sees smaller/farther subjects · CPU: more</span>
         </label>
         <label>Scan rate (frames/sec)
           <input id="scan_fps" type="number" min="1" max="30" step="1" />
-          <span class="hint">lower = less CPU (good for the main feed)</span>
+          <span class="hint">CPU: lower = less CPU · Detection: too low can miss a quick passer-by</span>
         </label>
       </div>
       <p id="odds-msg" class="odds-msg"></p>
@@ -130,7 +148,55 @@
     </section>
 
     <section class="card">
-      <h2>5. Quiet time <span class="muted">(optional — no chimes during this window)</span></h2>
+      <h2>5. Motion &amp; CPU <span class="muted">(cut false triggers and save power)</span></h2>
+      <div class="grid">
+        <label>Motion sensitivity
+          <select id="motion_sensitivity">
+            <option value="low">Low — only big, obvious movement</option>
+            <option value="medium">Medium — recommended</option>
+            <option value="high">High — catches small/slow movement</option>
+            <option value="custom">Custom (set in Advanced)</option>
+          </select>
+          <span class="hint">Motion: lower = fewer false triggers on shadows/lighting/plants · CPU: lower runs the net less often</span>
+        </label>
+        <label>Notify threshold (0–1)
+          <input id="label_floor" type="number" min="0.1" max="1" step="0.05" />
+          <span class="hint">Quality: higher = only confident labels (stops stray "pottedplant"/"sofa" log spam) · does NOT affect treats</span>
+        </label>
+      </div>
+      <label class="checkbox">
+        <input id="pause_during_cooldown" type="checkbox" />
+        Pause detection during the cooldown after a roll
+      </label>
+      <span class="hint">CPU: big saving — skips the neural net between rolls (nothing it sees can trigger anyway) and resumes automatically just before the next window, so no treat is missed.</span>
+      <details>
+        <summary>Advanced motion tuning</summary>
+        <div class="grid">
+          <label>Min change area (fraction of frame)
+            <input id="motion_min_area_frac" type="number" min="0.0005" max="0.2" step="0.0005" />
+            <span class="hint">higher = needs a bigger moving object · fewer false triggers, may miss distant movement</span>
+          </label>
+          <label>Brightness threshold (0–255)
+            <input id="motion_diff_threshold" type="number" min="5" max="100" step="1" />
+            <span class="hint">per-pixel change to count as "moved" · higher = ignores sensor noise &amp; lighting flicker</span>
+          </label>
+          <label>Min blob size (px)
+            <input id="motion_min_blob_px" type="number" min="2" max="60" step="1" />
+            <span class="hint">rejects change regions thinner than this · higher = ignores thin corrupt-pixel lines</span>
+          </label>
+        </div>
+        <p class="help">
+          These three are exactly what the <strong>Motion sensitivity</strong> preset sets for you —
+          editing any of them switches the preset to <em>Custom</em>. Raise them if the camera keeps
+          firing on shadows, changing light, or a swaying plant; lower them to catch smaller or more
+          distant movement. None of these change CPU much on their own, but fewer false triggers means
+          the neural net runs less often.
+        </p>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>6. Quiet time <span class="muted">(optional — no chimes during this window)</span></h2>
       <div class="row">
         <label>From <input id="quiet_start" type="time" /></label>
         <label>To <input id="quiet_end" type="time" /></label>
@@ -144,7 +210,7 @@
     </section>
 
     <section class="card">
-      <h2>6. Region of interest <span class="muted">(optional — only watch part of the view)</span></h2>
+      <h2>7. Region of interest <span class="muted">(optional — only watch part of the view)</span></h2>
       <div class="row">
         <button id="roi-grab" class="ghost" type="button">📷 Grab frame</button>
         <button id="roi-clear" class="ghost" type="button">Clear region</button>

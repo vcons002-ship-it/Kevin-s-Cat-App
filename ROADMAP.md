@@ -54,9 +54,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **67 automated tests**, including a detection-accuracy regression guard over
+- **78 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes) — none read as a person at the default —
-  and a treat-cast regression guard so the speaker path can't silently break.
+  a treat-cast regression guard, and saved-camera/cooldown-pause coverage.
 
 ---
 
@@ -85,7 +85,8 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [ ] A **snapshot gallery** view.
 
 ### Camera
-- [ ] **Multiple cameras**.
+- [x] **Saved cameras** — add several (with credentials) and switch the active
+      feed from a dropdown. (Watching *several at once* is still future work.)
 - [ ] **Live MJPEG preview** stream in the GUI (not just a grabbed still).
 - [ ] **Touch support** for the ROI picker on phones.
 

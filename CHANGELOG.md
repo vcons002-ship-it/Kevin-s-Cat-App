@@ -11,6 +11,35 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.4.0] — 2026-06-25
+
+### Added
+- **Motion sensitivity control + advanced motion tuning.** A Low/Medium/High
+  preset (with a Custom mode) drives the motion pre-filter so the camera stops
+  firing on shadows, lighting changes, or a swaying plant. The raw knobs
+  (min change-area, brightness threshold, min blob size) are exposed under
+  "Advanced motion tuning" for fine control.
+- **Configurable "Notify threshold" (`label_floor`, default raised 0.3 → 0.5).**
+  Only confident non-person detections get named in the log/snapshots, so stray
+  "pottedplant"/"sofa" guesses no longer clutter the activity log. (This never
+  affected treats — only a person triggers one — just the labels you saw.)
+- **Pause detection during cooldown (on by default).** After a roll, the neural
+  net is skipped for the cooldown window (nothing it sees can trigger anyway) —
+  a large CPU saving on a NAS — and resumes automatically a few seconds before
+  the window reopens, so the next treat is never missed. The camera keeps being
+  read so a dropout is still noticed.
+- **Saved cameras.** Manually-added cameras (name, URL, username, password) save
+  to a dropdown so you can switch between feeds in one click. New endpoints
+  `GET/POST /api/cameras/saved`, `…/select`, `…/delete`; passwords are stored
+  locally in `config.yaml` (plaintext, same as before) and never sent back to
+  the browser.
+- **Every setting now has a plain-language note** on its effect on motion
+  detection, image-analysis quality, and CPU usage.
+
+### Changed
+- The settings page gained a "5. Motion & CPU" section; Quiet time and Region of
+  interest renumber to 6 and 7.
+
 ## [0.3.6] — 2026-06-25
 
 ### Fixed

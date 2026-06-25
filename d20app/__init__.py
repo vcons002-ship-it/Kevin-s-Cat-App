@@ -6,4 +6,4 @@ the cue that it's OK to give the cat a treat. Configured entirely from a local
 web GUI.
 """
 
-__version__ = "0.3.6"
+__version__ = "0.4.0"
