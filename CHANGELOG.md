@@ -11,6 +11,15 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.5.1] — 2026-06-26
+
+### Added
+- **Windows setup.** `setup.ps1` (and a double-clickable `setup.bat` wrapper)
+  mirror `setup.sh`: find Python 3.11+, create the venv, install deps, generate
+  the chime, and create `config.yaml`. README gains a "Run on Windows" note
+  (firewall allow-prompt, Task Scheduler for autostart). The app code was already
+  cross-platform; only the bash installer was Linux-only.
+
 ## [0.5.0] — 2026-06-26
 
 ### Added
