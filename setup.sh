@@ -82,6 +82,13 @@ if confirm "Install local PC audio output (play the chime on this machine's spea
     || echo "    (playsound3 install failed — the 'This PC (local audio)' option will be unavailable)"
 fi
 
+# Optional: run YOLO on an Intel iGPU/GPU via OpenVINO (frees the CPU, makes the
+# medium model practical). Intel-only, and needs the host Intel GPU drivers too.
+if confirm "Install Intel OpenVINO GPU acceleration (optional, Intel iGPU only)?"; then
+  ./venv/bin/python -m pip install 'openvino>=2024.0' \
+    || echo "    (openvino install failed — the OpenVINO accelerator options will fall back to CPU)"
+fi
+
 echo "==> Generating the default treat chime"
 ./venv/bin/python d20app/sounds/generate_chime.py
 

@@ -11,6 +11,64 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.8.0] — 2026-06-26
+
+### Added
+- **GPU / iGPU acceleration for the YOLO detector** via a new `accelerator`
+  setting (Detection card dropdown). Options:
+  - `cpu` (default) — OpenCV `cv2.dnn` on the CPU, as before.
+  - `opencl` — same net with the `OPENCL_FP16` target so the conv layers run on
+    an OpenCL device (e.g. an Intel iGPU). No extra Python dependency; OpenCV
+    falls back to CPU on its own if there's no OpenCL device.
+  - `openvino-gpu` / `openvino-auto` — run the ONNX through Intel's **OpenVINO**
+    runtime (optional `openvino` package) on the `GPU` device, or `AUTO` (GPU
+    with built-in CPU fallback). The dependable iGPU path — typically 2–4× CPU on
+    Intel hardware, and what makes the heavier `yolo11m` practical.
+  The YOLO backend now wraps either engine behind a small inference *runner*, so
+  the letterbox + NMS decode is shared across all accelerators.
+- Graceful degradation: if a requested GPU backend can't start (no Intel GPU, no
+  driver, `openvino` not installed), the detector retries the **same** model on
+  CPU before falling back to MobileNet-SSD — a dead accelerator never costs you
+  the model.
+- `openvino` added as an **optional** dependency (commented in `requirements.txt`;
+  offered by `setup.sh` / `setup.ps1`). The core install stays lean.
+- **`check_accelerator.py`** diagnostic — reports the compute devices this machine
+  exposes, what your configured `accelerator` actually resolves to (a real GPU vs
+  a silent CPU fallback), and a CPU-vs-backend ms/frame timing so you can confirm
+  the offload is real. Run: `./venv/bin/python check_accelerator.py`.
+
+### Notes
+- **Intel-only** for the *GPU*, and it needs the host's Intel GPU compute drivers —
+  on AMD/ARM NAS boxes the GPU options stay on CPU. The OpenVINO path was verified
+  end-to-end on the CPU device (same detections as `cv2.dnn`); the **iGPU** speed-ups
+  are from OpenVINO's published figures, **not yet run on real Intel iGPU hardware
+  here** — confirm with `check_accelerator.py` on your box.
+- **Bonus measured on a CPU-only box:** OpenVINO's *CPU* runtime alone ran yolo11n
+  ~3× and yolo11m ~3× faster than OpenCV's `cv2.dnn` CPU path (yolo11m 465 ms → 150 ms),
+  no GPU involved — so `openvino-auto` is a free win even without an iGPU, and it's
+  what makes yolo11m practical. (Numbers are from this dev box; relative, not absolute.)
+
+## [0.7.0] — 2026-06-26
+
+### Added
+- **Selectable YOLO11m (medium) detection model.** A second YOLO variant
+  (`yolo11m`, ~77 MB, exported at 640×640) is now bundled and selectable from the
+  Detection-model dropdown alongside the default `yolo11n` and `mobilenet_ssd`.
+  The YOLO backend is now a small variant registry (`d20app/yolo.py` `MODELS`)
+  mapping each variant to its ONNX file and fixed input size, so adding future
+  models is a one-line change.
+
+### Notes
+- **Honest trade-off:** `yolo11m` is bigger and much heavier on CPU (~146 ms @320
+  / ~500 ms @640, roughly 5–18× nano) and on our own night/day benchmark it did
+  **not** beat nano on the night case that motivated the upgrade (nano @320 ~0.865
+  vs medium @640 ~0.914 on the night frame — but nano already clears the bar). So
+  `yolo11n` stays the **default**; medium is there for users with CPU headroom who
+  want the extra capacity on genuinely hard scenes. Flipping the default is a
+  one-line change in `config.py` if real-world results warrant it.
+- These CPU timings are from this dev box, not the target NAS — treat them as
+  relative, not absolute.
+
 ## [0.6.0] — 2026-06-26
 
 ### Added
