@@ -28,8 +28,9 @@ CATS_MULTI = sorted(glob.glob(os.path.join(FIXTURES, "cats_multi", "*.jpg")))
 
 
 def _detector():
-    # Mirror the app defaults (detect_size 300, confidence 0.5).
-    return PersonDetector(source="unused", confidence=0.5)
+    # These regression tests guard the bundled MobileNet-SSD model specifically,
+    # so pin it (the app default is now yolo11n). confidence 0.5 mirrors the app.
+    return PersonDetector(source="unused", confidence=0.5, model="mobilenet_ssd")
 
 
 def test_fixtures_present():
@@ -68,7 +69,8 @@ def test_multi_cat_scenes_do_not_trigger():
     """
     assert CATS_MULTI, "no multi-cat fixtures found"
     for size in (300, 512):
-        det = PersonDetector(source="unused", confidence=0.5, detect_size=size)
+        det = PersonDetector(source="unused", confidence=0.5, detect_size=size,
+                             model="mobilenet_ssd")
         for p in CATS_MULTI:
             assert not det.detect_in_frame(cv2.imread(p)), \
                 f"multi-cat scene triggered person at {size}px: {os.path.basename(p)}"
@@ -82,7 +84,8 @@ def test_cats_are_recognised_as_cats():
     stopped detecting cats entirely would be caught. Measured ~66% at 512px on
     the single-cat set; we require at least half.
     """
-    det = PersonDetector(source="unused", confidence=0.4, detect_size=512)
+    det = PersonDetector(source="unused", confidence=0.4, detect_size=512,
+                         model="mobilenet_ssd")
     hits = 0
     for p in CATS:
         boxes = det._detect_boxes(cv2.imread(p), floor=0.3)
@@ -113,7 +116,8 @@ def test_distant_cats_are_identified_at_high_detail():
     """
     import numpy as np
 
-    det = PersonDetector(source="unused", confidence=0.4, detect_size=512)
+    det = PersonDetector(source="unused", confidence=0.4, detect_size=512,
+                         model="mobilenet_ssd")
     hits = 0
     for p in CATS:
         cat = cv2.imread(p)
