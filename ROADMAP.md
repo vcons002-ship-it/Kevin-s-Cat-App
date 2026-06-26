@@ -54,10 +54,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **91 automated tests**, including a detection-accuracy regression guard over
+- **95 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
-  YOLO11n backend (loads, detects people, falls back), local USB camera + local
-  PC speaker routing, and
+  YOLO11 backend (nano + medium variants load, detect people, fall back), local
+  USB camera + local PC speaker routing, and
   saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
@@ -66,8 +66,11 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 
 ### Detection & accuracy
 - [ ] Multiple / per-zone regions of interest.
-- [ ] Optional **Coral TPU** or a newer model for better small-object and
-      low-light/night accuracy.
+- [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
+      `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on
+      our night test, so nano stays the default.
+- [ ] Optional **Coral TPU** for hardware-accelerated inference and better
+      small-object / low-light accuracy at low CPU.
 - [ ] Day/night profiles (different confidence or ROI by time of day).
 - [ ] "Trigger on entry only" tracking (ignore someone who lingers).
 

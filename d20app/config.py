@@ -47,7 +47,7 @@ class Config:
     cooldown_seconds: int = 600      # frequency interval between rolls
 
     # --- Detection tuning ---
-    detector_model: str = "yolo11n"  # "yolo11n" (better low-light/odd-pose, ~1.4x CPU) or "mobilenet_ssd" (lightest, bundled); falls back to mobilenet_ssd if YOLO can't load
+    detector_model: str = "yolo11n"  # "yolo11n" (better low-light/odd-pose, ~1.4x CPU; default), "yolo11m" (medium, bigger/slower, ~5-18x CPU), or "mobilenet_ssd" (lightest, bundled); falls back to mobilenet_ssd if YOLO can't load
     person_confidence: float = 0.5   # min DNN confidence to count as a person (0.5: clean person/cat split on stills, keeps hard poses ≥0.71)
     confirm_frames: int = 4          # require a person in this many frames in a row (4 guards against a moving cat's transient high-confidence spike)
     detect_size: int = 300           # net input size; 300 = reliable for people (512 = distant cats, heavier)

@@ -144,9 +144,10 @@
         <label>Detection model
           <select id="detector_model">
             <option value="yolo11n">YOLO11n — best in low light / odd poses (recommended)</option>
+            <option value="yolo11m">YOLO11m — medium model, more capacity but much heavier CPU</option>
             <option value="mobilenet_ssd">MobileNet-SSD — lightest CPU</option>
           </select>
-          <span class="hint">Detection: YOLO11n is far better at night/occluded people (~1.4× CPU) · MobileNet is fastest but weak in the dark</span>
+          <span class="hint">Detection: YOLO11n is far better at night/occluded people (~1.4× CPU) · YOLO11m is bigger/slower (~5–18× CPU, didn't beat nano on our night test) · MobileNet is fastest but weak in the dark</span>
         </label>
         <label>Detection detail
           <select id="detect_size">

@@ -11,6 +11,27 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.7.0] — 2026-06-26
+
+### Added
+- **Selectable YOLO11m (medium) detection model.** A second YOLO variant
+  (`yolo11m`, ~77 MB, exported at 640×640) is now bundled and selectable from the
+  Detection-model dropdown alongside the default `yolo11n` and `mobilenet_ssd`.
+  The YOLO backend is now a small variant registry (`d20app/yolo.py` `MODELS`)
+  mapping each variant to its ONNX file and fixed input size, so adding future
+  models is a one-line change.
+
+### Notes
+- **Honest trade-off:** `yolo11m` is bigger and much heavier on CPU (~146 ms @320
+  / ~500 ms @640, roughly 5–18× nano) and on our own night/day benchmark it did
+  **not** beat nano on the night case that motivated the upgrade (nano @320 ~0.865
+  vs medium @640 ~0.914 on the night frame — but nano already clears the bar). So
+  `yolo11n` stays the **default**; medium is there for users with CPU headroom who
+  want the extra capacity on genuinely hard scenes. Flipping the default is a
+  one-line change in `config.py` if real-world results warrant it.
+- These CPU timings are from this dev box, not the target NAS — treat them as
+  relative, not absolute.
+
 ## [0.6.0] — 2026-06-26
 
 ### Added

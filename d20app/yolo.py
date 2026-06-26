@@ -1,4 +1,4 @@
-"""YOLO11n object detection via OpenCV's ``cv2.dnn`` (ONNX) — no PyTorch at runtime.
+"""YOLO11 object detection via OpenCV's ``cv2.dnn`` (ONNX) — no PyTorch at runtime.
 
 A drop-in alternative backend for :class:`d20app.detector.PersonDetector`: it
 produces the same ``[(label, score, (x1, y1, x2, y2))]`` boxes the MobileNet-SSD
@@ -9,9 +9,18 @@ Why offer it: the bundled MobileNet-SSD is fast but weak in low light / odd pose
 (it scored 0.00 on a real dim night frame). YOLO11n scored ~0.87 on the same
 frame at ~1.4x the CPU — a much better night/occlusion detector for a modest cost.
 
-The model is exported from Ultralytics ``yolo11n.pt`` to a fixed 320x320 ONNX
-(see d20app/models/README.md). Its raw output is ``(1, 84, N)``: 4 box coords
-(cx, cy, w, h in letterboxed pixels) + 80 COCO class scores per anchor.
+Two variants are available (see :data:`MODELS`):
+
+- ``yolo11n`` — nano at 320x320 (~11 MB, ~28 ms/frame). The default; it already
+  handles the night case well.
+- ``yolo11m`` — medium at 640x640 (~77 MB, ~500 ms/frame on CPU). Bigger and
+  slower; on our own night/day frames it did **not** beat nano on the night case
+  that motivated it, so it's offered as an option, not the default. Worth trying
+  if you have CPU headroom and want the extra capacity on hard scenes.
+
+Each model is exported from its Ultralytics ``*.pt`` to a fixed-size ONNX (see
+d20app/models/README.md). Raw output is ``(1, 84, N)``: 4 box coords (cx, cy, w,
+h in letterboxed pixels) + 80 COCO class scores per anchor.
 """
 
 from __future__ import annotations
@@ -36,21 +45,44 @@ COCO_CLASSES = [
 ]
 
 _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-ONNX_PATH = os.path.join(_MODELS_DIR, "yolo11n.onnx")
-INPUT_SIZE = 320          # must match the exported model's fixed input
+
+# Known YOLO variants → their exported ONNX file and the fixed input size that
+# file was exported at (must match, or the net errors / decodes garbage).
+MODELS = {
+    "yolo11n": {"file": "yolo11n.onnx", "size": 320},
+    "yolo11m": {"file": "yolo11m.onnx", "size": 640},
+}
+DEFAULT_VARIANT = "yolo11n"
+
+# Back-compat aliases for the single-model era (some tests/callers import these).
+ONNX_PATH = os.path.join(_MODELS_DIR, MODELS[DEFAULT_VARIANT]["file"])
+INPUT_SIZE = MODELS[DEFAULT_VARIANT]["size"]
 _NMS_IOU = 0.45
 
 
-def load_net():
-    """Load the YOLO11n ONNX with cv2.dnn (raises if the file is missing)."""
+def model_path(variant: str = DEFAULT_VARIANT) -> str:
+    """Absolute path to a variant's ONNX file (no existence check)."""
+    return os.path.join(_MODELS_DIR, MODELS[variant]["file"])
+
+
+def input_size(variant: str = DEFAULT_VARIANT) -> int:
+    """The fixed square input size the given variant was exported at."""
+    return MODELS[variant]["size"]
+
+
+def load_net(variant: str = DEFAULT_VARIANT):
+    """Load a YOLO11 variant's ONNX with cv2.dnn (raises if missing/unknown)."""
     import cv2
 
-    if not os.path.exists(ONNX_PATH):
+    if variant not in MODELS:
+        raise ValueError(f"unknown YOLO variant {variant!r}; known: {sorted(MODELS)}")
+    path = model_path(variant)
+    if not os.path.exists(path):
         raise FileNotFoundError(
-            "YOLO model d20app/models/yolo11n.onnx is missing. "
+            f"YOLO model {os.path.relpath(path)} is missing. "
             "See d20app/models/README.md to export it, or use the MobileNet-SSD model."
         )
-    return cv2.dnn.readNetFromONNX(ONNX_PATH)
+    return cv2.dnn.readNetFromONNX(path)
 
 
 def _letterbox(frame, size: int):

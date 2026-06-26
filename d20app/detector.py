@@ -246,11 +246,13 @@ class PersonDetector:
                  motion_min_blob_px: int = 14, model: str = "mobilenet_ssd") -> None:
         self.source = source
         self.confidence = confidence
-        # Which detection model to run: "mobilenet_ssd" (fast, bundled default) or
-        # "yolo11n" (better in low light / odd poses, ~1.4x CPU). Falls back to
-        # MobileNet if the YOLO model can't be loaded.
+        # Which detection model to run: "mobilenet_ssd" (fast, bundled default),
+        # "yolo11n" (better in low light / odd poses, ~1.4x CPU), or "yolo11m"
+        # (bigger/slower medium model). Falls back to MobileNet if the YOLO model
+        # can't be loaded.
         self.model = model or "mobilenet_ssd"
         self._yolo = None       # the cv2.dnn YOLO net, lazily loaded
+        self._yolo_size = None  # the loaded variant's fixed input size
         self.roi = roi          # optional [x, y, w, h]
         # Net input resolution. 300 is the model's native size and most reliable
         # for people; 512 recovers small/distant subjects (e.g. a far cat) at
@@ -276,15 +278,17 @@ class PersonDetector:
     def _ensure_net(self):
         import cv2
 
-        if self.model == "yolo11n":
+        if self.model.startswith("yolo"):
             if self._yolo is None:
                 from . import yolo
                 try:
-                    self._yolo = yolo.load_net()
+                    self._yolo = yolo.load_net(self.model)
+                    self._yolo_size = yolo.input_size(self.model)
                 except Exception as exc:        # noqa: BLE001 — degrade, don't crash
-                    _log.warning("YOLO11n unavailable (%s) — using MobileNet-SSD", exc)
+                    _log.warning("%s unavailable (%s) — using MobileNet-SSD",
+                                 self.model, exc)
                     self.model = "mobilenet_ssd"
-            if self.model == "yolo11n":
+            if self.model.startswith("yolo"):
                 return self._yolo
         if self._net is None:
             if not (os.path.exists(PROTOTXT) and os.path.exists(CAFFEMODEL)):
@@ -336,9 +340,9 @@ class PersonDetector:
 
         cropped = self._crop(frame)
         net = self._ensure_net()
-        if self.model == "yolo11n":
+        if self.model.startswith("yolo"):
             from . import yolo
-            return yolo.detect_boxes(net, cropped, floor)
+            return yolo.detect_boxes(net, cropped, floor, size=self._yolo_size)
 
         h, w = cropped.shape[:2]
         s = self.detect_size

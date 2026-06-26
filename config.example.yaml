@@ -25,7 +25,7 @@ dc: 20                    # treat when the roll is >= this (DC20 on a D20 = only
 cooldown_seconds: 600     # minimum seconds between rolls (frequency interval)
 
 # --- Detection tuning ---
-detector_model: yolo11n   # yolo11n (better low-light/odd-pose, ~1.4x CPU) or mobilenet_ssd (lightest); falls back to mobilenet_ssd if YOLO can't load
+detector_model: yolo11n   # yolo11n (better low-light/odd-pose, ~1.4x CPU; default), yolo11m (medium, bigger/slower, ~5-18x CPU), or mobilenet_ssd (lightest); falls back to mobilenet_ssd if YOLO can't load
 person_confidence: 0.5    # 0..1; raise to reduce false triggers, lower to catch harder poses
 confirm_frames: 4         # require a person in this many frames in a row (cuts false positives, incl. a moving cat's brief high-confidence frame)
 detect_size: 300          # neural-net input size; 300 = reliable for people, 512 = distant cats (more CPU)
