@@ -8,12 +8,26 @@ const api = async (path, opts) => {
   return { ok: res.ok, body };
 };
 
-// Fields that map 1:1 to config keys.
+// Fields that map 1:1 to config keys (populated into inputs on load).
 const FIELDS = [
-  "camera_url", "camera_username", "camera_password",
+  "camera_name", "camera_url", "camera_username", "camera_password",
   "dice_sides", "dc", "cooldown_seconds", "person_confidence",
   "confirm_frames", "detect_size", "scan_fps", "quiet_start", "quiet_end",
+  "label_floor", "motion_min_area_frac", "motion_diff_threshold", "motion_min_blob_px",
 ];
+
+// Motion-sensitivity presets → the three raw MotionPrefilter knobs.
+const MOTION_PRESETS = {
+  low:    { motion_min_area_frac: 0.006,  motion_diff_threshold: 30, motion_min_blob_px: 18 },
+  medium: { motion_min_area_frac: 0.003,  motion_diff_threshold: 25, motion_min_blob_px: 14 },
+  high:   { motion_min_area_frac: 0.0015, motion_diff_threshold: 18, motion_min_blob_px: 10 },
+};
+
+function applyMotionPreset(name) {
+  const p = MOTION_PRESETS[name];
+  if (!p) return;   // "custom" — leave the advanced fields as the user set them
+  for (const [k, v] of Object.entries(p)) $(k).value = v;
+}
 
 // Region of interest [x, y, w, h] in original-frame pixels (null = whole frame).
 let roi = null;
@@ -58,6 +72,65 @@ async function loadCameras(detect) {
     sel.appendChild(opt);
   }
   if (savedCameraUrl) sel.value = savedCameraUrl;
+}
+
+let savedCameras = [];
+
+async function loadSavedCameras() {
+  const sel = $("camera-saved-select");
+  const { body } = await api("/api/cameras/saved");
+  savedCameras = body || [];
+  sel.innerHTML = savedCameras.length
+    ? `<option value="">— pick a saved camera —</option>`
+    : `<option value="">— none saved yet —</option>`;
+  for (const c of savedCameras) {
+    const opt = document.createElement("option");
+    opt.value = c.name;
+    opt.textContent = c.url ? c.name : `${c.name} (no URL)`;
+    if (c.url && c.url === savedCameraUrl) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
+async function useSavedCamera() {
+  const name = $("camera-saved-select").value;
+  if (!name) return;
+  const { ok } = await api("/api/cameras/saved/select", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (ok) { await loadConfig(); await loadCameras(false); }
+}
+
+async function deleteSavedCamera() {
+  const name = $("camera-saved-select").value;
+  if (!name) return;
+  await api("/api/cameras/saved/delete", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  await loadSavedCameras();
+}
+
+async function saveCamera() {
+  const note = $("camera-save-note");
+  const payload = {
+    name: $("camera_name").value.trim(),
+    url: $("camera_url").value.trim() || $("camera-select").value,
+    username: $("camera_username").value.trim(),
+  };
+  const pw = $("camera_password").value;
+  if (pw) payload.password = pw;
+  if (!payload.name || !payload.url) {
+    note.textContent = "Need a name and a stream URL"; return;
+  }
+  const { ok, body } = await api("/api/cameras/saved", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  note.textContent = ok ? "Saved ✓" : ((body && body.error) || "Failed");
+  if (ok) await loadSavedCameras();
+  setTimeout(() => (note.textContent = ""), 2500);
 }
 
 async function loadSounds() {
@@ -114,6 +187,9 @@ async function loadConfig() {
     if ($(f) && cfg[f] !== undefined && cfg[f] !== null) $(f).value = cfg[f];
   }
   $("dont_interrupt_playback").checked = !!cfg.dont_interrupt_playback;
+  $("keep_speakers_warm").checked = !!cfg.keep_speakers_warm;
+  $("pause_during_cooldown").checked = cfg.pause_during_cooldown !== false;
+  if (cfg.motion_sensitivity) $("motion_sensitivity").value = cfg.motion_sensitivity;
   $("use_speech").checked = !!cfg.use_speech;
   if (cfg.speech_text) $("speech_text").value = cfg.speech_text;
   applySpeechVisibility();
@@ -192,7 +268,8 @@ function gatherConfig() {
   const camSel = $("camera-select");
   // Prefer an explicit manual URL; otherwise the selected camera.
   const cameraUrl = $("camera_url").value.trim() || camSel.value;
-  const camName = camSel.selectedOptions[0]?.dataset.name || "";
+  const camName = $("camera_name").value.trim()
+    || camSel.selectedOptions[0]?.dataset.name || "";
   const values = {
     camera_url: cameraUrl,
     camera_name: camName,
@@ -208,10 +285,17 @@ function gatherConfig() {
     confirm_frames: Number($("confirm_frames").value),
     detect_size: Number($("detect_size").value),
     scan_fps: Number($("scan_fps").value),
+    label_floor: Number($("label_floor").value),
+    motion_sensitivity: $("motion_sensitivity").value,
+    motion_min_area_frac: Number($("motion_min_area_frac").value),
+    motion_diff_threshold: Number($("motion_diff_threshold").value),
+    motion_min_blob_px: Number($("motion_min_blob_px").value),
+    pause_during_cooldown: $("pause_during_cooldown").checked,
     quiet_start: $("quiet_start").value,
     quiet_end: $("quiet_end").value,
     roi: roi,
     dont_interrupt_playback: $("dont_interrupt_playback").checked,
+    keep_speakers_warm: $("keep_speakers_warm").checked,
   };
   const pw = $("camera_password").value;
   if (pw) values.camera_password = pw; // only send if user typed one
@@ -304,8 +388,15 @@ async function loadLog() {
 function wire() {
   $("speaker-refresh").onclick = () => loadSpeakers(true);
   $("camera-refresh").onclick = () => loadCameras(true);
+  $("camera-saved-use").onclick = useSavedCamera;
+  $("camera-saved-delete").onclick = deleteSavedCamera;
+  $("camera-save").onclick = saveCamera;
   $("speaker-select").onchange = updateSpeakerWarning;
   $("use_speech").onchange = applySpeechVisibility;
+  $("motion_sensitivity").onchange = () => applyMotionPreset($("motion_sensitivity").value);
+  for (const id of ["motion_min_area_frac", "motion_diff_threshold", "motion_min_blob_px"]) {
+    $(id).oninput = () => { $("motion_sensitivity").value = "custom"; };
+  }
   $("dice_sides").oninput = updateOdds;
   $("dc").oninput = updateOdds;
   $("quiet-clear").onclick = () => { $("quiet_start").value = ""; $("quiet_end").value = ""; };
@@ -359,7 +450,9 @@ async function loadVersion() {
 async function init() {
   wire();
   await loadConfig();
-  await Promise.all([loadSpeakers(false), loadCameras(false), loadSounds()]);
+  await Promise.all([
+    loadSpeakers(false), loadCameras(false), loadSounds(), loadSavedCameras(),
+  ]);
   refreshStatus();
   loadLog();
   loadVersion();

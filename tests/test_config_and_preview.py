@@ -28,3 +28,30 @@ def test_config_defaults_present():
     assert cfg.person_confidence == 0.5
     assert cfg.scan_fps == 10.0
     assert cfg.roi is None
+    # New tuning defaults (v0.4.0).
+    assert cfg.label_floor == 0.55
+    assert cfg.pause_during_cooldown is True
+    assert cfg.motion_sensitivity == "medium"
+    assert cfg.motion_min_area_frac == 0.003
+    assert cfg.motion_diff_threshold == 25
+    assert cfg.motion_min_blob_px == 14
+    assert cfg.cameras == []
+    assert cfg.keep_speakers_warm is False
+
+
+def test_config_coerces_motion_fields_and_round_trips_cameras(tmp_path):
+    path = str(tmp_path / "config.yaml")
+    cams = [{"name": "Kitchen", "url": "rtsp://1.2.3.4/s",
+             "username": "admin", "password": "secret"}]
+    cfg = config_mod.update(
+        {"label_floor": "0.6", "motion_diff_threshold": "30",
+         "motion_min_area_frac": "0.005", "pause_during_cooldown": "false",
+         "cameras": cams},
+        path=path,
+    )
+    assert cfg.label_floor == 0.6 and isinstance(cfg.label_floor, float)
+    assert cfg.motion_diff_threshold == 30 and isinstance(cfg.motion_diff_threshold, int)
+    assert cfg.motion_min_area_frac == 0.005
+    assert cfg.pause_during_cooldown is False
+    # Saved cameras (incl. passwords) round-trip through YAML unchanged.
+    assert config_mod.load(path).cameras == cams

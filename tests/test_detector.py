@@ -96,3 +96,34 @@ def test_motion_prefilter_triggers_on_solid_blob():
     moved = base.copy()
     moved[120:300, 250:360] = 255                      # ~110x180 solid blob
     assert mp.update(moved) is True
+
+
+# --- PersonDetector tuning + cooldown pause -----------------------------------
+
+def test_detector_forwards_motion_params_and_label_floor():
+    det = detector.PersonDetector(
+        source="unused", motion_min_area_frac=0.01, motion_diff_threshold=40,
+        motion_min_blob_px=20, label_floor=0.7)
+    assert det.label_floor == 0.7
+    assert det._motion.min_area_frac == 0.01
+    assert det._motion.diff_threshold == 40
+    assert det._motion.min_blob_px == 20
+
+
+def test_read_and_detect_skips_net_when_paused():
+    # detect=False must NOT run the neural net (the CPU saver). It still reads a
+    # frame and returns a neutral, no-motion outcome.
+    det = detector.PersonDetector(source="unused")
+    frame = np.zeros((40, 60, 3), dtype=np.uint8)
+
+    class _FakeCap:
+        def read(self):
+            return True, frame
+
+    det._ensure_cap = lambda: _FakeCap()
+    det._detect_boxes = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("the net ran while detection was paused"))
+
+    out = det.read_and_detect(detect=False)
+    assert out.motion is False and out.person is False
+    assert det.frame_size == (60, 40)        # the frame was still read

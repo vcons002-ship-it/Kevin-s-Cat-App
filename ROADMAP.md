@@ -54,9 +54,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **67 automated tests**, including a detection-accuracy regression guard over
+- **80 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes) — none read as a person at the default —
-  and a treat-cast regression guard so the speaker path can't silently break.
+  a treat-cast regression guard, and saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
 
@@ -70,10 +70,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [ ] "Trigger on entry only" tracking (ignore someone who lingers).
 
 ### Speakers & output
-- [x] **No "connecting" chime** — hold Cast connections open between treats.
-      Reimplemented in 0.3.6 with health-checked reuse, retry-once on a dead
-      socket, and release on stop. (The earlier revert was actually a misdiagnosed
-      `NameError`, fixed in 0.3.6.)
+- [x] **No "connecting" chime** — held Cast connections (0.3.6) cut re-discovery,
+      but a Google Home still relaunches its receiver after ~5 min idle, so 0.4.0
+      adds an optional **"keep speaker warm"** toggle that loops a silent clip to
+      keep the receiver loaded (the only thing that actually suppresses the chime).
 - [ ] **Per-speaker volume**, and a fixed "treat volume" that restores after.
 - [ ] **Preset spoken phrases** / a random message from a list.
 - [ ] TTS **voice/language** options and an **offline** fallback (e.g. pyttsx3).
@@ -85,7 +85,8 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [ ] A **snapshot gallery** view.
 
 ### Camera
-- [ ] **Multiple cameras**.
+- [x] **Saved cameras** — add several (with credentials) and switch the active
+      feed from a dropdown. (Watching *several at once* is still future work.)
 - [ ] **Live MJPEG preview** stream in the GUI (not just a grabbed still).
 - [ ] **Touch support** for the ROI picker on phones.
 

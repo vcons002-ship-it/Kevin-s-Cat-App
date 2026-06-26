@@ -23,10 +23,14 @@ class Config:
     """All user-tunable settings. Mirrors the GUI form fields."""
 
     # --- Camera ---
-    camera_url: str = ""              # RTSP/MJPEG/HTTP stream URL
+    camera_url: str = ""              # RTSP/MJPEG/HTTP stream URL (the active camera)
     camera_name: str = ""             # friendly name (from discovery, for display)
     camera_username: str = ""         # optional; only if the stream needs auth
     camera_password: str = ""
+    # Saved cameras the user has added, each {name, url, username, password}.
+    # Stored so the GUI can offer a dropdown; the active camera is the camera_*
+    # fields above. Passwords are kept in plaintext locally (same as camera_password).
+    cameras: list = field(default_factory=list)
 
     # --- Speaker (Google Home / Cast) ---
     speaker_name: str = ""            # legacy single speaker (kept for back-compat)
@@ -48,6 +52,16 @@ class Config:
     detect_size: int = 300           # net input size; 300 = reliable for people (512 = distant cats, heavier)
     scan_fps: float = 10.0           # frames/sec to read from the camera (lower = less CPU)
     roi: list | None = None          # optional [x, y, w, h] crop of the frame (set in the GUI)
+    label_floor: float = 0.55        # min confidence to NAME a non-person mover in the log/snapshot (higher = fewer stray "pottedplant"/"sofa" labels; no effect on treats)
+
+    # --- Motion pre-filter (cheap gate before the neural net runs) ---
+    motion_sensitivity: str = "medium"   # "low"|"medium"|"high"|"custom" — GUI preset that drives the three knobs below
+    motion_min_area_frac: float = 0.003  # fraction of the frame that must change to count as motion (higher = less sensitive)
+    motion_diff_threshold: int = 25      # per-pixel brightness change to count a pixel as moved (higher = less sensitive)
+    motion_min_blob_px: int = 14         # reject change regions thinner than this (rejects thin artifact lines)
+
+    # --- CPU saving ---
+    pause_during_cooldown: bool = True   # skip the neural net while in the between-rolls cooldown (nothing it sees can trigger anyway); resumes just before the window reopens
 
     # --- Quiet time (no chimes during this daily window; "" = disabled) ---
     quiet_start: str = ""            # "HH:MM", e.g. "22:00"
@@ -55,6 +69,7 @@ class Config:
 
     # --- Casting behaviour ---
     dont_interrupt_playback: bool = False   # skip a treat if media is playing
+    keep_speakers_warm: bool = False        # loop a silent clip so the Cast receiver stays loaded and there's no "connecting" chime (holds the speaker active)
 
     # --- Server ---
     web_port: int = 8080

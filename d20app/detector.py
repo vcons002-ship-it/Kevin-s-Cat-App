@@ -206,7 +206,9 @@ class PersonDetector:
     """
 
     def __init__(self, source: str, confidence: float = 0.5, roi=None,
-                 detect_size: int = 300) -> None:
+                 detect_size: int = 300, label_floor: float = _LABEL_FLOOR,
+                 motion_min_area_frac: float = 0.003, motion_diff_threshold: int = 25,
+                 motion_min_blob_px: int = 14) -> None:
         self.source = source
         self.confidence = confidence
         self.roi = roi          # optional [x, y, w, h]
@@ -214,13 +216,21 @@ class PersonDetector:
         # for people; 512 recovers small/distant subjects (e.g. a far cat) at
         # more CPU but can slightly hurt some person poses.
         self.detect_size = int(detect_size) if detect_size else 300
+        # Min confidence to NAME a non-person mover (cat/pottedplant/…) in the log
+        # and draw it on a snapshot. Higher = fewer stray labels; doesn't affect
+        # whether a person triggers a treat (that's `confidence`).
+        self.label_floor = float(label_floor)
         self._net = None
         self._cap = None
         self._read_fails = 0
         self.frame_size = None  # (w, h) of the last good frame; None until one reads
         self._last_frame = None    # last frame the net analysed (for snapshots)
         self._last_boxes = []      # detections on that frame: [(label, score, box)]
-        self._motion = MotionPrefilter()
+        self._motion = MotionPrefilter(
+            min_area_frac=motion_min_area_frac,
+            diff_threshold=motion_diff_threshold,
+            min_blob_px=motion_min_blob_px,
+        )
 
     # -- model / stream lifecycle -------------------------------------------
     def _ensure_net(self):
@@ -316,7 +326,7 @@ class PersonDetector:
             # Only draw boxes that actually count — a person at the trigger
             # threshold, other classes at the label floor — so a corrupt frame's
             # low-confidence guesses don't litter the snapshot.
-            floor = self.confidence if label == "person" else _LABEL_FLOOR
+            floor = self.confidence if label == "person" else self.label_floor
             if score < floor:
                 continue
             color = self._BOX_COLORS.get(label, (160, 160, 160))
@@ -327,7 +337,7 @@ class PersonDetector:
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return buf.tobytes() if ok else None
 
-    def read_and_detect(self) -> FrameOutcome:
+    def read_and_detect(self, detect: bool = True) -> FrameOutcome:
         """Grab one frame, apply the motion pre-filter, then classify it.
 
         Returns a :class:`FrameOutcome`. ``motion`` is False when nothing moved
@@ -335,6 +345,12 @@ class PersonDetector:
         whether a person cleared the threshold and ``labels`` lists the other
         things seen (e.g. ``("cat",)``) so the caller can report *what* moved.
         Raises :class:`CameraError` when the stream is really gone.
+
+        With ``detect=False`` the frame is still read (so the stream stays warm
+        and a dead camera is still noticed) and the motion baseline is refreshed,
+        but the neural net is **skipped** entirely and a neutral, no-motion
+        outcome is returned. The loop uses this to idle cheaply during the
+        between-rolls cooldown, when nothing the net sees could trigger anyway.
         """
         import cv2
 
@@ -354,19 +370,21 @@ class PersonDetector:
         self._read_fails = 0
         self.frame_size = (frame.shape[1], frame.shape[0])
         gray = cv2.cvtColor(self._crop(frame), cv2.COLOR_BGR2GRAY)
-        if not self._motion.update(gray):
+        moved = self._motion.update(gray)      # keep the baseline fresh even when paused
+        if not detect or not moved:
             return FrameOutcome(motion=False, person=False)
 
-        boxes = self._detect_boxes(frame, floor=min(0.3, self.confidence))
+        boxes = self._detect_boxes(frame, floor=min(self.label_floor, self.confidence))
         self._last_frame = self._crop(frame)   # what the net saw (box coords match)
         self._last_boxes = boxes
         person = self._best(boxes, "person") >= self.confidence
-        # Identify non-person movers (cats!) at a lower bar than a person needs,
-        # so a smaller/less-certain cat is still named rather than "something".
+        # Identify non-person movers (cats!) at the label floor — lower than a
+        # person needs, so a smaller/less-certain cat is still named, but high
+        # enough (default 0.5) to keep stray "pottedplant"/"sofa" guesses out.
         labels = tuple(
             label
             for label, score, _ in sorted(boxes, key=lambda b: -b[1])
-            if label != "person" and score >= _LABEL_FLOOR
+            if label != "person" and score >= self.label_floor
         )
         return FrameOutcome(motion=True, person=person, labels=labels)
 

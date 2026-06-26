@@ -61,6 +61,17 @@ class Status:
     rolls: int = 0
 
 
+def _cooldown_resume_delay(cfg) -> float:
+    """Seconds before the cooldown ends at which to resume the neural net.
+
+    Enough lead to rebuild the confirm-frames streak (``confirm_frames`` frames at
+    ``scan_fps``) plus a small margin for stream warmup, so the next treat window
+    isn't missed when detection was paused to save CPU.
+    """
+    per_frame = 1.0 / max(1.0, float(cfg.scan_fps))
+    return max(3.0, int(cfg.confirm_frames) * per_frame + 1.0)
+
+
 class DetectionLoop:
     """Owns the worker thread and shared state for one detection session."""
 
@@ -125,12 +136,19 @@ class DetectionLoop:
             return
 
         caster = self._caster_for(cfg)
+        if cfg.keep_speakers_warm:
+            # Loop silence so the receiver stays loaded — no "connecting" chime.
+            caster.start_keepalive(targets)
 
         detector = PersonDetector(
             source=_camera_source(cfg),
             confidence=cfg.person_confidence,
             roi=cfg.roi,
             detect_size=cfg.detect_size,
+            label_floor=cfg.label_floor,
+            motion_min_area_frac=cfg.motion_min_area_frac,
+            motion_diff_threshold=cfg.motion_diff_threshold,
+            motion_min_blob_px=cfg.motion_min_blob_px,
         )
         gate = dice.RollGate(cfg.cooldown_seconds)
 
@@ -166,9 +184,17 @@ class DetectionLoop:
         streak = 0                 # consecutive person frames (false-positive guard)
         confirm_frames = max(1, int(cfg.confirm_frames))
         interval = 1.0 / max(1.0, float(cfg.scan_fps))      # seconds between reads
+        resume_at = 0.0            # monotonic time to resume the net after a roll (0 = not paused)
         while not self._stop.is_set():
+            # During the post-roll cooldown the net can't trigger anything, so
+            # skip it to save CPU — but keep reading frames so the stream stays
+            # warm and a dead camera is still noticed. Resumes (with lead time)
+            # just before the cooldown window reopens.
+            paused = bool(
+                cfg.pause_during_cooldown and resume_at and time.monotonic() < resume_at
+            )
             try:
-                outcome = detector.read_and_detect()
+                outcome = detector.read_and_detect(detect=not paused)
             except FileNotFoundError as exc:
                 self.status.last_error = str(exc)
                 self.activity.add("error", str(exc))
@@ -225,6 +251,18 @@ class DetectionLoop:
             if not result.rolled:
                 time.sleep(interval)
                 continue        # within cooldown window
+
+            # A roll just happened, so the cooldown gate is now closed for
+            # cfg.cooldown_seconds. Pause the net until shortly before it reopens.
+            if cfg.pause_during_cooldown and cfg.cooldown_seconds > 0:
+                resume_at = time.monotonic() + max(
+                    0.0, cfg.cooldown_seconds - _cooldown_resume_delay(cfg)
+                )
+                self.activity.add(
+                    "info",
+                    f"Detection paused ~{round(cfg.cooldown_seconds / 60)} min "
+                    "for cooldown (saving CPU) — resumes before the next window.",
+                )
 
             self.status.rolls += 1
             self.status.last_roll = result.describe()

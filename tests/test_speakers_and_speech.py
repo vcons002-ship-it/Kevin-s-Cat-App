@@ -158,3 +158,69 @@ def test_caster_holds_and_reuses_connection(monkeypatch, tmp_path):
 
     caster.close()
     assert caster._cache == {}            # everything released
+
+
+# --- keep-warm (silent-clip loop to avoid the Google Home connecting chime) ----
+
+class _KeepAliveController:
+    def __init__(self):
+        self.played = []
+        self.status = types.SimpleNamespace(player_is_playing=False, content_id=None)
+
+    def update_status(self):
+        pass
+
+    def play_media(self, url, content_type):
+        self.played.append(url)
+        self.status.player_is_playing = True
+        self.status.content_id = url
+
+    def block_until_active(self, timeout=10):
+        pass
+
+
+class _KeepAliveCast:
+    def __init__(self):
+        self.media_controller = _KeepAliveController()
+        self.socket_client = types.SimpleNamespace(is_connected=True)
+
+    def disconnect(self, blocking=False):
+        pass
+
+
+def test_keepalive_loops_silence_then_stops(tmp_path, monkeypatch):
+    import time
+    caster = Caster(_FakeServer(str(tmp_path)))
+    cast = _KeepAliveCast()
+    monkeypatch.setattr(Caster, "_connect", lambda self, name: (cast, object()))
+
+    caster.start_keepalive(["Kitchen"], interval=0.05)
+    for _ in range(100):                       # wait for at least one silent cast
+        if cast.media_controller.played:
+            break
+        time.sleep(0.02)
+    caster.stop_keepalive()
+
+    assert cast.media_controller.played, "keep-alive never cast the silence clip"
+    assert all(u.endswith("_keepalive_silence.wav") for u in cast.media_controller.played)
+    assert (tmp_path / "_keepalive_silence.wav").exists()   # generated once
+    assert caster._silence_url is None                      # cleared on stop
+
+
+def test_treat_plays_through_our_silence_but_yields_to_real_audio(tmp_path, monkeypatch):
+    caster = Caster(_FakeServer(str(tmp_path)))
+    cast = _KeepAliveCast()
+    monkeypatch.setattr(Caster, "_connect", lambda self, name: (cast, object()))
+    caster._silence_url = "http://host/_keepalive_silence.wav"
+
+    # Speaker is "playing" our own keep-alive silence -> a treat still plays.
+    cast.media_controller.status.player_is_playing = True
+    cast.media_controller.status.content_id = caster._silence_url
+    assert caster.play_media("Kitchen", "http://host/treat.wav", "audio/wav",
+                             dont_interrupt=True) is True
+
+    # Real music is playing -> dont_interrupt is respected (treat skipped).
+    cast.media_controller.status.player_is_playing = True
+    cast.media_controller.status.content_id = "http://host/spotify"
+    assert caster.play_media("Kitchen", "http://host/treat.wav", "audio/wav",
+                             dont_interrupt=True) is False
