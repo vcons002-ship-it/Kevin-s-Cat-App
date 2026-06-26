@@ -54,9 +54,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **84 automated tests**, including a detection-accuracy regression guard over
+- **91 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
-  YOLO11n backend (loads, detects people, falls back), and
+  YOLO11n backend (loads, detects people, falls back), local USB camera + local
+  PC speaker routing, and
   saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
@@ -75,6 +76,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       but a Google Home still relaunches its receiver after ~5 min idle, so 0.4.0
       adds an optional **"keep speaker warm"** toggle that loops a silent clip to
       keep the receiver loaded (the only thing that actually suppresses the chime).
+- [x] **Local PC speaker** — play the treat sound on the host machine's own
+      speakers (alongside or instead of a Google Home), via optional `playsound3`.
+- [ ] **Play out of an IP camera's own speaker** (ONVIF two-way backchannel) —
+      non-standard and camera-specific, so only if a clean approach emerges.
 - [ ] **Per-speaker volume**, and a fixed "treat volume" that restores after.
 - [ ] **Preset spoken phrases** / a random message from a list.
 - [ ] TTS **voice/language** options and an **offline** fallback (e.g. pyttsx3).
@@ -88,6 +93,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 ### Camera
 - [x] **Saved cameras** — add several (with credentials) and switch the active
       feed from a dropdown. (Watching *several at once* is still future work.)
+- [x] **Local USB / built-in webcam** on the machine running the app.
 - [ ] **Live MJPEG preview** stream in the GUI (not just a grabbed still).
 - [ ] **Touch support** for the ROI picker on phones.
 

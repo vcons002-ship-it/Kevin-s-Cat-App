@@ -116,6 +116,19 @@ Write-Host "==> Installing dependencies (this can take a few minutes the first t
 & $vpy -m pip install --upgrade pip | Out-Null
 & $vpy -m pip install -r requirements.txt
 
+# Optional: play the chime on this machine's own speakers (vs. only a Google Home).
+$wantLocalAudio = $true
+if ([Environment]::UserInteractive) {
+    $a = Read-Host "Install local PC audio output (play the chime on this machine's speakers)? [Y/n]"
+    if ($a -and $a.Trim().ToLower().StartsWith('n')) { $wantLocalAudio = $false }
+}
+if ($wantLocalAudio) {
+    & $vpy -m pip install playsound3
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "    (playsound3 install failed - the 'This PC (local audio)' option will be unavailable)"
+    }
+}
+
 Write-Host "==> Generating the default treat chime"
 & $vpy d20app\sounds\generate_chime.py
 

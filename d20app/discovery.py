@@ -135,3 +135,33 @@ def _resolve_onvif_camera(host: str) -> tuple[str, str]:
         except Exception:
             continue
     return "", ""
+
+
+def probe_local_cameras(max_index: int = 5) -> list[dict]:
+    """Find USB/built-in cameras on **this** machine (the one running the app).
+
+    Returns ``[{"value": "usb:0", "label": "USB camera 0"}, …]`` for each index
+    that opens and yields a frame. Empty on a headless box (e.g. a NAS). Stops
+    early after two consecutive misses so it doesn't probe phantom devices.
+    """
+    from .detector import _open_capture
+
+    found, misses = [], 0
+    for i in range(max(0, max_index)):
+        cap = _open_capture(f"usb:{i}")
+        ok = False
+        try:
+            if cap.isOpened():
+                ok, _ = cap.read()
+        except Exception:
+            ok = False
+        finally:
+            cap.release()
+        if ok:
+            found.append({"value": f"usb:{i}", "label": f"USB camera {i}"})
+            misses = 0
+        else:
+            misses += 1
+            if misses >= 2:
+                break
+    return found

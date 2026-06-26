@@ -41,15 +41,24 @@ async function loadSpeakers(detect) {
   const { body } = await api("/api/speakers");
   speakers = body || [];
   sel.innerHTML = "";
-  if (!speakers.length) {
-    sel.innerHTML = `<option value="" disabled>No speakers found — check same WiFi</option>`;
-  }
+  // Local PC audio is always available, listed first.
+  const localOpt = document.createElement("option");
+  localOpt.value = "__local__";
+  localOpt.textContent = "This PC (local audio)";
+  if (savedSpeakers.includes("__local__")) localOpt.selected = true;
+  sel.appendChild(localOpt);
   for (const s of speakers) {
     const opt = document.createElement("option");
     opt.value = s.name;
     opt.textContent = s.is_group ? `${s.name}  (group)` : s.name;
     if (savedSpeakers.includes(s.name)) opt.selected = true;
     sel.appendChild(opt);
+  }
+  if (!speakers.length) {
+    const none = document.createElement("option");
+    none.value = ""; none.disabled = true;
+    none.textContent = "(no Cast speakers found — check same WiFi)";
+    sel.appendChild(none);
   }
   updateSpeakerWarning();
 }
@@ -131,6 +140,33 @@ async function saveCamera() {
   note.textContent = ok ? "Saved ✓" : ((body && body.error) || "Failed");
   if (ok) await loadSavedCameras();
   setTimeout(() => (note.textContent = ""), 2500);
+}
+
+async function loadLocalCameras(detect) {
+  const sel = $("camera-local-select");
+  sel.innerHTML = `<option value="">${detect ? "Detecting…" : "—"}</option>`;
+  const { body } = await api("/api/cameras/local");
+  const cams = body || [];
+  sel.innerHTML = cams.length
+    ? `<option value="">— pick a USB camera —</option>`
+    : `<option value="">— none found on this PC —</option>`;
+  for (const c of cams) {
+    const opt = document.createElement("option");
+    opt.value = c.value; opt.textContent = c.label;
+    if (savedCameraUrl === c.value) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
+function useLocalCamera() {
+  const opt = $("camera-local-select").selectedOptions[0];
+  const v = opt ? opt.value : "";
+  if (!v) return;
+  $("camera_url").value = v;            // e.g. "usb:0" — becomes the active camera
+  $("camera_name").value = opt.textContent;
+  $("camera_username").value = "";
+  $("camera_password").value = "";
+  $("camera-select").value = "";        // it's a local cam, not a network one
 }
 
 async function loadSounds() {
@@ -390,6 +426,8 @@ async function loadLog() {
 function wire() {
   $("speaker-refresh").onclick = () => loadSpeakers(true);
   $("camera-refresh").onclick = () => loadCameras(true);
+  $("camera-local-refresh").onclick = () => loadLocalCameras(true);
+  $("camera-local-select").onchange = useLocalCamera;
   $("camera-saved-use").onclick = useSavedCamera;
   $("camera-saved-delete").onclick = deleteSavedCamera;
   $("camera-save").onclick = saveCamera;
@@ -454,6 +492,7 @@ async function init() {
   await loadConfig();
   await Promise.all([
     loadSpeakers(false), loadCameras(false), loadSounds(), loadSavedCameras(),
+    loadLocalCameras(false),
   ]);
   refreshStatus();
   loadLog();

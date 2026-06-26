@@ -76,6 +76,12 @@ echo "==> Installing dependencies (this can take a few minutes the first time)"
 ./venv/bin/python -m pip install --upgrade pip >/dev/null
 ./venv/bin/python -m pip install -r requirements.txt
 
+# Optional: play the chime on this machine's own speakers (vs. only a Google Home).
+if confirm "Install local PC audio output (play the chime on this machine's speakers)?"; then
+  ./venv/bin/python -m pip install playsound3 \
+    || echo "    (playsound3 install failed — the 'This PC (local audio)' option will be unavailable)"
+fi
+
 echo "==> Generating the default treat chime"
 ./venv/bin/python d20app/sounds/generate_chime.py
 
