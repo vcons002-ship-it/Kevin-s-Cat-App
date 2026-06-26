@@ -51,11 +51,8 @@ from a simple web page.
 installed, the script offers to install it for you (per-user, no admin — via
 `winget`, or the [python.org](https://www.python.org/downloads/windows/)
 installer). If it had to install Python, close the window, reopen it, and run
-setup once more. Then start it with:
-
-```powershell
-.\venv\Scripts\python.exe run.py
-```
+setup once more. Then start it any time by double-clicking **`start.bat`** (or
+run `.\venv\Scripts\python.exe run.py`).
 
 The first run, Windows Firewall will ask to allow Python on the network — click
 **Allow** (tick *Private networks*) so the web page and your Google Home can reach
