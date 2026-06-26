@@ -32,13 +32,21 @@ _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
   the model.
 - `openvino` added as an **optional** dependency (commented in `requirements.txt`;
   offered by `setup.sh` / `setup.ps1`). The core install stays lean.
+- **`check_accelerator.py`** diagnostic — reports the compute devices this machine
+  exposes, what your configured `accelerator` actually resolves to (a real GPU vs
+  a silent CPU fallback), and a CPU-vs-backend ms/frame timing so you can confirm
+  the offload is real. Run: `./venv/bin/python check_accelerator.py`.
 
 ### Notes
-- **Intel-only**, and needs the host's Intel GPU compute drivers — it does nothing
-  on AMD/ARM NAS boxes (those stay on CPU). The OpenVINO path was verified
-  end-to-end on the CPU device (same detections as `cv2.dnn`); the **GPU** timings
-  above are from OpenVINO's published figures, **not yet run on real Intel iGPU
-  hardware here** — confirm on your box.
+- **Intel-only** for the *GPU*, and it needs the host's Intel GPU compute drivers —
+  on AMD/ARM NAS boxes the GPU options stay on CPU. The OpenVINO path was verified
+  end-to-end on the CPU device (same detections as `cv2.dnn`); the **iGPU** speed-ups
+  are from OpenVINO's published figures, **not yet run on real Intel iGPU hardware
+  here** — confirm with `check_accelerator.py` on your box.
+- **Bonus measured on a CPU-only box:** OpenVINO's *CPU* runtime alone ran yolo11n
+  ~3× and yolo11m ~3× faster than OpenCV's `cv2.dnn` CPU path (yolo11m 465 ms → 150 ms),
+  no GPU involved — so `openvino-auto` is a free win even without an iGPU, and it's
+  what makes yolo11m practical. (Numbers are from this dev box; relative, not absolute.)
 
 ## [0.7.0] — 2026-06-26
 

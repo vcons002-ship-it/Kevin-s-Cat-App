@@ -45,6 +45,18 @@ so a missing driver won't break detection. The OpenVINO path is verified
 end-to-end on the CPU device in the test suite; the real **iGPU** speed-ups are
 from Intel's published figures and should be confirmed on your own hardware.
 
+To check what your box actually does, run the diagnostic — it lists the detected
+devices, resolves your `accelerator` to a real GPU vs a silent CPU fallback, and
+times CPU vs your backend:
+
+```
+./venv/bin/python check_accelerator.py
+```
+
+Worth knowing: even with **no GPU**, OpenVINO's CPU runtime measured ~3× faster
+than `cv2.dnn` on a dev box (yolo11m ~465 ms → ~150 ms/frame), so `openvino-auto`
+can be a free win and is what makes `yolo11m` practical on CPU-only hardware.
+
 ## MobileNet-SSD (COCO/VOC 21-class)
 
 - `deploy.prototxt` — network definition (21 classes).
