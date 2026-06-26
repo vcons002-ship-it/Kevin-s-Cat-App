@@ -136,6 +136,9 @@ class DetectionLoop:
             return
 
         caster = self._caster_for(cfg)
+        if cfg.keep_speakers_warm:
+            # Loop silence so the receiver stays loaded — no "connecting" chime.
+            caster.start_keepalive(targets)
 
         detector = PersonDetector(
             source=_camera_source(cfg),

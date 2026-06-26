@@ -36,6 +36,15 @@ _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
   the browser.
 - **Every setting now has a plain-language note** on its effect on motion
   detection, image-analysis quality, and CPU usage.
+- **"Keep speaker connection warm" toggle (off by default).** Optionally loops a
+  silent clip every couple of minutes so the Google Home's Cast receiver never
+  unloads — then a treat just swaps the audio instead of relaunching the
+  receiver, which is what actually removes the "connecting" chime. (Research
+  confirmed a held socket alone can't: the receiver tears down ~5 min after
+  playback regardless, so only re-asserted audio keeps it loaded.) It yields to
+  any other audio so it won't stomp on music, and "don't interrupt playback"
+  still distinguishes real media from our own silence. Trade-off: it holds the
+  speaker active, so leave it off if you use those speakers for music.
 
 ### Changed
 - The settings page gained a "5. Motion & CPU" section; Quiet time and Region of

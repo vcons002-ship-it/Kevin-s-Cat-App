@@ -36,6 +36,7 @@ def test_config_defaults_present():
     assert cfg.motion_diff_threshold == 25
     assert cfg.motion_min_blob_px == 14
     assert cfg.cameras == []
+    assert cfg.keep_speakers_warm is False
 
 
 def test_config_coerces_motion_fields_and_round_trips_cameras(tmp_path):

@@ -187,6 +187,7 @@ async function loadConfig() {
     if ($(f) && cfg[f] !== undefined && cfg[f] !== null) $(f).value = cfg[f];
   }
   $("dont_interrupt_playback").checked = !!cfg.dont_interrupt_playback;
+  $("keep_speakers_warm").checked = !!cfg.keep_speakers_warm;
   $("pause_during_cooldown").checked = cfg.pause_during_cooldown !== false;
   if (cfg.motion_sensitivity) $("motion_sensitivity").value = cfg.motion_sensitivity;
   $("use_speech").checked = !!cfg.use_speech;
@@ -294,6 +295,7 @@ function gatherConfig() {
     quiet_end: $("quiet_end").value,
     roi: roi,
     dont_interrupt_playback: $("dont_interrupt_playback").checked,
+    keep_speakers_warm: $("keep_speakers_warm").checked,
   };
   const pw = $("camera_password").value;
   if (pw) values.camera_password = pw; // only send if user typed one

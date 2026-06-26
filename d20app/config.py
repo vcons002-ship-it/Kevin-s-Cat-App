@@ -69,6 +69,7 @@ class Config:
 
     # --- Casting behaviour ---
     dont_interrupt_playback: bool = False   # skip a treat if media is playing
+    keep_speakers_warm: bool = False        # loop a silent clip so the Cast receiver stays loaded and there's no "connecting" chime (holds the speaker active)
 
     # --- Server ---
     web_port: int = 8080

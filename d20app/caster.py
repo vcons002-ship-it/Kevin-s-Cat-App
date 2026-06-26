@@ -94,6 +94,14 @@ class Caster:
         self.sound_server = sound_server
         self._lock = threading.Lock()
         self._cache: dict = {}          # name -> (cast, browser)
+        self._play_lock = threading.Lock()   # serialise plays (treat vs keep-alive)
+        # Keep-warm: loop a silent clip so the receiver app never unloads (the
+        # only thing that actually suppresses the Google Home "connecting" chime
+        # — a held socket alone doesn't; see d20app/caster.py docs / README).
+        self._ka_thread = None
+        self._ka_stop = None
+        self._ka_names: list = []
+        self._silence_url = None         # content_id of our keep-alive clip, if any
 
     # -- connection management ----------------------------------------------
     def _connect(self, name: str):
@@ -144,9 +152,76 @@ class Caster:
             pass
 
     def close(self) -> None:
-        """Drop every held connection (on stop-watching / shutdown)."""
+        """Stop keep-warm and drop every held connection (on stop / shutdown)."""
+        self.stop_keepalive()
         for name in list(self._cache):
             self._drop(name)
+
+    # -- keep-warm (avoid the Google Home "connecting" chime) ----------------
+    def _ensure_silence_file(self) -> str:
+        """Generate (once) a tiny silent WAV in the sounds dir; return its name."""
+        import wave
+
+        name = "_keepalive_silence.wav"
+        path = os.path.join(self.sound_server.directory, name)
+        if not os.path.exists(path):
+            with wave.open(path, "w") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(8000)
+                w.writeframes(b"\x00\x00" * 8000)   # 1 second of silence
+        return name
+
+    def start_keepalive(self, names, interval: float = 120.0) -> None:
+        """Keep the receiver app loaded on ``names`` by re-casting silence.
+
+        Re-casts a silent clip every ``interval`` seconds (well under the ~5 min
+        receiver idle-teardown), so a real treat just swaps the media instead of
+        relaunching the receiver — no "connecting" chime. Yields to any *other*
+        audio so it never stomps on music you're actually playing.
+        """
+        self.stop_keepalive()
+        self._ka_names = _as_list(names)
+        if not self._ka_names:
+            return
+        self._ka_stop = threading.Event()
+        self._ka_thread = threading.Thread(
+            target=self._keepalive_loop, args=(interval,),
+            name="cast-keepalive", daemon=True,
+        )
+        self._ka_thread.start()
+
+    def stop_keepalive(self) -> None:
+        if self._ka_stop is not None:
+            self._ka_stop.set()
+        if self._ka_thread is not None and self._ka_thread.is_alive():
+            self._ka_thread.join(timeout=5)
+        self._ka_thread = None
+        self._silence_url = None
+
+    def _keepalive_loop(self, interval: float) -> None:
+        try:
+            self.sound_server.start()
+            self._silence_url = self.sound_server.url_for(self._ensure_silence_file())
+        except Exception:                       # noqa: BLE001
+            return
+        while True:
+            for name in list(self._ka_names):
+                try:
+                    cast = self._get(name)
+                    mc = cast.media_controller
+                    with self._play_lock:
+                        mc.update_status()
+                        playing = getattr(mc.status, "player_is_playing", False)
+                        content = getattr(mc.status, "content_id", None)
+                        # Don't interrupt real audio; only (re)assert our silence.
+                        if not (playing and content != self._silence_url):
+                            mc.play_media(self._silence_url, "audio/wav")
+                            mc.block_until_active(timeout=10)
+                except Exception:               # noqa: BLE001 — heal on next cycle
+                    self._drop(name)
+            if self._ka_stop.wait(interval):
+                break
 
     # -- playback ------------------------------------------------------------
     def _play_one(self, name: str, url: str, content_type: str,
@@ -154,16 +229,20 @@ class Caster:
         """Play ``url`` on one speaker over its cached connection.
 
         Returns True if playback started, False if skipped (``dont_interrupt``
-        and the device is already playing).
+        and *real* media is already playing — our own keep-alive silence doesn't
+        count, so a treat still plays through it).
         """
         cast = self._get(name)
         mc = cast.media_controller
-        if dont_interrupt:
-            mc.update_status()
-            if mc.status.player_is_playing:
-                return False
-        mc.play_media(url, content_type)
-        mc.block_until_active(timeout=10)
+        with self._play_lock:
+            if dont_interrupt:
+                mc.update_status()
+                playing = getattr(mc.status, "player_is_playing", False)
+                content = getattr(mc.status, "content_id", None)
+                if playing and content != self._silence_url:
+                    return False
+            mc.play_media(url, content_type)
+            mc.block_until_active(timeout=10)
         return True
 
     def play_media(self, names, url: str, content_type: str,
