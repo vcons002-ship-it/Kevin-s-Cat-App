@@ -129,6 +129,20 @@ if ($wantLocalAudio) {
     }
 }
 
+# Optional: run YOLO on an Intel iGPU/GPU via OpenVINO. Intel-only; also needs the
+# host Intel GPU drivers. Falls back to CPU if unavailable.
+$wantOpenvino = $false
+if ([Environment]::UserInteractive) {
+    $a = Read-Host "Install Intel OpenVINO GPU acceleration (optional, Intel iGPU only)? [y/N]"
+    if ($a -and $a.Trim().ToLower().StartsWith('y')) { $wantOpenvino = $true }
+}
+if ($wantOpenvino) {
+    & $vpy -m pip install 'openvino>=2024.0'
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "    (openvino install failed - the OpenVINO accelerator options will fall back to CPU)"
+    }
+}
+
 Write-Host "==> Generating the default treat chime"
 & $vpy d20app\sounds\generate_chime.py
 

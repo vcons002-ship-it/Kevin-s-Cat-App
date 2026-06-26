@@ -149,6 +149,15 @@
           </select>
           <span class="hint">Detection: YOLO11n is far better at night/occluded people (~1.4× CPU) · YOLO11m is bigger/slower (~5–18× CPU, didn't beat nano on our night test) · MobileNet is fastest but weak in the dark</span>
         </label>
+        <label>Accelerator (YOLO only)
+          <select id="accelerator">
+            <option value="cpu">CPU — always works (default)</option>
+            <option value="opencl">OpenCL iGPU — no extra install, may fall back to CPU</option>
+            <option value="openvino-auto">OpenVINO AUTO — Intel GPU, falls back to CPU</option>
+            <option value="openvino-gpu">OpenVINO GPU — Intel iGPU/GPU only</option>
+          </select>
+          <span class="hint">CPU/GPU: offload YOLO to an <b>Intel iGPU</b> to free the CPU and make YOLO11m practical · OpenVINO needs the optional <code>openvino</code> package + Intel GPU drivers · anything unavailable safely falls back to CPU</span>
+        </label>
         <label>Detection detail
           <select id="detect_size">
             <option value="300">Standard — recommended for people</option>

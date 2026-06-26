@@ -48,6 +48,7 @@ class Config:
 
     # --- Detection tuning ---
     detector_model: str = "yolo11n"  # "yolo11n" (better low-light/odd-pose, ~1.4x CPU; default), "yolo11m" (medium, bigger/slower, ~5-18x CPU), or "mobilenet_ssd" (lightest, bundled); falls back to mobilenet_ssd if YOLO can't load
+    accelerator: str = "cpu"         # where the YOLO model runs: "cpu" (default), "opencl" (iGPU via OpenCL, no extra deps), or "openvino-gpu"/"openvino-auto" (Intel OpenVINO, needs the optional 'openvino' pkg + Intel GPU drivers); auto-falls back to CPU if a GPU backend can't start
     person_confidence: float = 0.5   # min DNN confidence to count as a person (0.5: clean person/cat split on stills, keeps hard poses ≥0.71)
     confirm_frames: int = 4          # require a person in this many frames in a row (4 guards against a moving cat's transient high-confidence spike)
     detect_size: int = 300           # net input size; 300 = reliable for people (512 = distant cats, heavier)

@@ -11,6 +11,35 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.8.0] — 2026-06-26
+
+### Added
+- **GPU / iGPU acceleration for the YOLO detector** via a new `accelerator`
+  setting (Detection card dropdown). Options:
+  - `cpu` (default) — OpenCV `cv2.dnn` on the CPU, as before.
+  - `opencl` — same net with the `OPENCL_FP16` target so the conv layers run on
+    an OpenCL device (e.g. an Intel iGPU). No extra Python dependency; OpenCV
+    falls back to CPU on its own if there's no OpenCL device.
+  - `openvino-gpu` / `openvino-auto` — run the ONNX through Intel's **OpenVINO**
+    runtime (optional `openvino` package) on the `GPU` device, or `AUTO` (GPU
+    with built-in CPU fallback). The dependable iGPU path — typically 2–4× CPU on
+    Intel hardware, and what makes the heavier `yolo11m` practical.
+  The YOLO backend now wraps either engine behind a small inference *runner*, so
+  the letterbox + NMS decode is shared across all accelerators.
+- Graceful degradation: if a requested GPU backend can't start (no Intel GPU, no
+  driver, `openvino` not installed), the detector retries the **same** model on
+  CPU before falling back to MobileNet-SSD — a dead accelerator never costs you
+  the model.
+- `openvino` added as an **optional** dependency (commented in `requirements.txt`;
+  offered by `setup.sh` / `setup.ps1`). The core install stays lean.
+
+### Notes
+- **Intel-only**, and needs the host's Intel GPU compute drivers — it does nothing
+  on AMD/ARM NAS boxes (those stay on CPU). The OpenVINO path was verified
+  end-to-end on the CPU device (same detections as `cv2.dnn`); the **GPU** timings
+  above are from OpenVINO's published figures, **not yet run on real Intel iGPU
+  hardware here** — confirm on your box.
+
 ## [0.7.0] — 2026-06-26
 
 ### Added

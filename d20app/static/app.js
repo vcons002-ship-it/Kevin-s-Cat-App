@@ -226,6 +226,7 @@ async function loadConfig() {
   $("keep_speakers_warm").checked = !!cfg.keep_speakers_warm;
   $("pause_during_cooldown").checked = cfg.pause_during_cooldown !== false;
   if (cfg.detector_model) $("detector_model").value = cfg.detector_model;
+  if (cfg.accelerator) $("accelerator").value = cfg.accelerator;
   if (cfg.motion_sensitivity) $("motion_sensitivity").value = cfg.motion_sensitivity;
   $("use_speech").checked = !!cfg.use_speech;
   if (cfg.speech_text) $("speech_text").value = cfg.speech_text;
@@ -322,6 +323,7 @@ function gatherConfig() {
     confirm_frames: Number($("confirm_frames").value),
     detect_size: Number($("detect_size").value),
     detector_model: $("detector_model").value,
+    accelerator: $("accelerator").value,
     scan_fps: Number($("scan_fps").value),
     label_floor: Number($("label_floor").value),
     motion_sensitivity: $("motion_sensitivity").value,

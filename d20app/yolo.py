@@ -21,6 +21,23 @@ Two variants are available (see :data:`MODELS`):
 Each model is exported from its Ultralytics ``*.pt`` to a fixed-size ONNX (see
 d20app/models/README.md). Raw output is ``(1, 84, N)``: 4 box coords (cx, cy, w,
 h in letterboxed pixels) + 80 COCO class scores per anchor.
+
+Acceleration (``accelerator`` argument to :func:`load_net`):
+
+- ``cpu`` (default) — OpenCV ``cv2.dnn`` on the CPU. Always available.
+- ``opencl`` — same ``cv2.dnn`` net but with the ``OPENCL_FP16`` target, so the
+  conv layers run on an OpenCL device (e.g. an Intel iGPU). No extra Python deps;
+  needs the host's OpenCL runtime. OpenCV silently falls back to CPU if no OpenCL
+  device is present, so it's safe but not guaranteed to actually offload.
+- ``openvino-gpu`` / ``openvino-auto`` — run the ONNX through Intel's **OpenVINO**
+  runtime (optional ``openvino`` package) on the ``GPU`` device, or ``AUTO`` which
+  picks GPU and falls back to CPU itself. The dependable iGPU path — typically
+  2–4× CPU on Intel hardware and the thing that makes the heavier ``yolo11m``
+  practical. **Intel-only**; needs the host Intel GPU compute drivers.
+
+Whatever the backend, inference returns the same ``(1, 84, N)`` tensor, so the
+letterbox + NMS decode below is shared. ``load_net`` returns a small *runner*
+(``.infer(blob) -> ndarray``) wrapping whichever engine was selected.
 """
 
 from __future__ import annotations
@@ -54,6 +71,9 @@ MODELS = {
 }
 DEFAULT_VARIANT = "yolo11n"
 
+# Where each accelerator runs the conv layers.
+ACCELERATORS = ("cpu", "opencl", "openvino-gpu", "openvino-auto")
+
 # Back-compat aliases for the single-model era (some tests/callers import these).
 ONNX_PATH = os.path.join(_MODELS_DIR, MODELS[DEFAULT_VARIANT]["file"])
 INPUT_SIZE = MODELS[DEFAULT_VARIANT]["size"]
@@ -70,19 +90,74 @@ def input_size(variant: str = DEFAULT_VARIANT) -> int:
     return MODELS[variant]["size"]
 
 
-def load_net(variant: str = DEFAULT_VARIANT):
-    """Load a YOLO11 variant's ONNX with cv2.dnn (raises if missing/unknown)."""
+class _CvDnnRunner:
+    """Wraps a ``cv2.dnn`` net (CPU or an OpenCL target) behind ``infer``."""
+
+    def __init__(self, net, target=None):
+        import cv2
+
+        if target is not None:
+            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            net.setPreferableTarget(target)
+        self._net = net
+
+    def infer(self, blob):
+        self._net.setInput(blob)
+        return self._net.forward()          # (1, 84, N)
+
+
+class _OpenVinoRunner:
+    """Wraps an OpenVINO compiled model (``GPU`` / ``AUTO`` device) behind ``infer``."""
+
+    def __init__(self, onnx_path: str, device: str):
+        import openvino as ov               # optional dep; import only when asked
+
+        core = ov.Core()
+        self._compiled = core.compile_model(core.read_model(onnx_path), device)
+        self._out = self._compiled.output(0)
+
+    def infer(self, blob):
+        return self._compiled([blob])[self._out]     # (1, 84, N)
+
+
+def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
+    """Build an inference runner for a YOLO11 variant on the chosen accelerator.
+
+    Returns an object with ``.infer(blob) -> (1, 84, N)``. Raises ``ValueError``
+    for an unknown variant/accelerator, ``FileNotFoundError`` if the model is
+    missing, or ``RuntimeError`` if an OpenVINO device can't be brought up (the
+    caller decides whether to fall back to ``cpu``).
+    """
     import cv2
 
     if variant not in MODELS:
         raise ValueError(f"unknown YOLO variant {variant!r}; known: {sorted(MODELS)}")
+    accel = (accelerator or "cpu").lower()
+    if accel not in ACCELERATORS:
+        raise ValueError(f"unknown accelerator {accel!r}; known: {list(ACCELERATORS)}")
     path = model_path(variant)
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"YOLO model {os.path.relpath(path)} is missing. "
             "See d20app/models/README.md to export it, or use the MobileNet-SSD model."
         )
-    return cv2.dnn.readNetFromONNX(path)
+
+    if accel in ("openvino-gpu", "openvino-auto"):
+        device = "GPU" if accel == "openvino-gpu" else "AUTO"
+        try:
+            return _OpenVinoRunner(path, device)
+        except Exception as exc:            # noqa: BLE001 — surface a clear, actionable error
+            raise RuntimeError(
+                f"OpenVINO {device} backend unavailable ({exc}). Install the optional "
+                "'openvino' package and the Intel GPU compute drivers, or use the CPU "
+                "accelerator."
+            ) from exc
+
+    net = cv2.dnn.readNetFromONNX(path)
+    if accel == "opencl":
+        # OpenCV silently runs on CPU if there's no OpenCL device, so this is safe.
+        return _CvDnnRunner(net, target=cv2.dnn.DNN_TARGET_OPENCL_FP16)
+    return _CvDnnRunner(net)
 
 
 def _letterbox(frame, size: int):
@@ -105,18 +180,22 @@ def _letterbox(frame, size: int):
 
 
 def detect_boxes(net, frame, floor: float, size: int = INPUT_SIZE) -> list:
-    """Run YOLO11n on one BGR ``frame``; return ``[(label, score, (x1,y1,x2,y2))]``.
+    """Run a YOLO11 runner on one BGR ``frame``; return ``[(label, score, box)]``.
 
-    ``floor`` is the confidence below which detections are dropped. Coordinates
-    are pixels within ``frame``.
+    ``net`` is a runner from :func:`load_net` (``.infer``); a raw ``cv2.dnn`` net
+    is also accepted for back-compat. ``floor`` is the confidence below which
+    detections are dropped. Coordinates are pixels within ``frame``.
     """
     import cv2
     import numpy as np
 
     lb, r, pad_x, pad_y = _letterbox(frame, size)
     blob = cv2.dnn.blobFromImage(lb, 1 / 255.0, (size, size), swapRB=True, crop=False)
-    net.setInput(blob)
-    out = net.forward()                       # (1, 84, N)
+    if hasattr(net, "infer"):
+        out = net.infer(blob)                 # (1, 84, N) — runner (cv2.dnn or OpenVINO)
+    else:                                     # back-compat: a bare cv2.dnn net
+        net.setInput(blob)
+        out = net.forward()
     out = np.squeeze(out, 0).T                 # (N, 84): [cx, cy, w, h, 80 class scores]
     class_scores = out[:, 4:]
     class_ids = class_scores.argmax(axis=1)

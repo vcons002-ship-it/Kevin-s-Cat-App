@@ -23,6 +23,28 @@ The active one is chosen by `detector_model` in `config.yaml` / the GUI:
 
 The variant → file/size mapping lives in `d20app/yolo.py` (`MODELS`).
 
+### Running YOLO on a GPU / Intel iGPU (`accelerator`)
+
+By default the YOLO model runs on the CPU. The `accelerator` setting (Detection
+card in the GUI, or `accelerator:` in `config.yaml`) can offload it:
+
+- `cpu` (default) — OpenCV `cv2.dnn` on the CPU.
+- `opencl` — the same net with OpenCV's `OPENCL_FP16` target, so the conv layers
+  run on an OpenCL device such as an Intel iGPU. **No extra Python install**, but
+  the host needs an OpenCL runtime (e.g. `intel-opencl-icd`). OpenCV silently
+  falls back to CPU if there's no usable OpenCL device, so it's safe to try.
+- `openvino-gpu` / `openvino-auto` — run the ONNX through Intel's **OpenVINO**
+  runtime (optional `openvino` package; `setup.sh`/`setup.ps1` offer it) on the
+  `GPU` device, or `AUTO` (GPU with a built-in CPU fallback). Typically 2–4× CPU
+  on Intel hardware and the thing that makes `yolo11m` practical.
+
+**Caveats, honestly:** OpenVINO's GPU plugin is **Intel-only** — it does nothing
+on AMD/ARM and needs the host Intel GPU compute drivers installed. Whatever you
+pick, the app retries on CPU (then MobileNet-SSD) if the accelerator can't start,
+so a missing driver won't break detection. The OpenVINO path is verified
+end-to-end on the CPU device in the test suite; the real **iGPU** speed-ups are
+from Intel's published figures and should be confirmed on your own hardware.
+
 ## MobileNet-SSD (COCO/VOC 21-class)
 
 - `deploy.prototxt` — network definition (21 classes).

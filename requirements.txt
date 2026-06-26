@@ -14,3 +14,9 @@ onvif-zeep>=0.2.12
 # audio)" option). Not installed by default — setup.sh / setup.ps1 offer it, or:
 #   pip install playsound3
 # playsound3>=3.0
+
+# Optional: run the YOLO detector on an Intel iGPU/GPU via the OpenVINO runtime
+# (the "OpenVINO" accelerator options). Intel-only, and also needs the host Intel
+# GPU compute drivers. Not installed by default — setup.sh / setup.ps1 offer it, or:
+#   pip install openvino
+# openvino>=2024.0
