@@ -54,9 +54,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **80 automated tests**, including a detection-accuracy regression guard over
-  45 cat images (incl. multi-cat scenes) — none read as a person at the default —
-  a treat-cast regression guard, and saved-camera/cooldown-pause/keep-warm coverage.
+- **84 automated tests**, including a detection-accuracy regression guard over
+  45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
+  YOLO11n backend (loads, detects people, falls back), and
+  saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
 

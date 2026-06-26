@@ -11,6 +11,29 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.5.0] — 2026-06-26
+
+### Added
+- **YOLO11n detection model (new default).** A real dim night frame scored
+  **0.00** with MobileNet-SSD (person completely missed) but **~0.87** with
+  YOLO11n, for only ~1.4× the CPU (≈28 ms vs ≈20 ms per inference on a test box,
+  and the net only runs on motion frames). YOLO11n is far better in low light and
+  on occluded/odd poses. Choose the model in the GUI (**Detection model**) or via
+  `detector_model` in `config.yaml` (`yolo11n` | `mobilenet_ssd`).
+  - Runs through OpenCV `cv2.dnn` from a bundled `d20app/models/yolo11n.onnx`
+    (~10 MB) — **no PyTorch at runtime**; export tooling is offline-only.
+  - New backend in `d20app/yolo.py` (letterbox → decode → NMS, COCO-80) produces
+    the same box format as the SSD path, so person triggers, `cat` labelling, and
+    annotated snapshots are unchanged.
+  - **Graceful fallback:** if the ONNX can't be loaded, the detector logs a
+    warning and silently uses MobileNet-SSD.
+
+### Notes
+- YOLO is much better at people but, like any strong detector, can still
+  occasionally misread an unusual cat pose (e.g. two cats seen top-down) as a
+  low-confidence person; the `confirm_frames` gate remains the backstop. The
+  MobileNet-SSD cat regression suite is retained (pinned to that model).
+
 ## [0.4.0] — 2026-06-25
 
 ### Added

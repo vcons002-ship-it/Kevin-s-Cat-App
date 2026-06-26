@@ -149,6 +149,7 @@ class DetectionLoop:
             motion_min_area_frac=cfg.motion_min_area_frac,
             motion_diff_threshold=cfg.motion_diff_threshold,
             motion_min_blob_px=cfg.motion_min_blob_px,
+            model=cfg.detector_model,
         )
         gate = dice.RollGate(cfg.cooldown_seconds)
 
