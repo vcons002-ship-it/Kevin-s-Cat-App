@@ -11,6 +11,12 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.5.3] — 2026-06-26
+
+### Added
+- **`start.bat`** — a one-click Windows launcher to run the app after setup
+  (checks the venv exists, runs `run.py`, keeps the window open on stop).
+
 ## [0.5.2] — 2026-06-26
 
 ### Added
