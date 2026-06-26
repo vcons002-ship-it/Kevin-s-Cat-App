@@ -59,3 +59,12 @@ def test_config_endpoints_never_leak_a_password(tmp_path, monkeypatch):
     c.post("/api/config", json={"camera_password": "topsecret"})
     got = c.get("/api/config").get_json()
     assert "camera_password" not in got
+
+
+def test_local_cameras_endpoint(tmp_path, monkeypatch):
+    import d20app.discovery as discovery
+    monkeypatch.setattr(discovery, "probe_local_cameras",
+                        lambda *a, **k: [{"value": "usb:0", "label": "USB camera 0"}])
+    c = _client(tmp_path, monkeypatch)
+    assert c.get("/api/cameras/local").get_json() == [
+        {"value": "usb:0", "label": "USB camera 0"}]

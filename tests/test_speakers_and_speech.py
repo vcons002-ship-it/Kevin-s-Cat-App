@@ -2,6 +2,8 @@
 
 import hashlib
 
+import pytest
+
 from d20app.caster import Caster, _as_list
 from d20app.config import Config, speaker_targets
 
@@ -205,6 +207,56 @@ def test_keepalive_loops_silence_then_stops(tmp_path, monkeypatch):
     assert all(u.endswith("_keepalive_silence.wav") for u in cast.media_controller.played)
     assert (tmp_path / "_keepalive_silence.wav").exists()   # generated once
     assert caster._silence_url is None                      # cleared on stop
+
+
+# --- local PC speaker (playsound3, not Cast) ----------------------------------
+
+import sys as _sys
+
+
+def _fake_playsound3(recorder):
+    mod = types.ModuleType("playsound3")
+    mod.playsound = lambda path, block=True: recorder.append(path)
+    return mod
+
+
+def test_local_speaker_uses_playsound_not_cast(tmp_path, monkeypatch):
+    from d20app.caster import LOCAL_SPEAKER
+    played = []
+    monkeypatch.setitem(_sys.modules, "playsound3", _fake_playsound3(played))
+    caster = Caster(_FakeServer(str(tmp_path)))
+    monkeypatch.setattr(Caster, "play_media",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("cast used")))
+    assert caster.play_sound([LOCAL_SPEAKER], "treat_chime.wav") is True
+    assert played and played[0].endswith("treat_chime.wav")
+
+
+def test_local_and_cast_targets_both_play(tmp_path, monkeypatch):
+    from d20app.caster import LOCAL_SPEAKER
+    played, cast_names = [], []
+    monkeypatch.setitem(_sys.modules, "playsound3", _fake_playsound3(played))
+    caster = Caster(_FakeServer(str(tmp_path)))
+    monkeypatch.setattr(Caster, "play_media",
+                        lambda self, names, *a, **k: cast_names.append(list(names)) or True)
+    assert caster.play_sound([LOCAL_SPEAKER, "Kitchen"], "treat_chime.wav") is True
+    assert played                       # local played
+    assert cast_names == [["Kitchen"]]  # cast got only the non-local name
+
+
+def test_local_speaker_without_playsound3_raises(tmp_path, monkeypatch):
+    from d20app.caster import LOCAL_SPEAKER
+    monkeypatch.setitem(_sys.modules, "playsound3", None)   # force ImportError
+    caster = Caster(_FakeServer(str(tmp_path)))
+    with pytest.raises(RuntimeError):
+        caster.play_sound([LOCAL_SPEAKER], "treat_chime.wav")
+
+
+def test_keepalive_ignores_local_speaker(tmp_path):
+    from d20app.caster import LOCAL_SPEAKER
+    caster = Caster(_FakeServer(str(tmp_path)))
+    caster.start_keepalive([LOCAL_SPEAKER])     # only local -> nothing to keep warm
+    assert caster._ka_thread is None
+    caster.stop_keepalive()
 
 
 def test_treat_plays_through_our_silence_but_yields_to_real_audio(tmp_path, monkeypatch):

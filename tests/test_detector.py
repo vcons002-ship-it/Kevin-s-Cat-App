@@ -51,6 +51,34 @@ def test_confidence_threshold_boundary():
     assert detector.person_in_detections(det, confidence=0.5) is True   # >= is inclusive
 
 
+def test_parse_local_index():
+    assert detector.parse_local_index("usb:0") == 0
+    assert detector.parse_local_index("usb:2") == 2
+    assert detector.parse_local_index("usb:x") is None
+    assert detector.parse_local_index("rtsp://cam/stream") is None
+    assert detector.parse_local_index("") is None
+
+
+def test_open_capture_routes_local_index_vs_ffmpeg_stream(monkeypatch):
+    import cv2
+
+    calls = []
+
+    class _Cap:
+        def isOpened(self): return True
+        def read(self): return True, None
+        def release(self): pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", lambda *a: calls.append(a) or _Cap())
+
+    detector._open_capture("usb:1")
+    assert calls[-1][0] == 1                      # opened by integer device index
+    assert calls[-1][1] != cv2.CAP_FFMPEG         # platform backend, not FFmpeg
+
+    detector._open_capture("rtsp://cam/stream")
+    assert calls[-1] == ("rtsp://cam/stream", cv2.CAP_FFMPEG)
+
+
 def test_motion_prefilter_first_frame_and_change():
     # First frame reports NO motion (nothing to compare yet); an identical frame
     # reports none; a large solid change reports motion.

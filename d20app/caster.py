@@ -71,6 +71,11 @@ class SoundServer:
 
 import hashlib
 
+# Sentinel speaker "name" meaning the local audio output of the machine running
+# the app (played via playsound3, not Cast). Stored in speaker_names like any
+# Cast device name; the GUI shows it as "This PC (local audio)".
+LOCAL_SPEAKER = "__local__"
+
 
 def _as_list(names) -> list:
     """Accept a single name or a list; return a clean list of names."""
@@ -181,7 +186,8 @@ class Caster:
         audio so it never stomps on music you're actually playing.
         """
         self.stop_keepalive()
-        self._ka_names = _as_list(names)
+        # Keep-warm is a Cast-receiver concept; the local PC speaker has none.
+        self._ka_names = [n for n in _as_list(names) if n != LOCAL_SPEAKER]
         if not self._ka_names:
             return
         self._ka_stop = threading.Event()
@@ -272,11 +278,45 @@ class Caster:
             raise RuntimeError("; ".join(errors))
         return played > 0
 
+    def _play_local(self, filename: str) -> None:
+        """Play a sound-folder file on this machine's own audio output."""
+        try:
+            from playsound3 import playsound
+        except Exception as exc:        # noqa: BLE001 — optional dependency
+            raise RuntimeError(
+                "Local PC audio needs the 'playsound3' package — re-run setup "
+                "(say yes to local audio) or: pip install playsound3"
+            ) from exc
+        path = os.path.join(self.sound_server.directory, filename)
+        playsound(path, block=False)        # don't stall the detection loop
+
     def play_sound(self, names, filename: str, dont_interrupt: bool = False) -> bool:
-        """Cast a file from the sound folder to one or more speakers."""
-        url = self.sound_server.url_for(filename)
-        content_type = mimetypes.guess_type(filename)[0] or "audio/wav"
-        return self.play_media(names, url, content_type, dont_interrupt)
+        """Play a sound-folder file on the chosen speakers — Cast and/or this PC.
+
+        ``names`` may mix Cast device names with the ``LOCAL_SPEAKER`` sentinel.
+        Returns True if it played somewhere; raises only if *every* target failed.
+        """
+        targets = _as_list(names)
+        local = [n for n in targets if n == LOCAL_SPEAKER]
+        cast = [n for n in targets if n != LOCAL_SPEAKER]
+        played, errors = False, []
+        if local:
+            try:
+                self._play_local(filename)
+                played = True
+            except Exception as exc:        # noqa: BLE001
+                errors.append(f"this PC: {exc}")
+        if cast:
+            url = self.sound_server.url_for(filename)
+            content_type = mimetypes.guess_type(filename)[0] or "audio/wav"
+            try:
+                if self.play_media(cast, url, content_type, dont_interrupt):
+                    played = True
+            except Exception as exc:        # noqa: BLE001 — all cast targets failed
+                errors.append(str(exc))
+        if not played and errors:
+            raise RuntimeError("; ".join(errors))
+        return played
 
     def say(self, names, text: str, dont_interrupt: bool = False) -> bool:
         """Speak ``text`` on one or more speakers (synthesised once, then cached)."""

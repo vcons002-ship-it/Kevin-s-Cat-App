@@ -63,8 +63,13 @@ the **same WiFi**, then:
 
 1. **Camera** — pick your kitchen camera from the auto-detected list (or enter
    its stream URL manually — main or sub feed; see *Detection detail* below).
+   A **USB / built-in webcam on the PC running the app** also works — hit
+   *Detect* under "USB camera on this PC".
 2. **Speaker(s)** — pick one or more Google Home / Nest devices from the
-   auto-detected list, and press **Test** to hear it play.
+   auto-detected list, and press **Test** to hear it play. To play on **this
+   computer's own speakers**, pick **"This PC (local audio)"** (say yes to the
+   optional local-audio install during setup); you can choose it, a Cast device,
+   or both.
 3. **Sound or spoken message** — keep the default chime, upload your own, or
    tick *Speak a message instead* and type what to say.
 4. **Game rules** — set the dice size, the DC (how high you must roll to win a

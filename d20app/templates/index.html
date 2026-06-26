@@ -33,6 +33,13 @@
         <select id="camera-select"></select>
         <button id="camera-refresh" class="ghost" type="button">↻ Detect</button>
       </div>
+      <label>USB camera on this PC
+        <div class="row">
+          <select id="camera-local-select"></select>
+          <button id="camera-local-refresh" class="ghost" type="button">↻ Detect</button>
+        </div>
+        <span class="hint">a webcam plugged into the machine running this app (not a network camera)</span>
+      </label>
       <details>
         <summary>Add a camera / enter one manually</summary>
         <label>Camera name
@@ -81,7 +88,9 @@
         <strong>Pick one or more</strong> — Ctrl/Cmd-click (or drag) to select several and the
         treat plays on all of them. <strong>This device and the speakers must be on the same
         WiFi network.</strong> Names match your Google Home app. Connections are kept open so
-        there's no "connecting" chime each time.
+        there's no "connecting" chime each time. The first option, <strong>"This PC (local
+        audio)"</strong>, plays the sound on this computer's own speakers (handy on a laptop/desktop;
+        needs the optional local-audio support from setup) — you can pick it, a Cast device, or both.
       </p>
       <label class="checkbox">
         <input id="keep_speakers_warm" type="checkbox" />

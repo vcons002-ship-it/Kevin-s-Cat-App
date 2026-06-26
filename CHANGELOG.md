@@ -11,6 +11,24 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.6.0] — 2026-06-26
+
+### Added
+- **Local USB / built-in webcam support.** Use a camera plugged into the machine
+  running the app — a "USB camera on this PC" picker (Detect button) lists them;
+  internally it's stored as `usb:N` and opened by device index with the platform
+  backend (DirectShow on Windows, V4L2 on Linux) instead of the FFmpeg/RTSP path.
+- **Local PC speaker output.** Play the treat chime/speech on the host computer's
+  own speakers via a "This PC (local audio)" entry in the speaker list — pick it,
+  a Google Home, or both. Uses the optional **`playsound3`** package (offered by
+  `setup.sh` / `setup.ps1`; a clear message tells you to install it if you pick
+  local audio without it).
+
+### Notes
+- Playing audio out of an IP **camera's own speaker** (ONVIF two-way "backchannel")
+  is intentionally not included — it's non-standard and camera-specific. Left as a
+  future idea.
+
 ## [0.5.3] — 2026-06-26
 
 ### Added

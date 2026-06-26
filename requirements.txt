@@ -9,3 +9,8 @@ gTTS>=2.5                       # optional spoken-message text-to-speech (needs 
 # your NAS, the app still works — you just enter the camera URL manually in the GUI.
 WSDiscovery>=2.0
 onvif-zeep>=0.2.12
+
+# Optional: play the treat sound on THIS PC's own speakers (the "This PC (local
+# audio)" option). Not installed by default — setup.sh / setup.ps1 offer it, or:
+#   pip install playsound3
+# playsound3>=3.0

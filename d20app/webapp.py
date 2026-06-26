@@ -93,6 +93,11 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     def api_cameras():
         return jsonify(discovery.discover_cameras())
 
+    @app.get("/api/cameras/local")
+    def api_cameras_local():
+        # USB/built-in cameras on the machine running the app.
+        return jsonify(discovery.probe_local_cameras())
+
     # -- sounds -------------------------------------------------------------
     @app.get("/api/sounds")
     def api_sounds():

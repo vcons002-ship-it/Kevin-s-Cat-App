@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 
@@ -90,6 +91,37 @@ def _quiet_cv2_logs(cv2) -> None:
     _cv2_quieted = True
 
 
+def parse_local_index(source):
+    """Return device index N when ``source`` is a local ``"usb:N"`` string, else None."""
+    if isinstance(source, str) and source.startswith("usb:"):
+        try:
+            return int(source[4:])
+        except ValueError:
+            return None
+    return None
+
+
+def _open_capture(source):
+    """Open ``source`` with the right OpenCV backend.
+
+    A local ``usb:N`` camera opens by device index with the platform backend
+    (DirectShow on Windows, V4L2 on Linux); everything else is a network stream
+    or file opened through FFmpeg (so RTSP auth behaves like VLC).
+    """
+    import cv2
+
+    idx = parse_local_index(source)
+    if idx is not None:
+        if sys.platform.startswith("win"):
+            backend = cv2.CAP_DSHOW
+        elif sys.platform.startswith("linux"):
+            backend = cv2.CAP_V4L2
+        else:
+            backend = cv2.CAP_ANY
+        return cv2.VideoCapture(idx, backend)
+    return cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+
+
 def grab_frame_jpeg(source: str, skip: int = 4):
     """Open ``source``, grab one frame, and return it as JPEG bytes (or None).
 
@@ -100,7 +132,7 @@ def grab_frame_jpeg(source: str, skip: int = 4):
     import cv2
 
     _quiet_cv2_logs(cv2)
-    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    cap = _open_capture(source)
     if not cap.isOpened():
         cap.release()
         return None
@@ -268,13 +300,17 @@ class PersonDetector:
 
         _quiet_cv2_logs(cv2)
         if self._cap is None or not self._cap.isOpened():
-            # Force the FFmpeg backend explicitly: some OpenCV builds otherwise
-            # pick a backend that mishandles RTSP authentication, so a stream
-            # that works in VLC fails here with "401 Unauthorized". FFmpeg does
-            # the same Basic/Digest auth VLC does.
-            cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+            # A local USB camera opens by index; a network stream is forced onto
+            # FFmpeg so RTSP auth behaves like VLC (see _open_capture).
+            cap = _open_capture(self.source)
             if not cap.isOpened():
                 cap.release()
+                idx = parse_local_index(self.source)
+                if idx is not None:
+                    raise CameraError(
+                        f"could not open USB camera {idx} on this PC — is it "
+                        "plugged in and not in use by another app?"
+                    )
                 raise CameraError(
                     f"could not open the camera stream "
                     f"{mask_credentials(self.source)} — check the URL, and the "
