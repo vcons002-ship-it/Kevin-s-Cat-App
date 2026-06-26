@@ -46,6 +46,18 @@ from a simple web page.
 ./venv/bin/python run.py
 ```
 
+**On Windows** (Python 3.11+ from [python.org](https://www.python.org/downloads/windows/),
+ticking *Add python.exe to PATH*): double-click **`setup.bat`** (or run
+`powershell -ExecutionPolicy Bypass -File .\setup.ps1`), then start it with:
+
+```powershell
+.\venv\Scripts\python.exe run.py
+```
+
+The first run, Windows Firewall will ask to allow Python on the network — click
+**Allow** (tick *Private networks*) so the web page and your Google Home can reach
+the app. For autostart on Windows, use **Task Scheduler** instead of systemd.
+
 `run.py` prints a URL like `http://192.168.1.20:8080`. Open it in a browser on
 the **same WiFi**, then:
 
