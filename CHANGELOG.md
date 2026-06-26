@@ -11,6 +11,15 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.5.2] — 2026-06-26
+
+### Added
+- **Windows setup can install Python for you.** If `setup.ps1` doesn't find
+  Python 3.11+, it offers to install it per-user (no admin) — via `winget` if
+  available, else by downloading the official python.org installer and running it
+  silently — then refreshes the session PATH and continues (mirrors how
+  `setup.sh` offers the apt install on Debian).
+
 ## [0.5.1] — 2026-06-26
 
 ### Added

@@ -41,13 +41,62 @@ function Find-Python {
     return $null
 }
 
+# Refresh this session's PATH from the registry (so a freshly-installed Python
+# is visible without reopening the terminal).
+function Update-SessionPath {
+    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $user    = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:Path = @($machine, $user | Where-Object { $_ }) -join ';'
+}
+
+# Install Python 3.12 per-user (no admin): prefer winget, fall back to python.org.
+function Install-Python {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "==> Installing Python 3.12 via winget (per-user)..."
+        & winget install --id Python.Python.3.12 -e --silent --scope user `
+            --accept-source-agreements --accept-package-agreements
+        if ($LASTEXITCODE -eq 0) { return $true }
+        Write-Host "    winget didn't succeed; trying the python.org installer..."
+    } else {
+        Write-Host "==> winget not available; downloading the python.org installer..."
+    }
+    $ver = "3.12.8"
+    $url = "https://www.python.org/ftp/python/$ver/python-$ver-amd64.exe"
+    $exe = Join-Path $env:TEMP "python-$ver-amd64.exe"
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+    } catch {
+        Write-Host "    Download failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+    Write-Host "==> Running the Python installer (per-user, silent)..."
+    $proc = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList @(
+        '/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_pip=1', 'Include_launcher=1'
+    )
+    Remove-Item $exe -ErrorAction SilentlyContinue
+    return ($proc.ExitCode -eq 0)
+}
+
 Write-Host "==> Looking for Python 3.11+"
 $py = Find-Python
 if (-not $py) {
+    Write-Host "Python 3.11+ was not found on this PC."
+    $doInstall = $true
+    if ([Environment]::UserInteractive) {
+        $ans = Read-Host "Install Python 3.12 now? (per-user, no admin needed) [Y/n]"
+        if ($ans -and $ans.Trim().ToLower().StartsWith('n')) { $doInstall = $false }
+    }
+    if ($doInstall -and (Install-Python)) {
+        Update-SessionPath
+        $py = Find-Python
+    }
+}
+if (-not $py) {
     Write-Host ""
-    Write-Host "ERROR: Python 3.11 or newer is required and was not found." -ForegroundColor Red
-    Write-Host "       Install it from https://www.python.org/downloads/windows/"
-    Write-Host "       (tick 'Add python.exe to PATH'), then re-run this script."
+    Write-Host "ERROR: Python 3.11 or newer is required and isn't available yet." -ForegroundColor Red
+    Write-Host "       If it was just installed, CLOSE this window, open a new one, and"
+    Write-Host "       re-run setup (double-click setup.bat). Otherwise install it from"
+    Write-Host "       https://www.python.org/downloads/windows/ (tick 'Add python.exe to PATH')."
     exit 1
 }
 Write-Host ("==> Using " + (& $py.Exe @($py.Args) --version))

@@ -46,9 +46,12 @@ from a simple web page.
 ./venv/bin/python run.py
 ```
 
-**On Windows** (Python 3.11+ from [python.org](https://www.python.org/downloads/windows/),
-ticking *Add python.exe to PATH*): double-click **`setup.bat`** (or run
-`powershell -ExecutionPolicy Bypass -File .\setup.ps1`), then start it with:
+**On Windows**: double-click **`setup.bat`** (or run
+`powershell -ExecutionPolicy Bypass -File .\setup.ps1`). If Python 3.11+ isn't
+installed, the script offers to install it for you (per-user, no admin — via
+`winget`, or the [python.org](https://www.python.org/downloads/windows/)
+installer). If it had to install Python, close the window, reopen it, and run
+setup once more. Then start it with:
 
 ```powershell
 .\venv\Scripts\python.exe run.py
