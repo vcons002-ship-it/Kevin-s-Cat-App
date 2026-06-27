@@ -11,6 +11,28 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.10.0] — 2026-06-27
+
+### Added
+- **Cat tracking + "Show cat".** Cats still never trigger a treat (only people
+  roll), but instead of being ignored, every cat sighting is now recorded —
+  **when**, on **which camera**, and roughly **where** in the frame (a thirds
+  grid: e.g. *bottom-left*) — with an annotated snapshot. A new **Cats** card
+  shows the latest sighting and today's count, and a **Show cat** button pulls up
+  the live feed of the camera that saw it.
+  - New `d20app/cats.py` `CatTracker` (thread-safe, bounded, file-backed like the
+    activity log; survives restarts) and a `describe_region()` location helper.
+  - New endpoints: `GET /api/cats` (last sighting, today's count, recent list —
+    each carrying its `camera`) and `POST /api/cats/clear`.
+
+### Notes
+- Built **camera-aware now** for the single camera the app watches today: each
+  sighting stores its `camera`, so the planned multi-camera "Show cat" only needs
+  to point the live feed at the sighting's camera. Until then the button pulls up
+  the one feed.
+- Sightings reuse the loop's existing throttle and snapshot, so a pacing cat
+  doesn't spam the log or the disk.
+
 ## [0.9.0] — 2026-06-27
 
 ### Added

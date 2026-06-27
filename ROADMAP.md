@@ -46,6 +46,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - **Persistent, file-backed** event log (survives restarts), colour-coded.
 - **Live detection feed** — a real-time MJPEG view of what the detector sees,
   with person/cat boxes drawn as they're recognised (reuses the loop's capture).
+- **Cat tracking & "Show cat"** — cats don't roll, but every sighting is logged
+  (when, which camera, where in the frame) with a snapshot; a button pulls up the
+  live feed of the camera that saw it.
 - **Annotated snapshots** on every detection — boxes around the person/cat,
   shown as clickable thumbnails — the fastest way to debug false positives.
 - **"Camera connected (W×H)"** heartbeat so a running-but-idle loop isn't silent.
@@ -56,10 +59,11 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **104 automated tests**, including a detection-accuracy regression guard over
+- **109 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route),
+  cat-sighting tracking (region labels, store persistence, `/api/cats`),
   local USB camera + local PC speaker routing, and
   saved-camera/cooldown-pause/keep-warm coverage.
 
@@ -68,6 +72,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 ## 🗺️ Roadmap / ideas
 
 ### Detection & accuracy
+- [ ] **Multi-camera** — watch several feeds at once; "Show cat" then switches
+      the live feed to whichever camera saw the cat (sightings already store the
+      camera, so this is the next step on top of 0.10.0's tracking).
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

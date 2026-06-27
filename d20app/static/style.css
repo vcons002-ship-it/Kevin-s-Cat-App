@@ -92,6 +92,13 @@ footer { margin-top: 20px; }
   cursor: crosshair; touch-action: none;
 }
 
+/* Cat sightings */
+.cat-last { display: flex; gap: 14px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+.cat-thumb {
+  width: 180px; max-width: 45%; height: auto;
+  border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in;
+}
+
 /* Activity log */
 .log-head { justify-content: space-between; }
 .log-head h2 { margin: 0; }

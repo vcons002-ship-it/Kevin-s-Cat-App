@@ -396,6 +396,18 @@ class PersonDetector:
     def _best(boxes, label: str) -> float:
         return max((s for lab, s, _ in boxes if lab == label), default=0.0)
 
+    def best_box(self, label: str):
+        """``(score, (x1, y1, x2, y2))`` for the strongest ``label`` box in the
+
+        last analysed frame, or ``None`` if that label wasn't seen. Used to log
+        *where* a cat was, in the same coords as the snapshot boxes.
+        """
+        best = None
+        for lab, score, box in self._last_boxes:
+            if lab == label and (best is None or score > best[0]):
+                best = (score, box)
+        return best
+
     def detect_in_frame(self, frame) -> bool:
         """Return True if a person is present in ``frame`` above the threshold."""
         boxes = self._detect_boxes(frame, floor=min(0.3, self.confidence))

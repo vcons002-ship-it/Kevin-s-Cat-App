@@ -355,9 +355,12 @@ async function saveConfig() {
 }
 
 // ---- control ---------------------------------------------------------------
+let isRunning = false;
+
 async function refreshStatus() {
   const { body } = await api("/api/status");
   if (!body) return;
+  isRunning = !!body.running;
   const dot = $("status-dot"), text = $("status-text"), detail = $("status-detail");
   if (body.running) {
     dot.className = "dot running"; text.textContent = "Watching";
@@ -396,6 +399,39 @@ function updateLiveView(running) {
       ? "Live feed off — tick “Show live feed” to view."
       : "Start watching to see the live feed.";
   }
+}
+
+// ---- cat sightings ("show cat") --------------------------------------------
+async function loadCats() {
+  const { body } = await api("/api/cats");
+  if (!body) return;
+  const box = $("cat-last");
+  if (!body.last) {
+    box.innerHTML = '<p class="muted">No cats seen yet.</p>';
+    return;
+  }
+  const s = body.last;
+  const where = s.region ? ` — ${s.region}` : "";
+  const cam = s.camera ? ` on <strong>${s.camera}</strong>` : "";
+  const thumb = s.image
+    ? `<a href="/snapshots/${s.image}" target="_blank">
+         <img class="cat-thumb" src="/snapshots/${s.image}" alt="last cat sighting" /></a>`
+    : "";
+  const today = `${body.today} sighting${body.today === 1 ? "" : "s"} today`;
+  box.innerHTML = `${thumb}<div>
+      <div><strong>Last seen</strong> ${fmtTime(s.ts)}${cam}${where}
+        <span class="muted">(score ${s.score})</span></div>
+      <div class="muted">${today}</div></div>`;
+}
+
+async function showCat() {
+  await loadCats();
+  // "Pull up the feed": make sure the live view is on, then scroll to it while
+  // watching (so you can catch the cat live); otherwise show the last snapshot.
+  $("live-enabled").checked = true;
+  await refreshStatus();
+  const target = isRunning ? "live-stage" : "cat-last";
+  $(target).scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 // ---- activity log ----------------------------------------------------------
@@ -514,6 +550,12 @@ function wire() {
   $("live-img").onerror = () => {
     if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); }
   };
+
+  $("show-cat").onclick = showCat;
+  $("cats-clear").onclick = async () => {
+    await api("/api/cats/clear", { method: "POST" });
+    loadCats();
+  };
 }
 
 async function loadVersion() {
@@ -530,8 +572,9 @@ async function init() {
   ]);
   refreshStatus();
   loadLog();
+  loadCats();
   loadVersion();
-  setInterval(() => { refreshStatus(); loadLog(); }, 3000);
+  setInterval(() => { refreshStatus(); loadLog(); loadCats(); }, 3000);
 }
 
 init();

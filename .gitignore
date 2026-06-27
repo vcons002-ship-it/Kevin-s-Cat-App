@@ -19,6 +19,9 @@ d20app/sounds/*
 # Runtime activity log (written by the app)
 activity.log
 
+# Cat sightings log (written by the app)
+cats.log
+
 # Diagnostic snapshot from check_camera.py
 snapshot.jpg
 
