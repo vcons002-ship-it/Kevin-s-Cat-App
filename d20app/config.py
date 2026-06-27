@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass, field
+from urllib.parse import quote
 
 import yaml
 
@@ -27,10 +28,14 @@ class Config:
     camera_name: str = ""             # friendly name (from discovery, for display)
     camera_username: str = ""         # optional; only if the stream needs auth
     camera_password: str = ""
-    # Saved cameras the user has added, each {name, url, username, password}.
-    # Stored so the GUI can offer a dropdown; the active camera is the camera_*
-    # fields above. Passwords are kept in plaintext locally (same as camera_password).
+    # Saved cameras the user has added. Each is a full per-camera config dict
+    # (see `camera_defaults`): identity (name/url/username/password), roles
+    # (roll/track_cats), and its own detection settings (model, confidence, roi,
+    # motion, ...). Passwords are kept in plaintext locally (same as camera_password).
     cameras: list = field(default_factory=list)
+    # Names of saved cameras to watch simultaneously (multi-camera). Empty = the
+    # legacy single active camera (the camera_* fields above). Mirrors speaker_names.
+    active_cameras: list = field(default_factory=list)
 
     # --- Speaker (Google Home / Cast) ---
     speaker_name: str = ""            # legacy single speaker (kept for back-compat)
@@ -88,6 +93,91 @@ def speaker_targets(cfg: "Config") -> list:
     if not names and cfg.speaker_name:
         names = [cfg.speaker_name]
     return names
+
+
+# --- Multi-camera: per-camera config dicts ---------------------------------
+# Identity + role fields and their literal defaults (a new camera does both roles).
+_CAMERA_BASE = {
+    "name": "", "url": "", "username": "", "password": "",
+    "roll": True, "track_cats": True,
+}
+# Per-camera detection fields → the global Config attribute that supplies the
+# default (so a new/old camera inherits the current global detection settings).
+_CAMERA_FROM_CFG = {
+    "model": "detector_model", "accelerator": "accelerator",
+    "person_confidence": "person_confidence", "confirm_frames": "confirm_frames",
+    "detect_size": "detect_size", "scan_fps": "scan_fps", "label_floor": "label_floor",
+    "smooth_feed": "smooth_live_feed", "roi": "roi",
+    "motion_sensitivity": "motion_sensitivity",
+    "motion_min_area_frac": "motion_min_area_frac",
+    "motion_diff_threshold": "motion_diff_threshold",
+    "motion_min_blob_px": "motion_min_blob_px",
+}
+
+
+def camera_source(url: str, username: str = "", password: str = "") -> str:
+    """Inject percent-encoded credentials into an rtsp:// URL given separately.
+
+    Leaves a bare URL (or a ``usb:N`` source, which has no ``://``) unchanged.
+    """
+    if username and "://" in url and "@" not in url:
+        scheme, rest = url.split("://", 1)
+        cred = quote(username, safe="")
+        if password:
+            cred += ":" + quote(password, safe="")
+        return f"{scheme}://{cred}@{rest}"
+    return url
+
+
+def camera_defaults(cfg: "Config" | None = None) -> dict:
+    """A full camera dict with defaults — identity/roles + global detection settings."""
+    cfg = cfg or Config()
+    out = dict(_CAMERA_BASE)
+    for key, attr in _CAMERA_FROM_CFG.items():
+        out[key] = getattr(cfg, attr)
+    return out
+
+
+def coerce_camera(raw: dict, cfg: "Config" | None = None) -> dict:
+    """Build a complete camera dict from ``raw``, filling and type-coercing missing
+    keys from the defaults (so partial GUI payloads and old saved entries upgrade).
+    """
+    defaults = camera_defaults(cfg)
+    out = {}
+    for key, default in defaults.items():
+        # ``roi`` is explicitly nullable: a present ``roi: None`` means "whole
+        # frame", so don't treat it as missing and inherit the global default.
+        present = key in raw and (raw[key] is not None or key == "roi")
+        out[key] = _coerce(raw[key], default) if present else default
+    return out
+
+
+def camera_targets(cfg: "Config") -> list:
+    """The cameras to watch, each a full spec dict plus a resolved ``source``.
+
+    Uses ``active_cameras`` (multi-camera) when set, else falls back to the single
+    legacy active camera. Returns ``[]`` if nothing is configured.
+    """
+    saved = {c.get("name"): c for c in (cfg.cameras or [])
+             if isinstance(c, dict) and c.get("name")}
+    names = []
+    for n in (cfg.active_cameras or []):       # de-dup: one detector/thread per name
+        if n in saved and n not in names:
+            names.append(n)
+    if names:
+        specs = [coerce_camera(saved[n], cfg) for n in names]
+    elif cfg.camera_url:
+        specs = [coerce_camera({
+            "name": cfg.camera_name or cfg.camera_url,
+            "url": cfg.camera_url,
+            "username": cfg.camera_username,
+            "password": cfg.camera_password,
+        }, cfg)]
+    else:
+        return []
+    for spec in specs:
+        spec["source"] = camera_source(spec["url"], spec["username"], spec["password"])
+    return specs
 
 
 _KNOWN_FIELDS = set(Config().asdict().keys())

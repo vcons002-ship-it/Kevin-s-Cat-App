@@ -12,8 +12,9 @@ Serves the config page plus JSON endpoints:
   POST /api/start      -> start the detection loop
   POST /api/stop       -> stop the detection loop
   GET  /api/status     -> live loop status (running, last roll, counts)
-  GET  /api/stream     -> live MJPEG feed of the detector's annotated frames
+  GET  /api/stream     -> live MJPEG feed (?camera=<name> selects which camera)
   POST /api/live/smooth-> toggle the smooth (decoupled-capture) live feed
+  POST /api/cameras/active -> set which saved cameras are watched at once
   GET  /api/cats       -> cat sightings (last seen, today's count, recent)
 """
 
@@ -34,26 +35,30 @@ from .loop import DetectionLoop, _camera_source
 ALLOWED_SOUND_EXT = {".wav", ".mp3", ".ogg", ".m4a", ".aac"}
 
 
-def _mask_cameras(cameras) -> list:
-    """Saved cameras without raw passwords — a ``has_password`` flag instead."""
+def _mask_cameras(cameras, cfg=None) -> list:
+    """Saved cameras with full per-camera settings, raw passwords stripped.
+
+    Each entry is coerced to a complete camera dict (missing settings filled from
+    the global defaults) so the GUI editor always has every field; the password is
+    replaced by a ``has_password`` flag.
+    """
     out = []
     for c in cameras or []:
         if not isinstance(c, dict):
             continue
-        out.append({
-            "name": c.get("name", ""),
-            "url": c.get("url", ""),
-            "username": c.get("username", ""),
-            "has_password": bool(c.get("password")),
-        })
+        full = config_mod.coerce_camera(c, cfg)
+        full.pop("password", None)
+        full["has_password"] = bool(c.get("password"))
+        out.append(full)
     return out
 
 
-def _public_config(cfg_dict: dict) -> dict:
-    """Strip every stored password before sending config to the browser."""
-    cfg_dict.pop("camera_password", None)
-    cfg_dict["cameras"] = _mask_cameras(cfg_dict.get("cameras"))
-    return cfg_dict
+def _public_config(cfg) -> dict:
+    """Config as a browser-safe dict: strip passwords, expand the camera list."""
+    d = cfg.asdict()
+    d.pop("camera_password", None)
+    d["cameras"] = _mask_cameras(d.get("cameras"), cfg)
+    return d
 
 
 def create_app(loop: DetectionLoop | None = None) -> Flask:
@@ -81,9 +86,19 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     @app.get("/api/preview")
     def api_preview():
         cfg = config_mod.load()
-        if not cfg.camera_url:
+        name = request.args.get("camera")
+        if name:
+            cam = next((c for c in (cfg.cameras or [])
+                        if isinstance(c, dict) and c.get("name") == name), None)
+            if cam is None:
+                return jsonify({"error": "camera not found"}), 404
+            source = config_mod.camera_source(
+                cam.get("url", ""), cam.get("username", ""), cam.get("password", ""))
+        elif cfg.camera_url:
+            source = _camera_source(cfg)
+        else:
             return jsonify({"error": "No camera configured yet."}), 400
-        jpeg = grab_frame_jpeg(_camera_source(cfg))
+        jpeg = grab_frame_jpeg(source)
         if jpeg is None:
             return jsonify({"error": "Couldn't grab a frame from the camera."}), 502
         return Response(jpeg, mimetype="image/jpeg")
@@ -97,6 +112,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 {"error": "Start watching to see the live detection feed."}
             ), 409
 
+        name = request.args.get("camera")     # which camera's feed (default: streamed one)
+
         def frames():
             # One JPEG per part; the browser renders this directly in an <img>.
             # Encode only when the frame/box version changes, so we never re-send
@@ -105,9 +122,9 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # The 0.03 s poll is the only ceiling (~30 fps); cheap when idle.
             last_ver = -1
             while loop.is_running():
-                ver = loop.live_version()
+                ver = loop.live_version(name)
                 if ver != last_ver:
-                    jpeg = loop.live_jpeg()
+                    jpeg = loop.live_jpeg(name)
                     if jpeg is not None:
                         last_ver = ver
                         yield (b"--frame\r\nContent-Type: image/jpeg\r\n"
@@ -164,7 +181,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     # -- config -------------------------------------------------------------
     @app.get("/api/config")
     def api_get_config():
-        return jsonify(_public_config(config_mod.load().asdict()))
+        return jsonify(_public_config(config_mod.load()))
 
     @app.post("/api/config")
     def api_set_config():
@@ -176,12 +193,13 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         # endpoints, so the main settings save can't clobber it (or its passwords).
         values.pop("cameras", None)
         cfg = config_mod.update(values)
-        return jsonify(_public_config(cfg.asdict()))
+        return jsonify(_public_config(cfg))
 
-    # -- saved cameras (a dropdown of manually-added cameras + credentials) --
+    # -- saved cameras (full per-camera config + credentials) ----------------
     @app.get("/api/cameras/saved")
     def api_cameras_saved():
-        return jsonify(_mask_cameras(config_mod.load().cameras))
+        cfg = config_mod.load()
+        return jsonify(_mask_cameras(cfg.cameras, cfg))
 
     @app.post("/api/cameras/saved")
     def api_cameras_save():
@@ -192,22 +210,22 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             return jsonify({"error": "A camera needs a name and a stream URL."}), 400
         cfg = config_mod.load()
         cams = [c for c in (cfg.cameras or []) if isinstance(c, dict)]
-        entry = {
-            "name": name,
-            "url": url,
-            "username": (data.get("username") or "").strip(),
-            "password": data.get("password") or "",
-        }
         existing = next((c for c in cams if c.get("name") == name), None)
+        # Start from the existing entry (so unspecified settings persist), overlay
+        # the incoming fields, then coerce to a complete per-camera dict.
+        merged = dict(existing or {})
+        merged.update(data)
+        merged["name"], merged["url"] = name, url
+        entry = config_mod.coerce_camera(merged, cfg)
+        # A blank password on re-save keeps the previously-stored one.
+        if not (data.get("password") or "").strip() and existing is not None:
+            entry["password"] = existing.get("password", "")
         if existing is not None:
-            # A blank password on re-save keeps the previously-stored one.
-            if not entry["password"]:
-                entry["password"] = existing.get("password", "")
             cams[cams.index(existing)] = entry
         else:
             cams.append(entry)
         config_mod.update({"cameras": cams})
-        return jsonify(_mask_cameras(cams))
+        return jsonify(_mask_cameras(cams, cfg))
 
     @app.post("/api/cameras/saved/select")
     def api_cameras_select():
@@ -223,7 +241,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             "camera_username": cam.get("username", ""),
             "camera_password": cam.get("password", ""),
         })
-        return jsonify(_public_config(config_mod.load().asdict()))
+        return jsonify(_public_config(config_mod.load()))
 
     @app.post("/api/cameras/saved/delete")
     def api_cameras_delete():
@@ -231,8 +249,20 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         cfg = config_mod.load()
         cams = [c for c in (cfg.cameras or [])
                 if isinstance(c, dict) and c.get("name") != name]
-        config_mod.update({"cameras": cams})
-        return jsonify(_mask_cameras(cams))
+        # Also drop it from the watched set if present.
+        active = [n for n in (cfg.active_cameras or []) if n != name]
+        config_mod.update({"cameras": cams, "active_cameras": active})
+        return jsonify(_mask_cameras(cams, cfg))
+
+    @app.post("/api/cameras/active")
+    def api_cameras_active():
+        """Set which saved cameras are watched simultaneously (multi-camera)."""
+        names = (request.get_json(silent=True) or {}).get("names") or []
+        cfg = config_mod.load()
+        valid = {c.get("name") for c in (cfg.cameras or []) if isinstance(c, dict)}
+        active = [n for n in names if n in valid]
+        config_mod.update({"active_cameras": active})
+        return jsonify({"active_cameras": active})
 
     # -- control ------------------------------------------------------------
     @app.post("/api/test")
@@ -265,6 +295,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 "last_roll_at": s.last_roll_at,
                 "rolls": s.rolls,
                 "treats": s.treats,
+                "cameras": loop.cam_status(),   # per-camera connected/error + roles
             }
         )
 

@@ -137,6 +137,17 @@ footer { margin-top: 20px; }
   .show-cat.detecting, .show-cat.detecting .show-cat-emoji { animation: none; outline: 3px solid var(--go); }
 }
 
+/* Multi-camera manager */
+#camera-list { margin-top: 10px; }
+.cam-card { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 8px 10px; }
+.cam-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cam-head > strong { font-size: 1.02rem; }
+.cam-body { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.cam-chip { font-size: 0.8rem; }
+.chip-ok { color: var(--go); }
+.chip-bad { color: var(--stop); }
+#live-camera { max-width: 45%; }
+
 /* Cat sightings */
 .cat-last { display: flex; gap: 14px; align-items: center; justify-content: center; margin: 10px 0; flex-wrap: wrap; }
 .cat-thumb {
