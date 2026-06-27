@@ -59,13 +59,14 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **118 automated tests**, including a detection-accuracy regression guard over
+- **133 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
   the smooth-feed capture thread (toggle reconcile, version gating, error
-  surfacing, watchdog respawn, camera-death detection), cat-sighting tracking
-  (region labels, store persistence,
+  surfacing, watchdog respawn, camera-death detection), multi-camera (per-camera
+  specs/roles, role-gated rolling/tracking, one shared cooldown across cameras,
+  failure isolation), cat-sighting tracking (region labels, store persistence,
   `/api/cats`), local USB camera + local PC speaker routing, and
   saved-camera/cooldown-pause/keep-warm coverage.
 
@@ -74,9 +75,15 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 ## 🗺️ Roadmap / ideas
 
 ### Detection & accuracy
-- [ ] **Multi-camera** — watch several feeds at once; "Show cat" then switches
-      the live feed to whichever camera saw the cat (sightings already store the
-      camera, so this is the next step on top of 0.10.0's tracking).
+- [x] **Multi-camera** — watch several feeds at once, each with its own role
+      (rolls / tracks cats) and its own detection settings; "Show cat" switches the
+      live feed to whichever camera saw the cat (0.13.0). One shared treat dispenser.
+- [ ] **Round-robin / shared-detector mode** — an optional CPU hard-cap where one
+      detector cycles the watched cameras (~1× CPU regardless of count) instead of a
+      thread each; trade-off is ~N× slower reactions. (Recorded from the 0.13.0 plan.)
+- [ ] **GPU-batched inference** — on the iGPU/OpenVINO path, batch same-model
+      cameras' frames into one `forward()` (needs a dynamic-batch ONNX re-export);
+      GPU-only win. (Recorded from the 0.13.0 plan.)
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on
@@ -109,8 +116,8 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [ ] A **snapshot gallery** view.
 
 ### Camera
-- [x] **Saved cameras** — add several (with credentials) and switch the active
-      feed from a dropdown. (Watching *several at once* is still future work.)
+- [x] **Saved cameras** — add several (with credentials), each with its own role
+      and detection settings, and **watch several at once** (multi-camera, 0.13.0).
 - [x] **Local USB / built-in webcam** on the machine running the app.
 - [x] **Live MJPEG feed** in the GUI — a real-time "Live detection" view with
       person/cat boxes drawn as they're recognised (0.9.0), reusing the loop's

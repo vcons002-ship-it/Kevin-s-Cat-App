@@ -36,16 +36,19 @@ class SnapshotStore:
         """Persist ``jpeg`` and return its filename (or None on no data/error)."""
         if not jpeg:
             return None
+        # Only the counter/filename allocation needs the lock; the blocking disk
+        # write + prune run outside it so one camera worker's slow save doesn't
+        # serialise the others (the filename is already unique).
         with self._lock:
             self._counter += 1
             name = f"snap_{int(time.time() * 1000)}_{self._counter}.jpg"
-            try:
-                with open(os.path.join(self.directory, name), "wb") as fh:
-                    fh.write(jpeg)
-            except OSError:
-                return None
-            self._prune()
-            return name
+        try:
+            with open(os.path.join(self.directory, name), "wb") as fh:
+                fh.write(jpeg)
+        except OSError:
+            return None
+        self._prune()
+        return name
 
     def path(self, name: str) -> str:
         return os.path.join(self.directory, name)

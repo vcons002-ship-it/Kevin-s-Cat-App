@@ -13,7 +13,6 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from urllib.parse import quote
 
 from . import config as config_mod
 from . import dice
@@ -77,7 +76,7 @@ class DetectionLoop:
     """Owns the worker thread and shared state for one detection session."""
 
     def __init__(self) -> None:
-        self._thread: threading.Thread | None = None
+        self._thread: threading.Thread | None = None   # the orchestrator thread
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self.status = Status()
@@ -86,7 +85,18 @@ class DetectionLoop:
         self.cats = CatTracker()        # cat sightings, for the "show cat" feature
         self._sound_server: SoundServer | None = None
         self._caster: Caster | None = None
-        self._detector: PersonDetector | None = None   # live while running, for the GUI feed
+        # Multi-camera: one PersonDetector + one worker thread per watched camera.
+        # _detectors is built once at start and rebound to {} after all joins, so
+        # the web thread reads it lock-free via a stable reference.
+        self._detectors: dict[str, PersonDetector] = {}
+        self._threads: list[threading.Thread] = []
+        self._gate: dice.RollGate | None = None         # SHARED cooldown gate
+        self._roll_lock = threading.Lock()              # guards gate + roll bookkeeping
+        self._status_lock = threading.Lock()            # guards Status mutation
+        self._cam_lock = threading.Lock()               # guards _cam_status
+        self._resume_at = 0.0                           # SHARED cooldown-pause deadline
+        self._cam_status: dict[str, dict] = {}          # name -> {connected,last_error,roll,track_cats}
+        self._live_name: str | None = None              # camera the GUI streams by default
 
     def _caster_for(self, cfg) -> Caster:
         """A single long-lived Caster so speaker connections stay open."""
@@ -123,227 +133,308 @@ class DetectionLoop:
     def is_running(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
 
-    def live_jpeg(self) -> bytes | None:
-        """Current annotated frame from the running detector, for the live feed.
+    def _pick(self, name: str | None) -> PersonDetector | None:
+        if name and name in self._detectors:
+            return self._detectors[name]
+        return self._detectors.get(self._live_name)   # fall back to the default feed
 
-        ``None`` when the loop isn't running or hasn't read a frame yet.
+    def live_jpeg(self, name: str | None = None) -> bytes | None:
+        """Annotated frame from a camera's detector (defaults to the streamed one).
+
+        ``None`` when the loop isn't running or that camera hasn't read a frame.
         """
-        det = self._detector
+        det = self._pick(name)
         return det.live_jpeg() if det is not None else None
 
-    def live_version(self) -> int:
-        """Frame/box version of the running detector (0 if not running)."""
-        det = self._detector
+    def live_version(self, name: str | None = None) -> int:
+        """Frame/box version of a camera's detector (0 if not running)."""
+        det = self._pick(name)
         return det.live_version() if det is not None else 0
 
     def cat_present(self) -> bool:
-        """True if a cat is on camera right now (for the flashing Show-cat button)."""
-        det = self._detector
-        return det.cat_present() if det is not None else False
+        """True if **any cat-tracking** camera has a cat on it right now."""
+        status = self._cam_status
+        for cam_name, det in self._detectors.items():
+            if status.get(cam_name, {}).get("track_cats") and det.cat_present():
+                return True
+        return False
+
+    def cam_status(self) -> list:
+        """Per-camera {name, connected, last_error, roll, track_cats} for the GUI."""
+        with self._cam_lock:
+            return [{"name": n, **dict(s)} for n, s in self._cam_status.items()]
 
     def set_smooth(self, on: bool) -> None:
-        """Request smooth-feed on/off on the running detector.
+        """Request smooth-feed on/off on every running detector.
 
-        Only sets the desired flag; the loop thread reconciles it on its next
-        frame, so the camera is never read by two threads at once. No-op if the
-        loop isn't running (the saved config takes effect on the next start).
+        Only sets the desired flag; each loop thread reconciles it on its next
+        frame, so a camera is never read by two threads at once.
         """
-        det = self._detector
-        if det is not None:
+        for det in self._detectors.values():
             det._smooth_desired = bool(on)
 
-    # -- the worker ----------------------------------------------------------
-    def _run(self) -> None:
-        cfg = config_mod.load()
-        if not cfg.camera_url:
-            self.status.last_error = "No camera selected — choose one in the GUI."
-            self.activity.add("error", "Can't start: no camera selected.")
+    def _fail_start(self, err: str, log_msg: str) -> None:
+        with self._status_lock:
+            self.status.last_error = err
             self.status.running = False
+        self.activity.add("error", log_msg)
+
+    # -- the orchestrator ----------------------------------------------------
+    def _run(self) -> None:
+        """Build one detector + worker thread per watched camera, then supervise.
+
+        This thread does no detection itself — it owns the worker threads and the
+        shared state so start/stop/join has a single supervisory thread, and so
+        ``_detectors``/``_threads`` have exactly one writer (no concurrent-mutation
+        race against the web thread's lock-free reads).
+        """
+        cfg = config_mod.load()
+        specs = config_mod.camera_targets(cfg)
+        if not specs:
+            self._fail_start("No camera selected — choose one in the GUI.",
+                             "Can't start: no camera selected.")
             return
         targets = config_mod.speaker_targets(cfg)
         if not targets:
-            self.status.last_error = "No speaker selected — choose one in the GUI."
-            self.activity.add("error", "Can't start: no speaker selected.")
-            self.status.running = False
+            self._fail_start("No speaker selected — choose one in the GUI.",
+                             "Can't start: no speaker selected.")
             return
 
         caster = self._caster_for(cfg)
         if cfg.keep_speakers_warm:
-            # Loop silence so the receiver stays loaded — no "connecting" chime.
             caster.start_keepalive(targets)
 
-        detector = PersonDetector(
-            source=_camera_source(cfg),
-            confidence=cfg.person_confidence,
-            roi=cfg.roi,
-            detect_size=cfg.detect_size,
-            label_floor=cfg.label_floor,
-            motion_min_area_frac=cfg.motion_min_area_frac,
-            motion_diff_threshold=cfg.motion_diff_threshold,
-            motion_min_blob_px=cfg.motion_min_blob_px,
-            model=cfg.detector_model,
-            accelerator=cfg.accelerator,
-            smooth_feed=cfg.smooth_live_feed,
-        )
-        self._detector = detector          # expose for the live GUI feed
-        gate = dice.RollGate(cfg.cooldown_seconds)
-
-        # Never echo a password: prefer the friendly name, else the URL with
-        # any embedded credentials masked.
-        cam_label = cfg.camera_name or mask_credentials(cfg.camera_url)
+        self._gate = dice.RollGate(cfg.cooldown_seconds)   # SHARED across cameras
+        self._resume_at = 0.0
         speakers_label = ", ".join(targets)
-        log.info("Detection loop started (camera=%s, speakers=%s)",
-                 cam_label, speakers_label)
+
+        # Build all detectors first, then publish them and spawn workers.
+        detectors: dict[str, PersonDetector] = {}
+        cam_status: dict[str, dict] = {}
+        for spec in specs:
+            name = spec["name"]
+            detectors[name] = PersonDetector(
+                source=spec["source"],
+                confidence=spec["person_confidence"],
+                roi=spec["roi"],
+                detect_size=spec["detect_size"],
+                label_floor=spec["label_floor"],
+                motion_min_area_frac=spec["motion_min_area_frac"],
+                motion_diff_threshold=spec["motion_diff_threshold"],
+                motion_min_blob_px=spec["motion_min_blob_px"],
+                model=spec["model"],
+                accelerator=spec["accelerator"],
+                smooth_feed=spec["smooth_feed"],
+            )
+            cam_status[name] = {"connected": False, "last_error": "",
+                                "roll": bool(spec["roll"]),
+                                "track_cats": bool(spec["track_cats"])}
+        self._detectors = detectors            # built once; rebound to {} after joins
+        with self._cam_lock:
+            self._cam_status = cam_status
+        self._live_name = specs[0]["name"]
+
+        cam_names = ", ".join(s["name"] for s in specs)
+        log.info("Detection loop started (cameras=%s, speakers=%s)",
+                 cam_names, speakers_label)
         self.activity.add(
             "info",
-            f"▶ Started watching {cam_label} "
+            f"▶ Watching {len(specs)} camera(s): {cam_names} "
             f"(speakers: {speakers_label}, treat on d{cfg.dice_sides} ≥ {cfg.dc}).",
         )
+
+        threads = []
+        for spec in specs:
+            t = threading.Thread(
+                target=self._camera_worker,
+                args=(spec, detectors[spec["name"]], cfg, caster, targets, speakers_label),
+                name=f"cam-{spec['name']}", daemon=True,
+            )
+            t.start()
+            threads.append(t)
+        self._threads = threads
+
         try:
-            self._loop_body(cfg, detector, gate, caster, targets, speakers_label)
-        except Exception as exc:  # keep the GUI informed rather than dying silently
-            log.exception("Detection loop crashed")
-            self.status.last_error = str(exc)
-            self.activity.add("error", f"Detection loop crashed: {exc}")
+            self._stop.wait()      # supervise until stop() is called or a fatal error
         finally:
-            self._detector = None   # stop serving the live feed once we're done
-            detector.release()
-            caster.close()          # drop held speaker connections when we stop
-            self.status.running = False
+            for t in threads:
+                t.join(timeout=10)
+            for det in detectors.values():
+                try:
+                    det.release()
+                except Exception:      # noqa: BLE001 — never let cleanup raise
+                    log.exception("error releasing a detector")
+            self._detectors = {}       # stop serving the live feed
+            self._threads = []
+            caster.close()             # drop held speaker connections when we stop
+            with self._status_lock:
+                self.status.running = False
             log.info("Detection loop stopped")
             self.activity.add("info", "■ Stopped watching.")
 
-    def _loop_body(self, cfg, detector, gate, caster, targets, speakers_label) -> None:
+    # -- per-camera status helpers (thread-safe) -----------------------------
+    def _cam_set(self, name: str, **fields) -> None:
+        with self._cam_lock:
+            if name in self._cam_status:
+                self._cam_status[name].update(fields)
+
+    def _cam_error(self, name: str, err: str) -> None:
+        """Record a camera's error and roll it up into the global Status."""
+        with self._cam_lock:
+            if name in self._cam_status:
+                self._cam_status[name]["last_error"] = err
+                if err:
+                    self._cam_status[name]["connected"] = False
+        if err:
+            with self._status_lock:
+                self.status.last_error = f"{name}: {err}"
+
+    # -- the per-camera worker ----------------------------------------------
+    def _camera_worker(self, spec, detector, cfg, caster, targets, speakers_label) -> None:
+        """Watch one camera. Role-gated: rolls for treats and/or tracks cats.
+
+        Fully isolated — any failure here exits this thread only; it never touches
+        the other workers or the orchestrator, and only the orchestrator releases
+        the detector.
+        """
+        name = spec["name"]
+        cam_label = mask_credentials(name)
+        roll_enabled = bool(spec["roll"])
+        track_cats = bool(spec["track_cats"])
         backoff = 1.0
-        cam_label = cfg.camera_name or mask_credentials(cfg.camera_url)
-        last_cam_error = ""        # so a flaky camera doesn't flood the log
-        connected = False          # log once when the first frame actually reads
+        last_cam_error = ""
+        connected = False
         motion_gate = dice.RollGate(_MOTION_LOG_INTERVAL)   # throttle motion notes
-        streak = 0                 # consecutive person frames (false-positive guard)
-        confirm_frames = max(1, int(cfg.confirm_frames))
-        interval = 1.0 / max(1.0, float(cfg.scan_fps))      # seconds between reads
-        resume_at = 0.0            # monotonic time to resume the net after a roll (0 = not paused)
-        while not self._stop.is_set():
-            # During the post-roll cooldown the net can't trigger anything, so
-            # skip it to save CPU — but keep reading frames so the stream stays
-            # warm and a dead camera is still noticed. Resumes (with lead time)
-            # just before the cooldown window reopens.
-            paused = bool(
-                cfg.pause_during_cooldown and resume_at and time.monotonic() < resume_at
-            )
-            try:
-                outcome = detector.read_and_detect(detect=not paused)
-            except FileNotFoundError as exc:
-                self.status.last_error = str(exc)
-                self.activity.add("error", str(exc))
-                return
-            except Exception as exc:
-                self.status.last_error = f"camera error: {exc}"
-                if str(exc) != last_cam_error:        # log only on change
-                    self.activity.add("error", f"Camera problem: {exc} (retrying…)")
-                    last_cam_error = str(exc)
-                time.sleep(min(backoff, 30))
-                backoff = min(backoff * 2, 30)
-                continue
-            if last_cam_error:
-                self.activity.add("info", "Camera stream recovered.")
-                last_cam_error = ""
-            backoff = 1.0
+        streak = 0
+        confirm_frames = max(1, int(spec["confirm_frames"]))
+        interval = 1.0 / max(1.0, float(spec["scan_fps"]))
+        # A camera may skip the net during the shared cooldown only if it has
+        # nothing to do then: it rolls (so the closed gate blocks it anyway) AND
+        # it doesn't track cats (which must keep detecting). A cat-tracking camera
+        # never pauses, so it stays watching for cats during another camera's cooldown.
+        can_pause = roll_enabled and not track_cats
+        try:
+            while not self._stop.is_set():
+                # Shared cooldown-pause: once any roll-camera rolls, eligible cameras
+                # skip the net until just before the window reopens (read lock-free;
+                # the deadline is written inside _roll_lock).
+                paused = bool(can_pause and cfg.pause_during_cooldown and self._resume_at
+                              and time.monotonic() < self._resume_at)
+                try:
+                    outcome = detector.read_and_detect(detect=not paused)
+                except FileNotFoundError as exc:
+                    # Missing MODEL files are global & unrecoverable — stop everything.
+                    with self._status_lock:
+                        self.status.last_error = str(exc)
+                    self.activity.add("error", str(exc))
+                    self._stop.set()
+                    return
+                except Exception as exc:        # noqa: BLE001 — recoverable camera error
+                    if str(exc) != last_cam_error:
+                        self.activity.add("error",
+                                          f"Camera problem on {cam_label}: {exc} (retrying…)")
+                        last_cam_error = str(exc)
+                        self._cam_error(name, str(exc))
+                    self._stop.wait(min(backoff, 30))
+                    backoff = min(backoff * 2, 30)
+                    continue
+                if last_cam_error:
+                    self.activity.add("info", f"Camera {cam_label} recovered.")
+                    last_cam_error = ""
+                    self._cam_set(name, last_error="")
+                backoff = 1.0
 
-            # Confirm — once — that frames are actually flowing, so a running
-            # loop that simply hasn't seen a person yet isn't silent.
-            if not connected and detector.frame_size:
-                w, h = detector.frame_size
-                self.activity.add(
-                    "info", f"📷 Camera connected ({w}×{h}) — watching for people."
-                )
-                connected = True
+                if not connected and detector.frame_size:
+                    w, h = detector.frame_size
+                    self.activity.add("info", f"📷 {cam_label} connected ({w}×{h}).")
+                    connected = True
+                    self._cam_set(name, connected=True)
 
-            if not outcome.motion:
-                streak = 0          # nothing moving — reset the person streak
-                time.sleep(interval)    # scan-rate ceiling; cheap when idle
-                continue
+                if not outcome.motion:
+                    streak = 0
+                    self._stop.wait(interval)
+                    continue
 
-            # Motion, but not a person: report what moved (the cats!), throttled
-            # so a pacing pet doesn't flood the log, with an annotated snapshot.
-            # A cat is also recorded as a sighting (when + where) for "show cat".
-            if not outcome.person:
-                streak = 0
-                if motion_gate.allow():
-                    snap = self.snapshots.save(detector.annotated_jpeg())
-                    cat = detector.best_box("cat") if "cat" in outcome.labels else None
-                    if cat is not None:
-                        score, box = cat
-                        sighting = self.cats.record(
-                            cam_label, box, detector.frame_size, score, image=snap
-                        )
-                        where = f" ({sighting['region']})" if sighting["region"] else ""
-                        self.activity.add(
-                            "motion",
-                            f"🐱 Cat seen{where} on {cam_label} — tracked, no roll.",
-                            image=snap,
-                        )
-                    else:
-                        what = outcome.labels[0] if outcome.labels else "something"
-                        self.activity.add(
-                            "motion",
-                            f"Non-human motion — {what} moved (no person, no roll).",
-                            image=snap,
-                        )
-                time.sleep(interval)
-                continue
+                # Motion, not a person: record a cat sighting (if this camera tracks
+                # cats) or just note the mover, throttled, with a snapshot.
+                if not outcome.person:
+                    streak = 0
+                    if motion_gate.allow():
+                        snap = self.snapshots.save(detector.annotated_jpeg())
+                        cat = (detector.best_box("cat")
+                               if (track_cats and "cat" in outcome.labels) else None)
+                        if cat is not None:
+                            score, box = cat
+                            sighting = self.cats.record(
+                                name, box, detector.frame_size, score, image=snap)
+                            where = f" ({sighting['region']})" if sighting["region"] else ""
+                            self.activity.add(
+                                "motion",
+                                f"🐱 Cat seen{where} on {cam_label} — tracked, no roll.",
+                                image=snap)
+                        else:
+                            what = outcome.labels[0] if outcome.labels else "something"
+                            self.activity.add(
+                                "motion",
+                                f"Non-human motion on {cam_label} — {what} moved.",
+                                image=snap)
+                    self._stop.wait(interval)
+                    continue
 
-            # A person was seen — require it to persist across several frames
-            # before acting. Single-frame false positives never reach the count.
-            streak += 1
-            if streak < confirm_frames:
-                time.sleep(interval)
-                continue
+                # A person. Only roll-enabled cameras act on it.
+                if not roll_enabled:
+                    self._stop.wait(interval)
+                    continue
+                streak += 1
+                if streak < confirm_frames:
+                    self._stop.wait(interval)
+                    continue
 
-            result = dice.attempt_roll(gate, cfg.dice_sides, cfg.dc)
-            if not result.rolled:
-                time.sleep(interval)
-                continue        # within cooldown window
+                # --- shared roll critical section (fast: gate + counters only) ---
+                pause_note = False
+                with self._roll_lock:
+                    result = dice.attempt_roll(self._gate, cfg.dice_sides, cfg.dc)
+                    if result.rolled:
+                        if cfg.pause_during_cooldown and cfg.cooldown_seconds > 0:
+                            self._resume_at = time.monotonic() + max(
+                                0.0, cfg.cooldown_seconds - _cooldown_resume_delay(cfg))
+                            pause_note = True
+                        with self._status_lock:
+                            self.status.rolls += 1
+                            self.status.last_roll = result.describe()
+                            self.status.last_roll_at = time.time()
+                if not result.rolled:
+                    self._stop.wait(interval)
+                    continue        # within the shared cooldown window
 
-            # A roll just happened, so the cooldown gate is now closed for
-            # cfg.cooldown_seconds. Pause the net until shortly before it reopens.
-            if cfg.pause_during_cooldown and cfg.cooldown_seconds > 0:
-                resume_at = time.monotonic() + max(
-                    0.0, cfg.cooldown_seconds - _cooldown_resume_delay(cfg)
-                )
-                self.activity.add(
-                    "info",
-                    f"Detection paused ~{round(cfg.cooldown_seconds / 60)} min "
-                    "for cooldown (saving CPU) — resumes before the next window.",
-                )
-
-            self.status.rolls += 1
-            self.status.last_roll = result.describe()
-            self.status.last_roll_at = time.time()
-            log.info("Person detected: %s", result.describe())
-            image = self.snapshots.save(detector.annotated_jpeg())
-
-            roll_desc = f"rolled {result.value} on d{cfg.dice_sides} (need ≥ {cfg.dc})"
-            if not result.treat:
-                self.activity.add(
-                    "roll", f"Person detected — {roll_desc}: no treat.", image=image
-                )
-                continue
-
-            # A treat — but stay silent during quiet time.
-            now = datetime.datetime.now().time()
-            if in_quiet_window(now, cfg.quiet_start, cfg.quiet_end):
-                self.activity.add(
-                    "roll",
-                    f"Person detected — {roll_desc}: TREAT, but it's quiet "
-                    f"time ({cfg.quiet_start}–{cfg.quiet_end}) — chime suppressed.",
-                    image=image,
-                )
-                continue
-
-            self.status.treats += 1
-            self._cast_for_treat(cfg, caster, targets, speakers_label,
-                                 result, roll_desc, image)
+                # Slow work runs OUTSIDE the roll lock so a network cast on one
+                # camera never blocks another camera's gate check.
+                if pause_note:
+                    self.activity.add(
+                        "info",
+                        f"Detection paused ~{round(cfg.cooldown_seconds / 60)} min for "
+                        "cooldown (saving CPU) — resumes before the next window.")
+                log.info("Person detected on %s: %s", cam_label, result.describe())
+                image = self.snapshots.save(detector.annotated_jpeg())
+                roll_desc = f"rolled {result.value} on d{cfg.dice_sides} (need ≥ {cfg.dc})"
+                if not result.treat:
+                    self.activity.add(
+                        "roll", f"Person on {cam_label} — {roll_desc}: no treat.", image=image)
+                    continue
+                now = datetime.datetime.now().time()
+                if in_quiet_window(now, cfg.quiet_start, cfg.quiet_end):
+                    self.activity.add(
+                        "roll",
+                        f"Person on {cam_label} — {roll_desc}: TREAT, but it's quiet time "
+                        f"({cfg.quiet_start}–{cfg.quiet_end}) — chime suppressed.", image=image)
+                    continue
+                with self._status_lock:
+                    self.status.treats += 1
+                self._cast_for_treat(cfg, caster, targets, speakers_label,
+                                     result, roll_desc, image)
+        except Exception as exc:        # noqa: BLE001 — isolate: this thread only
+            log.exception("camera worker %s crashed", name)
+            self._cam_error(name, f"worker crashed: {exc}")
 
     def _cast_for_treat(self, cfg, caster, targets, speakers_label,
                         result, roll_desc, image) -> None:
@@ -376,7 +467,8 @@ class DetectionLoop:
                     image=image,
                 )
         except Exception as exc:
-            self.status.last_error = f"cast error: {exc}"
+            with self._status_lock:
+                self.status.last_error = f"cast error: {exc}"
             log.warning("Failed to cast sound: %s", exc)
             self.activity.add(
                 "error",
@@ -407,17 +499,11 @@ class DetectionLoop:
 
 
 def _camera_source(cfg) -> str:
-    """Inject username/password into an rtsp:// URL if provided separately.
+    """Credential-injected source for the legacy single active camera.
 
-    Credentials are percent-encoded so a password containing URL-significant
-    characters (``@ : / ? #``) doesn't corrupt the URL and cause a spurious
-    401 / connection failure.
+    Kept for back-compat (webapp imports it); delegates to
+    :func:`config.camera_source`. Multi-camera uses per-spec sources from
+    :func:`config.camera_targets`.
     """
-    url = cfg.camera_url
-    if cfg.camera_username and "://" in url and "@" not in url:
-        scheme, rest = url.split("://", 1)
-        cred = quote(cfg.camera_username, safe="")
-        if cfg.camera_password:
-            cred += ":" + quote(cfg.camera_password, safe="")
-        return f"{scheme}://{cred}@{rest}"
-    return url
+    return config_mod.camera_source(
+        cfg.camera_url, cfg.camera_username, cfg.camera_password)

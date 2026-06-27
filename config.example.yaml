@@ -4,11 +4,24 @@
 # writes config.yaml for you. This file documents every setting and provides
 # sensible defaults. `setup.sh` copies it to config.yaml on first run.
 
-# --- Camera (where to watch for a person) ---
+# --- Camera (legacy single active camera; used when active_cameras is empty) ---
 camera_url: ""            # RTSP/HTTP stream, e.g. rtsp://192.168.1.50:554/stream1
 camera_name: ""           # friendly name (filled in by auto-detect; display only)
 camera_username: ""       # only if the stream needs a login
 camera_password: ""
+
+# --- Multi-camera: watch several at once, each with its own role & settings ---
+# Manage these from the GUI's Cameras card. Each saved camera is a full config
+# dict; `active_cameras` lists which to watch simultaneously. The detection
+# settings below (model, person_confidence, roi, motion, ...) are the DEFAULTS a
+# new camera inherits. `roll` = a person here rolls for a treat; `track_cats` =
+# its cat sightings are logged. The treat dispenser (dice/dc/cooldown/speakers)
+# is shared across all cameras.
+active_cameras: []        # e.g. ["Kitchen", "Garage"]; empty = the single camera above
+cameras: []               # e.g.:
+#   - {name: Kitchen, url: "rtsp://1.2.3.4/main", username: admin, password: "secret",
+#      roll: true,  track_cats: false, model: yolo11n, scan_fps: 10.0, roi: null}
+#   - {name: Garage,  url: "usb:0", roll: false, track_cats: true, model: mobilenet_ssd}
 
 # --- Speaker(s) (Google Home / Nest — where the chime plays) ---
 speaker_names: []         # one or more exact names, e.g. ["Kitchen speaker", "Office"]

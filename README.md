@@ -61,10 +61,13 @@ the app. For autostart on Windows, use **Task Scheduler** instead of systemd.
 `run.py` prints a URL like `http://192.168.1.20:8080`. Open it in a browser on
 the **same WiFi**, then:
 
-1. **Camera** — pick your kitchen camera from the auto-detected list (or enter
-   its stream URL manually — main or sub feed; see *Detection detail* below).
-   A **USB / built-in webcam on the PC running the app** also works — hit
-   *Detect* under "USB camera on this PC".
+1. **Cameras** — **Add camera** (or auto-detect a network / USB one), give it a
+   URL, and tick **Watch**. You can watch **several at once**, and each camera
+   gets **its own role** — 🎲 *Rolls* (a person there rolls for a treat) and/or 🐱
+   *Tracks cats* (its cat sightings are logged) — plus **its own settings** (model,
+   confidence, scan rate, region of interest, …) under **Edit**. A **USB / built-in
+   webcam on the PC running the app** works too (enter `usb:0`). The treat
+   dispenser (dice/DC/cooldown/speakers) is shared across all cameras.
 2. **Speaker(s)** — pick one or more Google Home / Nest devices from the
    auto-detected list, and press **Test** to hear it play. To play on **this
    computer's own speakers**, pick **"This PC (local audio)"** (say yes to the
@@ -73,12 +76,17 @@ the **same WiFi**, then:
 3. **Sound or spoken message** — keep the default chime, upload your own, or
    tick *Speak a message instead* and type what to say.
 4. **Game rules** — set the dice size, the DC (how high you must roll to win a
-   treat), how often it's allowed to roll, and the detection knobs
-   (*Detection detail* and *Scan rate* — quality vs CPU).
+   treat), and how often it's allowed to roll. These are **shared** across all
+   cameras (one treat dispenser); the per-camera detection knobs live in each
+   camera's **Edit** panel.
 5. **Quiet time** *(optional)* — silence chimes overnight.
-6. **Region of interest** *(optional)* — **Grab frame** and drag a box to watch
-   just part of the view.
-7. Press **Start watching**. Done!
+6. Press **Start watching**. Done! Each camera's *Set region…* (in its editor)
+   limits it to part of the view.
+
+> **Watching several cameras** scales CPU roughly linearly (each is its own
+> detection stream), but the motion pre-filter means idle cameras cost almost
+> nothing — and you can dial a busy camera down (lighter model, lower scan rate,
+> tighter region) in its own settings.
 
 > **Keep it running:** `run.py` stays running in your terminal until you press
 > `Ctrl+C` (the camera-watching loop runs inside it; Start/Stop is in the GUI).
@@ -152,9 +160,10 @@ The **🐱 Cat cam** card sits at the top of the page: a big **Show me the cat!*
 button that **flashes green while a cat is on camera right now**, plus the latest
 sighting — **when** it was seen, on **which camera**, and roughly **where** in the
 frame (e.g. *bottom-left*), with an annotated snapshot. Tapping the button pulls up
-the live feed of the camera that saw it (one camera today; the right camera once
-watching several at once lands). Sightings share the same throttle and snapshots as
-the activity log, so a pacing cat won't spam anything.
+the live feed of **the camera that saw it** (it switches the feed to that camera
+when you're watching several). Only cameras with the 🐱 *Tracks cats* role record
+sightings. Sightings share the same throttle and snapshots as the activity log, so a
+pacing cat won't spam anything.
 
 The camera/speaker/rules **setup lives below** the cat cam, live feed, and activity
 log — it's saved to `config.yaml`, so you set it once and rarely touch it again.

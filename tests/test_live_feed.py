@@ -46,7 +46,7 @@ def test_stream_serves_multipart_jpeg_when_running(monkeypatch):
     app = create_app()
     loop = app.config["loop"]
     monkeypatch.setattr(loop, "is_running", lambda: True)
-    monkeypatch.setattr(loop, "live_jpeg", lambda: b"\xff\xd8stub\xff\xd9")
+    monkeypatch.setattr(loop, "live_jpeg", lambda name=None: b"\xff\xd8stub\xff\xd9")
 
     r = app.test_client().get("/api/stream")
     assert r.headers["Content-Type"].startswith("multipart/x-mixed-replace")

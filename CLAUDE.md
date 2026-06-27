@@ -8,7 +8,7 @@ Flask single-page GUI configures and runs it. CPU-only, no Docker, no cloud, no 
 
 ## Run / test
 - Python 3.11+. Virtualenv at `./venv`.
-- Tests: `./venv/bin/python -m pytest -q` (currently ~118 tests; keep them green).
+- Tests: `./venv/bin/python -m pytest -q` (currently ~133 tests; keep them green).
 - Launch: `./venv/bin/python run.py` → prints a `http://<lan-ip>:8080` GUI URL.
 - Setup: `setup.sh` (Linux/apt) or `setup.ps1` / `setup.bat` (Windows), `start.bat`
   to launch on Windows.
@@ -22,8 +22,11 @@ Flask single-page GUI configures and runs it. CPU-only, no Docker, no cloud, no 
   keep-alive to avoid the "connecting" chime) **and** local PC audio via the
   `LOCAL_SPEAKER = "__local__"` sentinel (optional `playsound3`).
 - `d20app/loop.py` — the watch→confirm→roll→play loop; cooldown detection-pause.
-  Exposes the running detector for the live MJPEG feed (`/api/stream`) and records
-  cat sightings via `cats.py`.
+  **Multi-camera**: a thin orchestrator builds one `PersonDetector` + worker thread
+  per watched camera (`config.camera_targets`), sharing one cooldown gate (locks:
+  `_roll_lock`/`_status_lock`/`_cam_lock`). Per-camera **roles** gate behaviour
+  (`roll` → treats, `track_cats` → sightings). Exposes per-camera live feeds
+  (`/api/stream?camera=`) and records cat sightings via `cats.py`.
 - `d20app/cats.py` — `CatTracker`: file-backed cat sightings (when/camera/where +
   snapshot) behind `/api/cats`; `describe_region()` maps a box to a thirds-grid
   location. Camera-aware for the planned multi-camera "Show cat".

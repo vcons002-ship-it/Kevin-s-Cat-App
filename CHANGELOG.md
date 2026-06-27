@@ -11,6 +11,45 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.13.0] — 2026-06-27
+
+### Added
+- **Multi-camera.** Watch several cameras at once, each with **its own role** and
+  **its own full detection settings**:
+  - **Roles** (per camera): 🎲 *Rolls* — a person there rolls for a treat; 🐱
+    *Tracks cats* — its cat sightings are logged. One, both, or neither.
+  - **Per-camera settings**: model, accelerator, person-confidence, confirm-frames,
+    detection detail, scan rate, notify floor, motion sensitivity, region of
+    interest, plus URL/credentials — independent per camera.
+  - **GUI**: the Camera card is now a manager — add cameras, tick **Watch** to run
+    them at once, expand each to edit its settings/ROI, and see per-camera
+    connected/failing chips. The Live-detection card gains a **camera selector**,
+    and **Show cat** jumps the feed to the camera that saw the cat.
+  - **Detection loop**: one `PersonDetector` + worker thread per watched camera,
+    sharing **one treat dispenser** (a single cooldown/roll gate across all
+    cameras). One camera failing never stops the others.
+  - **Config/API**: per-camera config dicts + `active_cameras`;
+    `config.camera_targets()`/`coerce_camera()`; `GET /api/stream?camera=`,
+    `GET /api/preview?camera=`, `POST /api/cameras/active`, full per-camera
+    `POST /api/cameras/saved`, and per-camera status in `GET /api/status`.
+
+### Notes
+- **CPU scales with the number of watched cameras** (each is its own inference
+  stream — you can't share one inference across different cameras' frames), but the
+  motion pre-filter means idle cameras cost almost nothing, and each camera can be
+  tuned lighter (mobilenet / lower scan-rate / tight ROI). Two heavier CPU options —
+  a round-robin shared-detector mode and GPU-batched inference — are recorded in
+  ROADMAP as future work, not built here.
+- **Backwards compatible**: an existing single-camera `config.yaml` (no
+  `active_cameras`) runs exactly as before, as one camera that both rolls and
+  tracks cats.
+- The new threading (one shared cooldown across N camera threads) was put through an
+  adversarial multi-lens review before merge, which hardened: a **cat-tracking
+  camera keeps watching during another camera's roll-cooldown** (only roll-only
+  cameras pause to save CPU); duplicate names in the watch set are de-duped (no two
+  threads on one capture); an explicit per-camera `roi: null` means whole-frame; and
+  the shared snapshot store no longer serialises workers across a slow-disk write.
+
 ## [0.12.0] — 2026-06-27
 
 ### Changed
