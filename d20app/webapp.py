@@ -283,11 +283,12 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     @app.get("/api/cats")
     def api_cats():
         limit = request.args.get("limit", default=20, type=int)
-        cats = app.config["loop"].cats
+        loop = app.config["loop"]
         return jsonify({
-            "last": cats.last(),
-            "today": cats.today_count(),
-            "recent": cats.recent(limit=limit),
+            "last": loop.cats.last(),
+            "today": loop.cats.today_count(),
+            "present": loop.cat_present(),     # cat on camera right now → flash the button
+            "recent": loop.cats.recent(limit=limit),
         })
 
     @app.post("/api/cats/clear")

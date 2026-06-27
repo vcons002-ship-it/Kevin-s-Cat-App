@@ -65,6 +65,22 @@ def test_api_cats_reports_last_and_today(tmp_path):
     assert body["today"] >= 1
     assert body["last"]["camera"] == "Kitchen" and body["last"]["region"] == "top-left"
     assert body["recent"][0]["image"] == "x.jpg"
+    assert body["present"] is False          # nothing running → no live cat
 
     app.test_client().post("/api/cats/clear")
     assert app.test_client().get("/api/cats").get_json()["last"] is None
+
+
+def test_cat_present_reflects_a_fresh_cat_box():
+    import time
+    det = PersonDetector(source="unused", confidence=0.4, label_floor=0.5)
+    det._last_boxes = [("cat", 0.8, (1, 1, 9, 9))]
+    det._live_boxes_at = time.monotonic()
+    assert det.cat_present() is True
+
+    det._last_boxes = [("person", 0.9, (1, 1, 9, 9))]   # a person, not a cat
+    assert det.cat_present() is False
+
+    det._last_boxes = [("cat", 0.8, (1, 1, 9, 9))]
+    det._live_boxes_at = time.monotonic() - (det._LIVE_BOX_TTL + 1)   # stale
+    assert det.cat_present() is False                  # cat left / detection stopped

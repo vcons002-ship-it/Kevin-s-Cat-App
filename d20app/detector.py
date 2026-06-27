@@ -509,6 +509,19 @@ class PersonDetector:
         with self._live_lock:
             return self._live_version
 
+    def cat_present(self) -> bool:
+        """True if a cat box (>= label floor) was seen in the last fresh frame.
+
+        Drives the GUI's flashing "Show cat" button. Bounded by ``_LIVE_BOX_TTL``
+        so it clears shortly after the cat leaves (or detection stops refreshing).
+        """
+        with self._live_lock:
+            fresh = (time.monotonic() - self._live_boxes_at) <= self._LIVE_BOX_TTL
+            boxes = self._last_boxes
+        return fresh and any(
+            lab == "cat" and score >= self.label_floor for lab, score, _ in boxes
+        )
+
     def _publish_frame(self, frame) -> None:
         """Store the latest raw frame for the live feed and bump the version."""
         with self._live_lock:
