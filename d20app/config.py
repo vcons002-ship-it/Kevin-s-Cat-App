@@ -53,6 +53,7 @@ class Config:
     confirm_frames: int = 4          # require a person in this many frames in a row (4 guards against a moving cat's transient high-confidence spike)
     detect_size: int = 300           # net input size; 300 = reliable for people (512 = distant cats, heavier)
     scan_fps: float = 10.0           # frames/sec to read from the camera (lower = less CPU)
+    smooth_live_feed: bool = False   # dedicated capture thread so the live feed runs at camera rate (decoupled from inference); costs a little extra CPU/bandwidth
     roi: list | None = None          # optional [x, y, w, h] crop of the frame (set in the GUI)
     label_floor: float = 0.55        # min confidence to NAME a non-person mover in the log/snapshot (higher = fewer stray "pottedplant"/"sofa" labels; no effect on treats)
 
