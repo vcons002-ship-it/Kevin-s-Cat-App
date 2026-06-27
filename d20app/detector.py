@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -273,6 +274,12 @@ class PersonDetector:
         self.frame_size = None  # (w, h) of the last good frame; None until one reads
         self._last_frame = None    # last frame the net analysed (for snapshots)
         self._last_boxes = []      # detections on that frame: [(label, score, box)]
+        # Live-feed state: the most recent frame read (ROI-cropped, so box coords
+        # match) and when the boxes were last refreshed by the net — guarded by a
+        # lock because the web request thread reads them while the loop writes.
+        self._live_frame = None
+        self._live_boxes_at = 0.0
+        self._live_lock = threading.Lock()
         self._motion = MotionPrefilter(
             min_area_frac=motion_min_area_frac,
             diff_threshold=motion_diff_threshold,
@@ -419,6 +426,43 @@ class PersonDetector:
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return buf.tobytes() if ok else None
 
+    # How long detection boxes stay drawn on the live feed after their last
+    # refresh — long enough to ride out the gap between analysed frames, short
+    # enough that boxes don't linger over an empty frame once a subject leaves.
+    _LIVE_BOX_TTL = 1.5
+
+    def live_jpeg(self) -> bytes | None:
+        """JPEG of the most recent frame, with recent detection boxes overlaid.
+
+        Drives the live GUI stream. Returns the latest read frame (not just the
+        last *analysed* one, so the feed stays smooth at scan rate); boxes are
+        drawn only if the net refreshed them within :data:`_LIVE_BOX_TTL`, so a
+        person who has left doesn't leave a box hanging. ``None`` until a frame
+        has been read. Thread-safe: the web request thread calls this while the
+        detection loop writes the underlying frame.
+        """
+        import cv2
+
+        with self._live_lock:
+            frame = self._live_frame
+            boxes = self._last_boxes
+            fresh = (time.monotonic() - self._live_boxes_at) <= self._LIVE_BOX_TTL
+        if frame is None:
+            return None
+        img = frame.copy()
+        if fresh:
+            for label, score, (x1, y1, x2, y2) in boxes:
+                floor = self.confidence if label == "person" else self.label_floor
+                if score < floor:
+                    continue
+                color = self._BOX_COLORS.get(label, (160, 160, 160))
+                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                ty = max(y1 - 6, 12)
+                cv2.putText(img, f"{label} {score:.2f}", (x1, ty),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return buf.tobytes() if ok else None
+
     def read_and_detect(self, detect: bool = True) -> FrameOutcome:
         """Grab one frame, apply the motion pre-filter, then classify it.
 
@@ -451,14 +495,21 @@ class PersonDetector:
             return FrameOutcome(motion=False, person=False)
         self._read_fails = 0
         self.frame_size = (frame.shape[1], frame.shape[0])
-        gray = cv2.cvtColor(self._crop(frame), cv2.COLOR_BGR2GRAY)
+        cropped = self._crop(frame)
+        # Publish every read frame for the live feed, even when the net is skipped
+        # (no motion / cooldown pause) — so the stream stays smooth at scan rate.
+        with self._live_lock:
+            self._live_frame = cropped
+        gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         moved = self._motion.update(gray)      # keep the baseline fresh even when paused
         if not detect or not moved:
             return FrameOutcome(motion=False, person=False)
 
         boxes = self._detect_boxes(frame, floor=min(self.label_floor, self.confidence))
-        self._last_frame = self._crop(frame)   # what the net saw (box coords match)
-        self._last_boxes = boxes
+        self._last_frame = cropped             # what the net saw (box coords match)
+        with self._live_lock:
+            self._last_boxes = boxes           # fresh detections (possibly empty)
+            self._live_boxes_at = time.monotonic()
         person = self._best(boxes, "person") >= self.confidence
         # Identify non-person movers (cats!) at the label floor — lower than a
         # person needs, so a smaller/less-certain cat is still named, but high

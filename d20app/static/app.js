@@ -371,6 +371,31 @@ async function refreshStatus() {
   if (body.rolls) parts.push(`${body.rolls} rolls, ${body.treats} treats`);
   if (body.last_error) parts.push(`⚠ ${body.last_error}`);
   detail.textContent = parts.join("  ·  ");
+  updateLiveView(body.running);
+}
+
+// ---- live detection feed ---------------------------------------------------
+let liveOn = false;
+
+function updateLiveView(running) {
+  const img = $("live-img"), note = $("live-note");
+  const want = running && $("live-enabled").checked;
+  if (want && !liveOn) {
+    // Point the <img> at the MJPEG stream; the browser renders it live.
+    img.src = "/api/stream?ts=" + Date.now();
+    img.classList.remove("hidden");
+    note.textContent = "Live — green = person, orange = cat.";
+    liveOn = true;
+  } else if (!want && liveOn) {
+    img.src = "";                       // close the streaming connection
+    img.classList.add("hidden");
+    liveOn = false;
+  }
+  if (!want) {
+    note.textContent = running
+      ? "Live feed off — tick “Show live feed” to view."
+      : "Start watching to see the live feed.";
+  }
 }
 
 // ---- activity log ----------------------------------------------------------
@@ -481,6 +506,13 @@ function wire() {
     await api("/api/stop", { method: "POST" });
     refreshStatus();
     loadLog();
+  };
+
+  // Live feed: react to the toggle immediately, and recover from a dropped
+  // stream (e.g. a brief 409 right after Start) by letting the next poll retry.
+  $("live-enabled").onchange = () => refreshStatus();
+  $("live-img").onerror = () => {
+    if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); }
   };
 }
 

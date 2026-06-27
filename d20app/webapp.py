@@ -12,11 +12,13 @@ Serves the config page plus JSON endpoints:
   POST /api/start      -> start the detection loop
   POST /api/stop       -> stop the detection loop
   GET  /api/status     -> live loop status (running, last roll, counts)
+  GET  /api/stream     -> live MJPEG feed of the detector's annotated frames
 """
 
 from __future__ import annotations
 
 import os
+import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.utils import secure_filename
@@ -83,6 +85,30 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         if jpeg is None:
             return jsonify({"error": "Couldn't grab a frame from the camera."}), 502
         return Response(jpeg, mimetype="image/jpeg")
+
+    # -- live detection feed (MJPEG of what the running loop sees) -----------
+    @app.get("/api/stream")
+    def api_stream():
+        loop = app.config["loop"]
+        if not loop.is_running():
+            return jsonify(
+                {"error": "Start watching to see the live detection feed."}
+            ), 409
+
+        def frames():
+            # One JPEG per part; the browser renders this directly in an <img>.
+            # Capped at ~10 fps — the loop only reads at scan_fps anyway, so this
+            # adds an encode per served frame and nothing when no one's watching.
+            while loop.is_running():
+                jpeg = loop.live_jpeg()
+                if jpeg is not None:
+                    yield (b"--frame\r\nContent-Type: image/jpeg\r\n"
+                           b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n"
+                           + jpeg + b"\r\n")
+                time.sleep(0.1)
+
+        return Response(frames(),
+                        mimetype="multipart/x-mixed-replace; boundary=frame")
 
     # -- discovery ----------------------------------------------------------
     @app.get("/api/speakers")
