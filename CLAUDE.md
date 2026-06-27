@@ -34,8 +34,9 @@ Flask single-page GUI configures and runs it. CPU-only, no Docker, no cloud, no 
   local-USB probe.
 
 ## Conventions (how this codebase has been maintained)
-- Develop on the feature branch, never commit straight to the default branch; open a
-  PR and merge only when asked.
+- Branching: develop on the **`Dev`** integration branch, never commit straight to
+  `main`. Open a PR from `Dev` → `main` and merge only when asked. (GitHub's own
+  merge commits show as "Unverified" — that's expected and not something to rewrite.)
 - Per change: bump `d20app/__init__.py` `__version__`, add a `CHANGELOG.md` entry,
   run the full suite, then commit. Update `README.md` / `ROADMAP.md` when behaviour
   or counts change.
