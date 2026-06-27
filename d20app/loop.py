@@ -19,6 +19,7 @@ from . import config as config_mod
 from . import dice
 from .activitylog import ActivityLog
 from .caster import Caster, SoundServer
+from .cats import CatTracker
 from .detector import PersonDetector, mask_credentials
 from .snapshots import SnapshotStore
 
@@ -82,6 +83,7 @@ class DetectionLoop:
         self.status = Status()
         self.activity = ActivityLog()
         self.snapshots = SnapshotStore()
+        self.cats = CatTracker()        # cat sightings, for the "show cat" feature
         self._sound_server: SoundServer | None = None
         self._caster: Caster | None = None
         self._detector: PersonDetector | None = None   # live while running, for the GUI feed
@@ -191,6 +193,7 @@ class DetectionLoop:
 
     def _loop_body(self, cfg, detector, gate, caster, targets, speakers_label) -> None:
         backoff = 1.0
+        cam_label = cfg.camera_name or mask_credentials(cfg.camera_url)
         last_cam_error = ""        # so a flaky camera doesn't flood the log
         connected = False          # log once when the first frame actually reads
         motion_gate = dice.RollGate(_MOTION_LOG_INTERVAL)   # throttle motion notes
@@ -241,15 +244,30 @@ class DetectionLoop:
 
             # Motion, but not a person: report what moved (the cats!), throttled
             # so a pacing pet doesn't flood the log, with an annotated snapshot.
+            # A cat is also recorded as a sighting (when + where) for "show cat".
             if not outcome.person:
                 streak = 0
                 if motion_gate.allow():
-                    what = outcome.labels[0] if outcome.labels else "something"
-                    self.activity.add(
-                        "motion",
-                        f"Non-human motion — {what} moved (no person, no roll).",
-                        image=self.snapshots.save(detector.annotated_jpeg()),
-                    )
+                    snap = self.snapshots.save(detector.annotated_jpeg())
+                    cat = detector.best_box("cat") if "cat" in outcome.labels else None
+                    if cat is not None:
+                        score, box = cat
+                        sighting = self.cats.record(
+                            cam_label, box, detector.frame_size, score, image=snap
+                        )
+                        where = f" ({sighting['region']})" if sighting["region"] else ""
+                        self.activity.add(
+                            "motion",
+                            f"🐱 Cat seen{where} on {cam_label} — tracked, no roll.",
+                            image=snap,
+                        )
+                    else:
+                        what = outcome.labels[0] if outcome.labels else "something"
+                        self.activity.add(
+                            "motion",
+                            f"Non-human motion — {what} moved (no person, no roll).",
+                            image=snap,
+                        )
                 time.sleep(interval)
                 continue
 

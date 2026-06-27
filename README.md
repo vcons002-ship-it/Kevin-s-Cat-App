@@ -137,6 +137,16 @@ while watching and only to browsers with the page open — untick **Show live
 feed** on a slow connection. It's the quickest way to confirm framing and that
 recognition is actually firing.
 
+### Tracking cats ("Show cat")
+
+Cats never earn a treat — only people roll — but they're no longer just ignored.
+Every cat sighting is recorded in the **Cats** card: **when** it was seen, on
+**which camera**, and roughly **where** in the frame (e.g. *bottom-left*), with an
+annotated snapshot. **Show cat** pulls up the live feed of the camera that saw it
+(one camera today; the right camera once watching several at once lands). Sightings
+share the same throttle and snapshots as the activity log, so a pacing cat won't
+spam anything.
+
 ### Snapshots & taming false positives
 
 Every detection event in the Activity log carries an **annotated snapshot** — a

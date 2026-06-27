@@ -13,6 +13,7 @@ Serves the config page plus JSON endpoints:
   POST /api/stop       -> stop the detection loop
   GET  /api/status     -> live loop status (running, last roll, counts)
   GET  /api/stream     -> live MJPEG feed of the detector's annotated frames
+  GET  /api/cats       -> cat sightings (last seen, today's count, recent)
 """
 
 from __future__ import annotations
@@ -260,6 +261,22 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     @app.post("/api/log/clear")
     def api_log_clear():
         app.config["loop"].activity.clear()
+        return jsonify({"ok": True})
+
+    # -- cat sightings ("show cat") -----------------------------------------
+    @app.get("/api/cats")
+    def api_cats():
+        limit = request.args.get("limit", default=20, type=int)
+        cats = app.config["loop"].cats
+        return jsonify({
+            "last": cats.last(),
+            "today": cats.today_count(),
+            "recent": cats.recent(limit=limit),
+        })
+
+    @app.post("/api/cats/clear")
+    def api_cats_clear():
+        app.config["loop"].cats.clear()
         return jsonify({"ok": True})
 
     return app

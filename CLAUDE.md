@@ -1,14 +1,14 @@
 # Kevin's Cat App — notes for Claude
 
-A D20 "treat roller": a background loop watches a camera for a **person** (cats are
-ignored), rolls a die on each allowed detection, and on a winning roll plays a chime
-(or a spoken message) on a Google Home and/or this PC's speakers — the cue that it's
-OK to give the cat a treat. A Flask single-page GUI configures and runs it. CPU-only,
-no Docker, no cloud, no account.
+A D20 "treat roller": a background loop watches a camera for a **person** (cats never
+roll, but are **tracked** — see `cats.py` / the "Show cat" feature), rolls a die on
+each allowed detection, and on a winning roll plays a chime (or a spoken message) on a
+Google Home and/or this PC's speakers — the cue that it's OK to give the cat a treat. A
+Flask single-page GUI configures and runs it. CPU-only, no Docker, no cloud, no account.
 
 ## Run / test
 - Python 3.11+. Virtualenv at `./venv`.
-- Tests: `./venv/bin/python -m pytest -q` (currently ~104 tests; keep them green).
+- Tests: `./venv/bin/python -m pytest -q` (currently ~109 tests; keep them green).
 - Launch: `./venv/bin/python run.py` → prints a `http://<lan-ip>:8080` GUI URL.
 - Setup: `setup.sh` (Linux/apt) or `setup.ps1` / `setup.bat` (Windows), `start.bat`
   to launch on Windows.
@@ -22,6 +22,11 @@ no Docker, no cloud, no account.
   keep-alive to avoid the "connecting" chime) **and** local PC audio via the
   `LOCAL_SPEAKER = "__local__"` sentinel (optional `playsound3`).
 - `d20app/loop.py` — the watch→confirm→roll→play loop; cooldown detection-pause.
+  Exposes the running detector for the live MJPEG feed (`/api/stream`) and records
+  cat sightings via `cats.py`.
+- `d20app/cats.py` — `CatTracker`: file-backed cat sightings (when/camera/where +
+  snapshot) behind `/api/cats`; `describe_region()` maps a box to a thirds-grid
+  location. Camera-aware for the planned multi-camera "Show cat".
 - `d20app/config.py` — one `config.yaml` (gitignored; `config.example.yaml` is the
   template). `update()` coerces incoming values to each dataclass field's type.
 - `d20app/webapp.py` — Flask JSON API + serves `templates/index.html` /
