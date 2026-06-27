@@ -137,6 +137,14 @@ while watching and only to browsers with the page open — untick **Show live
 feed** on a slow connection. It's the quickest way to confirm framing and that
 recognition is actually firing.
 
+By default the feed updates at your **scan rate**, which is gated by how fast
+detection runs — so on a slow CPU or the heavier `yolo11m` it can look choppy.
+Tick **Smooth feed** to run a dedicated capture thread that reads the camera
+continuously and plays the video at the camera's own frame rate, independent of
+inference. It costs a little extra CPU and reads the camera non-stop, so leave it
+off if you only need the occasional frame; and smoothness is still capped by the
+camera's actual output rate and your network.
+
 ### Tracking cats ("Show cat")
 
 Cats never earn a treat — only people roll — but they're no longer just ignored.

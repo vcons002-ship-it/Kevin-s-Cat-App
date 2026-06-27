@@ -13,6 +13,7 @@ Serves the config page plus JSON endpoints:
   POST /api/stop       -> stop the detection loop
   GET  /api/status     -> live loop status (running, last roll, counts)
   GET  /api/stream     -> live MJPEG feed of the detector's annotated frames
+  POST /api/live/smooth-> toggle the smooth (decoupled-capture) live feed
   GET  /api/cats       -> cat sightings (last seen, today's count, recent)
 """
 
@@ -98,18 +99,33 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
 
         def frames():
             # One JPEG per part; the browser renders this directly in an <img>.
-            # Capped at ~10 fps — the loop only reads at scan_fps anyway, so this
-            # adds an encode per served frame and nothing when no one's watching.
+            # Encode only when the frame/box version changes, so we never re-send
+            # an unchanged frame and the feed runs at whatever rate frames arrive
+            # — the loop's scan rate normally, or camera rate with the smooth feed.
+            # The 0.03 s poll is the only ceiling (~30 fps); cheap when idle.
+            last_ver = -1
             while loop.is_running():
-                jpeg = loop.live_jpeg()
-                if jpeg is not None:
-                    yield (b"--frame\r\nContent-Type: image/jpeg\r\n"
-                           b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n"
-                           + jpeg + b"\r\n")
-                time.sleep(0.1)
+                ver = loop.live_version()
+                if ver != last_ver:
+                    jpeg = loop.live_jpeg()
+                    if jpeg is not None:
+                        last_ver = ver
+                        yield (b"--frame\r\nContent-Type: image/jpeg\r\n"
+                               b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n"
+                               + jpeg + b"\r\n")
+                time.sleep(0.03)
 
         return Response(frames(),
                         mimetype="multipart/x-mixed-replace; boundary=frame")
+
+    @app.post("/api/live/smooth")
+    def api_live_smooth():
+        # Persist the choice and, if watching, apply it live (the loop reconciles
+        # it on its next frame). Off → on costs a little extra CPU/bandwidth.
+        on = bool((request.get_json(silent=True) or {}).get("on"))
+        config_mod.update({"smooth_live_feed": on})
+        app.config["loop"].set_smooth(on)
+        return jsonify({"ok": True, "smooth_live_feed": on})
 
     # -- discovery ----------------------------------------------------------
     @app.get("/api/speakers")

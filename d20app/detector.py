@@ -245,7 +245,7 @@ class PersonDetector:
                  detect_size: int = 300, label_floor: float = _LABEL_FLOOR,
                  motion_min_area_frac: float = 0.003, motion_diff_threshold: int = 25,
                  motion_min_blob_px: int = 14, model: str = "mobilenet_ssd",
-                 accelerator: str = "cpu") -> None:
+                 accelerator: str = "cpu", smooth_feed: bool = False) -> None:
         self.source = source
         self.confidence = confidence
         # Which detection model to run: "mobilenet_ssd" (fast, bundled default),
@@ -274,12 +274,28 @@ class PersonDetector:
         self.frame_size = None  # (w, h) of the last good frame; None until one reads
         self._last_frame = None    # last frame the net analysed (for snapshots)
         self._last_boxes = []      # detections on that frame: [(label, score, box)]
-        # Live-feed state: the most recent frame read (ROI-cropped, so box coords
-        # match) and when the boxes were last refreshed by the net — guarded by a
-        # lock because the web request thread reads them while the loop writes.
+        # Live-feed state: the most recent **raw** frame read (live_jpeg crops it
+        # to the ROI on demand) and when the boxes were last refreshed by the net.
+        # ``_live_version`` bumps on every new frame / box update so the stream can
+        # skip re-encoding an unchanged frame. Guarded by a lock because the web
+        # request thread reads them while the loop (or grab thread) writes.
         self._live_frame = None
         self._live_boxes_at = 0.0
+        self._live_version = 0
         self._live_lock = threading.Lock()
+        # Smooth feed: when on, a dedicated thread reads the camera continuously so
+        # the live feed runs at camera rate, decoupled from (slow) inference. Off
+        # by default — the loop reads frames itself, one per analysed iteration.
+        # ``smooth_feed`` is the *actual* state (the grabber is started lazily by
+        # the loop thread); ``_smooth_desired`` is the requested state (set here or
+        # later from the web thread). They differ until the loop reconciles them,
+        # so the grabber is started/stopped by one thread only — never racing the
+        # camera read.
+        self.smooth_feed = False
+        self._smooth_desired = bool(smooth_feed)
+        self._grab_thread = None
+        self._grab_stop = threading.Event()
+        self._grab_error = ""
         self._motion = MotionPrefilter(
             min_area_frac=motion_min_area_frac,
             diff_threshold=motion_diff_threshold,
@@ -461,7 +477,9 @@ class PersonDetector:
             fresh = (time.monotonic() - self._live_boxes_at) <= self._LIVE_BOX_TTL
         if frame is None:
             return None
-        img = frame.copy()
+        # Crop to the ROI here (the buffer holds the raw frame); the copy also
+        # detaches us from the grab thread swapping the buffer underneath.
+        img = self._crop(frame).copy()
         if fresh:
             for label, score, (x1, y1, x2, y2) in boxes:
                 floor = self.confidence if label == "person" else self.label_floor
@@ -474,6 +492,89 @@ class PersonDetector:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return buf.tobytes() if ok else None
+
+    def live_version(self) -> int:
+        """Monotonic counter bumped on each new frame / box update.
+
+        The stream uses it to avoid re-encoding an unchanged frame and to serve
+        at the rate frames actually arrive (camera rate in smooth mode).
+        """
+        with self._live_lock:
+            return self._live_version
+
+    def _publish_frame(self, frame) -> None:
+        """Store the latest raw frame for the live feed and bump the version."""
+        with self._live_lock:
+            self._live_frame = frame
+            self.frame_size = (frame.shape[1], frame.shape[0])
+            self._live_version += 1
+
+    # -- smooth feed: a dedicated capture thread ----------------------------
+    def _grab_loop(self) -> None:
+        """Continuously read the camera so the feed runs at camera rate.
+
+        Active only in smooth mode, where it is the **sole** reader of the
+        capture (``read_and_detect`` then samples the published buffer instead of
+        reading the camera itself). Handles its own reconnect with the same
+        empty-read tolerance as the synchronous path, surfacing a persistent
+        failure via ``_grab_error`` so the loop can report it.
+        """
+        while not self._grab_stop.is_set():
+            try:
+                cap = self._ensure_cap()
+            except CameraError as exc:
+                with self._live_lock:
+                    self._grab_error = str(exc)
+                self._grab_stop.wait(1.0)
+                continue
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                self._read_fails += 1
+                if self._read_fails >= 3:
+                    with self._live_lock:
+                        self._grab_error = (
+                            f"lost the camera stream {mask_credentials(self.source)} "
+                            "(no frames received)"
+                        )
+                    self._cap = None        # force a reconnect next iteration
+                self._grab_stop.wait(0.1)
+                continue
+            self._read_fails = 0
+            if self._grab_error:
+                with self._live_lock:
+                    self._grab_error = ""
+            self._publish_frame(frame)
+
+    def _apply_smooth(self, desired: bool) -> None:
+        """Start or stop the grab thread. **Loop thread only**, so the capture is
+
+        never read by two threads at once (the web thread merely sets the desired
+        flag and lets the loop reconcile it here).
+        """
+        if desired and not self.smooth_feed:
+            self._grab_stop.clear()
+            self._grab_error = ""
+            self._grab_thread = threading.Thread(
+                target=self._grab_loop, name="cam-grab", daemon=True
+            )
+            self._grab_thread.start()
+            self.smooth_feed = True
+            _log.info("Smooth live feed ON (dedicated capture thread)")
+        elif not desired and self.smooth_feed:
+            self._grab_stop.set()
+            thread = self._grab_thread
+            if thread is not None:
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    # The grabber is wedged in a blocking read (stalled camera);
+                    # stay in smooth mode rather than risk two readers on the cap.
+                    _log.warning("Smooth-feed grab thread didn't stop — staying smooth")
+                    self._smooth_desired = True
+                    return
+            self._grab_thread = None
+            self._read_fails = 0
+            self.smooth_feed = False
+            _log.info("Smooth live feed OFF")
 
     def read_and_detect(self, detect: bool = True) -> FrameOutcome:
         """Grab one frame, apply the motion pre-filter, then classify it.
@@ -492,26 +593,40 @@ class PersonDetector:
         """
         import cv2
 
-        cap = self._ensure_cap()        # raises CameraError if it can't open
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            self._read_fails += 1
-            self._cap = None            # force a reconnect next call
-            # Tolerate a brief hiccup, but a run of empty reads means the
-            # stream is really gone — surface it so the loop can back off.
-            if self._read_fails >= 3:
-                raise CameraError(
-                    f"lost the camera stream {mask_credentials(self.source)} "
-                    "(no frames received)"
-                )
-            return FrameOutcome(motion=False, person=False)
-        self._read_fails = 0
-        self.frame_size = (frame.shape[1], frame.shape[0])
+        # Reconcile a smooth-mode toggle here, on the loop thread, so starting or
+        # stopping the grab thread never races the camera read below.
+        if self._smooth_desired != self.smooth_feed:
+            self._apply_smooth(self._smooth_desired)
+
+        if self.smooth_feed:
+            # The grab thread is the sole reader; sample its latest frame.
+            with self._live_lock:
+                frame = self._live_frame
+                err = self._grab_error
+            if frame is None:
+                if err:
+                    raise CameraError(err)
+                return FrameOutcome(motion=False, person=False)   # warming up
+        else:
+            cap = self._ensure_cap()    # raises CameraError if it can't open
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                self._read_fails += 1
+                self._cap = None        # force a reconnect next call
+                # Tolerate a brief hiccup, but a run of empty reads means the
+                # stream is really gone — surface it so the loop can back off.
+                if self._read_fails >= 3:
+                    raise CameraError(
+                        f"lost the camera stream {mask_credentials(self.source)} "
+                        "(no frames received)"
+                    )
+                return FrameOutcome(motion=False, person=False)
+            self._read_fails = 0
+            # Publish every read frame for the live feed, even when the net is
+            # skipped (no motion / cooldown pause), so the feed stays warm.
+            self._publish_frame(frame)
+
         cropped = self._crop(frame)
-        # Publish every read frame for the live feed, even when the net is skipped
-        # (no motion / cooldown pause) — so the stream stays smooth at scan rate.
-        with self._live_lock:
-            self._live_frame = cropped
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         moved = self._motion.update(gray)      # keep the baseline fresh even when paused
         if not detect or not moved:
@@ -522,6 +637,7 @@ class PersonDetector:
         with self._live_lock:
             self._last_boxes = boxes           # fresh detections (possibly empty)
             self._live_boxes_at = time.monotonic()
+            self._live_version += 1            # boxes changed → stream re-renders
         person = self._best(boxes, "person") >= self.confidence
         # Identify non-person movers (cats!) at the label floor — lower than a
         # person needs, so a smaller/less-certain cat is still named, but high
@@ -534,6 +650,12 @@ class PersonDetector:
         return FrameOutcome(motion=True, person=person, labels=labels)
 
     def release(self) -> None:
+        # Stop the grab thread (if any) before releasing the capture it reads.
+        self._grab_stop.set()
+        thread = self._grab_thread
+        if thread is not None:
+            thread.join(timeout=5)
+        self._grab_thread = None
         if self._cap is not None:
             self._cap.release()
             self._cap = None

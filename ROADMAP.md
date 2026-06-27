@@ -59,12 +59,13 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **109 automated tests**, including a detection-accuracy regression guard over
+- **115 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
-  CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route),
-  cat-sighting tracking (region labels, store persistence, `/api/cats`),
-  local USB camera + local PC speaker routing, and
+  CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
+  the smooth-feed capture thread (toggle reconcile, version gating, error
+  surfacing), cat-sighting tracking (region labels, store persistence,
+  `/api/cats`), local USB camera + local PC speaker routing, and
   saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
@@ -113,6 +114,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [x] **Live MJPEG feed** in the GUI — a real-time "Live detection" view with
       person/cat boxes drawn as they're recognised (0.9.0), reusing the loop's
       single capture. (A still-grab preview remains for the ROI picker.)
+- [x] **Smooth live feed** — optional dedicated capture thread so the feed plays
+      at camera rate instead of stuttering at the inference-gated scan rate
+      (0.11.0), toggled by a checkbox.
 - [ ] **Touch support** for the ROI picker on phones.
 
 ### App & ops

@@ -287,9 +287,14 @@
     <section class="card">
       <div class="row log-head">
         <h2>Live detection</h2>
-        <label class="checkbox">
-          <input type="checkbox" id="live-enabled" checked /> Show live feed
-        </label>
+        <div class="row">
+          <label class="checkbox">
+            <input type="checkbox" id="smooth_feed" /> Smooth feed
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="live-enabled" checked /> Show live feed
+          </label>
+        </div>
       </div>
       <div id="live-stage" class="roi-stage">
         <img id="live-img" class="hidden" alt="live detection feed" />
@@ -297,9 +302,15 @@
       <p id="live-note" class="muted">Start watching to see the live feed.</p>
       <p class="help">
         A real-time view of what the detector sees, with boxes drawn around any
-        person (green) or cat (orange) as it recognises them. Updates at your
-        scan rate; it streams only while watching and only to browsers with this
-        open, so it costs little. Turn it off on a slow connection.
+        person (green) or cat (orange) as it recognises them. It streams only
+        while watching and only to browsers with this open, so it costs little —
+        turn <em>Show live feed</em> off on a slow connection.
+        <br><strong>Smooth feed</strong> runs a dedicated capture thread so the
+        video plays at the camera's frame rate instead of stuttering at your scan
+        rate (which is gated by detection speed — heavy on a slow CPU / big
+        model). It costs a little extra CPU and reads the camera continuously;
+        leave it off if you only need the occasional frame. Smoothness is still
+        limited by the camera's actual output rate.
       </p>
     </section>
 

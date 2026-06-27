@@ -31,6 +31,7 @@ person_confidence: 0.5    # 0..1; raise to reduce false triggers, lower to catch
 confirm_frames: 4         # require a person in this many frames in a row (cuts false positives, incl. a moving cat's brief high-confidence frame)
 detect_size: 300          # neural-net input size; 300 = reliable for people, 512 = distant cats (more CPU)
 scan_fps: 10.0            # frames/sec read from the camera; lower = less CPU (good for the main feed)
+smooth_live_feed: false   # run a dedicated capture thread so the live GUI feed plays at camera rate (decoupled from inference); a little extra CPU/bandwidth
 roi: null                 # [x, y, w, h] region of interest — set this visually in the GUI
 
 # --- Quiet time (no chimes during this daily window; leave blank to disable) ---

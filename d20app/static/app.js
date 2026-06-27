@@ -225,6 +225,7 @@ async function loadConfig() {
   $("dont_interrupt_playback").checked = !!cfg.dont_interrupt_playback;
   $("keep_speakers_warm").checked = !!cfg.keep_speakers_warm;
   $("pause_during_cooldown").checked = cfg.pause_during_cooldown !== false;
+  $("smooth_feed").checked = !!cfg.smooth_live_feed;
   if (cfg.detector_model) $("detector_model").value = cfg.detector_model;
   if (cfg.accelerator) $("accelerator").value = cfg.accelerator;
   if (cfg.motion_sensitivity) $("motion_sensitivity").value = cfg.motion_sensitivity;
@@ -324,6 +325,7 @@ function gatherConfig() {
     detect_size: Number($("detect_size").value),
     detector_model: $("detector_model").value,
     accelerator: $("accelerator").value,
+    smooth_live_feed: $("smooth_feed").checked,
     scan_fps: Number($("scan_fps").value),
     label_floor: Number($("label_floor").value),
     motion_sensitivity: $("motion_sensitivity").value,
@@ -549,6 +551,17 @@ function wire() {
   $("live-enabled").onchange = () => refreshStatus();
   $("live-img").onerror = () => {
     if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); }
+  };
+
+  // Smooth feed: persist + apply live (the loop reconciles it). Re-point the
+  // <img> so the browser reconnects to the now-faster stream.
+  $("smooth_feed").onchange = async () => {
+    await api("/api/live/smooth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on: $("smooth_feed").checked }),
+    });
+    if (liveOn) { liveOn = false; refreshStatus(); }   // reconnect the stream
   };
 
   $("show-cat").onclick = showCat;

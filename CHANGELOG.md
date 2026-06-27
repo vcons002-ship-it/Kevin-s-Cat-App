@@ -11,6 +11,32 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.11.0] — 2026-06-27
+
+### Added
+- **Smooth live feed** (optional, off by default). A "Smooth feed" checkbox on the
+  Live detection card runs a **dedicated capture thread** that reads the camera
+  continuously, decoupled from inference — so the video plays at the camera's
+  frame rate instead of stuttering at the scan rate (which is gated by detection
+  speed, especially on a slow CPU or the heavier `yolo11m`). Toggles live while
+  watching, and persists.
+  - `detector.py`: a grab thread becomes the **sole** camera reader in smooth
+    mode; the loop samples its latest frame for detection. All capture start/stop
+    is reconciled on the **loop thread** (the web request only sets a desired
+    flag), so the capture never has two readers — important for USB cameras,
+    which can't be opened twice. New `smooth_live_feed` config field.
+  - `/api/stream` now re-encodes only when the frame/box **version** changes
+    (no fixed ~10 fps cap, no duplicate-frame encodes), so the feed runs at
+    whatever rate frames actually arrive. New `POST /api/live/smooth`.
+
+### Notes
+- Smoothness is still bounded by the **camera's real output rate** and the LAN —
+  smooth mode removes the *inference* bottleneck, not those. It costs a little
+  extra CPU and reads the camera continuously; leave it off if you only need the
+  occasional frame.
+- The threading was put through an adversarial multi-lens review (concurrency,
+  lifecycle, regression, edge cases) before merge.
+
 ## [0.10.0] — 2026-06-27
 
 ### Added

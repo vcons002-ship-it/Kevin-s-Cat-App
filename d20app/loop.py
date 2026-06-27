@@ -131,6 +131,22 @@ class DetectionLoop:
         det = self._detector
         return det.live_jpeg() if det is not None else None
 
+    def live_version(self) -> int:
+        """Frame/box version of the running detector (0 if not running)."""
+        det = self._detector
+        return det.live_version() if det is not None else 0
+
+    def set_smooth(self, on: bool) -> None:
+        """Request smooth-feed on/off on the running detector.
+
+        Only sets the desired flag; the loop thread reconciles it on its next
+        frame, so the camera is never read by two threads at once. No-op if the
+        loop isn't running (the saved config takes effect on the next start).
+        """
+        det = self._detector
+        if det is not None:
+            det._smooth_desired = bool(on)
+
     # -- the worker ----------------------------------------------------------
     def _run(self) -> None:
         cfg = config_mod.load()
@@ -162,6 +178,7 @@ class DetectionLoop:
             motion_min_blob_px=cfg.motion_min_blob_px,
             model=cfg.detector_model,
             accelerator=cfg.accelerator,
+            smooth_feed=cfg.smooth_live_feed,
         )
         self._detector = detector          # expose for the live GUI feed
         gate = dice.RollGate(cfg.cooldown_seconds)
