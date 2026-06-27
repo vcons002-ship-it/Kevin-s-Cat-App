@@ -84,6 +84,7 @@ class DetectionLoop:
         self.snapshots = SnapshotStore()
         self._sound_server: SoundServer | None = None
         self._caster: Caster | None = None
+        self._detector: PersonDetector | None = None   # live while running, for the GUI feed
 
     def _caster_for(self, cfg) -> Caster:
         """A single long-lived Caster so speaker connections stay open."""
@@ -120,6 +121,14 @@ class DetectionLoop:
     def is_running(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
 
+    def live_jpeg(self) -> bytes | None:
+        """Current annotated frame from the running detector, for the live feed.
+
+        ``None`` when the loop isn't running or hasn't read a frame yet.
+        """
+        det = self._detector
+        return det.live_jpeg() if det is not None else None
+
     # -- the worker ----------------------------------------------------------
     def _run(self) -> None:
         cfg = config_mod.load()
@@ -152,6 +161,7 @@ class DetectionLoop:
             model=cfg.detector_model,
             accelerator=cfg.accelerator,
         )
+        self._detector = detector          # expose for the live GUI feed
         gate = dice.RollGate(cfg.cooldown_seconds)
 
         # Never echo a password: prefer the friendly name, else the URL with
@@ -172,6 +182,7 @@ class DetectionLoop:
             self.status.last_error = str(exc)
             self.activity.add("error", f"Detection loop crashed: {exc}")
         finally:
+            self._detector = None   # stop serving the live feed once we're done
             detector.release()
             caster.close()          # drop held speaker connections when we stop
             self.status.running = False

@@ -11,6 +11,27 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.9.0] — 2026-06-27
+
+### Added
+- **Live detection feed.** A new "Live detection" card streams a real-time view
+  of what the detector sees — the camera frame with boxes drawn around any person
+  (green) or cat (orange) as they're recognised — instead of only the per-event
+  snapshot thumbnails (which stay, as history). New `GET /api/stream` serves an
+  MJPEG (`multipart/x-mixed-replace`) feed the browser renders directly in an
+  `<img>`; a "Show live feed" toggle turns it off on slow connections.
+
+### Notes
+- The feed **reuses the detection loop's single camera capture** — no second
+  stream or extra decode. Frames are JPEG-encoded only while a browser is
+  watching (capped ~10 fps), so an unwatched feed costs nothing. It's live only
+  while watching (that's when there's recognition to show); stopped shows the
+  still preview.
+- Update rate is bounded by your **scan rate** (the loop reads that often), so on
+  a low `scan_fps` the feed is choppy by design — it shows exactly the frames the
+  net actually analysed. Detection boxes expire ~1.5 s after their last refresh so
+  a subject who has left doesn't leave a box hanging while the video keeps going.
+
 ## [0.8.0] — 2026-06-26
 
 ### Added

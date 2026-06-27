@@ -127,6 +127,16 @@ vanish at 300; raise the setting to **512** ("High") to recover across-the-room
 cats, at more CPU and a small hit to some person poses. People in hats, helmets,
 and headgear, and people with their back to the camera, all detect reliably.
 
+### Live detection feed
+
+While watching, the **Live detection** card shows a real-time view of what the
+detector sees — the camera frame with boxes drawn around any person (green) or
+cat (orange) as they're recognised. It reuses the same camera capture the loop is
+already running (no second stream), updates at your scan rate, and streams only
+while watching and only to browsers with the page open — untick **Show live
+feed** on a slow connection. It's the quickest way to confirm framing and that
+recognition is actually firing.
+
 ### Snapshots & taming false positives
 
 Every detection event in the Activity log carries an **annotated snapshot** — a

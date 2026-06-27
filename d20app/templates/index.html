@@ -268,6 +268,25 @@
 
     <section class="card">
       <div class="row log-head">
+        <h2>Live detection</h2>
+        <label class="checkbox">
+          <input type="checkbox" id="live-enabled" checked /> Show live feed
+        </label>
+      </div>
+      <div id="live-stage" class="roi-stage">
+        <img id="live-img" class="hidden" alt="live detection feed" />
+      </div>
+      <p id="live-note" class="muted">Start watching to see the live feed.</p>
+      <p class="help">
+        A real-time view of what the detector sees, with boxes drawn around any
+        person (green) or cat (orange) as it recognises them. Updates at your
+        scan rate; it streams only while watching and only to browsers with this
+        open, so it costs little. Turn it off on a slow connection.
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="row log-head">
         <h2>Activity log</h2>
         <button id="log-clear" class="ghost" type="button">Clear</button>
       </div>

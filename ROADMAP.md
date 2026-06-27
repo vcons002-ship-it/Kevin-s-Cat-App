@@ -44,6 +44,8 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 
 ### Activity log & observability
 - **Persistent, file-backed** event log (survives restarts), colour-coded.
+- **Live detection feed** — a real-time MJPEG view of what the detector sees,
+  with person/cat boxes drawn as they're recognised (reuses the loop's capture).
 - **Annotated snapshots** on every detection — boxes around the person/cat,
   shown as clickable thumbnails — the fastest way to debug false positives.
 - **"Camera connected (W×H)"** heartbeat so a running-but-idle loop isn't silent.
@@ -54,10 +56,11 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **99 automated tests**, including a detection-accuracy regression guard over
+- **104 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
-  CPU fallback), local USB camera + local PC speaker routing, and
+  CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route),
+  local USB camera + local PC speaker routing, and
   saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
@@ -100,7 +103,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [x] **Saved cameras** — add several (with credentials) and switch the active
       feed from a dropdown. (Watching *several at once* is still future work.)
 - [x] **Local USB / built-in webcam** on the machine running the app.
-- [ ] **Live MJPEG preview** stream in the GUI (not just a grabbed still).
+- [x] **Live MJPEG feed** in the GUI — a real-time "Live detection" view with
+      person/cat boxes drawn as they're recognised (0.9.0), reusing the loop's
+      single capture. (A still-grab preview remains for the ROI picker.)
 - [ ] **Touch support** for the ROI picker on phones.
 
 ### App & ops
