@@ -91,9 +91,54 @@ footer { margin-top: 20px; }
   position: absolute; left: 0; top: 0;
   cursor: crosshair; touch-action: none;
 }
+/* Beat `.roi-stage img { display: block }` so a hidden (src-less) feed image
+   doesn't render as a broken-image icon. */
+.roi-stage img.hidden { display: none; }
+
+/* Status bar: push Start/Stop to the right */
+.status-spacer { flex: 1 1 auto; }
+
+/* Divider before the settings block */
+.section-divider {
+  margin: 28px 0 4px; padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-size: 1.05rem; font-weight: 700;
+}
+.section-divider .muted { font-weight: 400; font-size: 0.85rem; }
+
+/* Cat cam — the star of the page */
+.cats-card { text-align: center; }
+.cats-card h2 { font-size: 1.5rem; }
+.cats-card .help { text-align: left; }
+.cats-foot { display: flex; justify-content: center; margin-top: 4px; }
+
+.show-cat {
+  display: inline-flex; align-items: center; justify-content: center; gap: 14px;
+  margin: 6px auto 14px; padding: 22px 44px;
+  font-size: 1.5rem; font-weight: 800; letter-spacing: 0.2px;
+  color: #2a1c00; border: none; border-radius: 999px; cursor: pointer;
+  background: linear-gradient(135deg, #ffd86b, #ff9f43);
+  box-shadow: 0 8px 22px rgba(255, 159, 67, 0.45);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.show-cat:hover { transform: translateY(-2px) scale(1.03); box-shadow: 0 12px 28px rgba(255, 159, 67, 0.55); }
+.show-cat:active { transform: translateY(1px) scale(0.97); }
+.show-cat-emoji { font-size: 1.9rem; line-height: 1; }
+
+/* Flash + bounce while a cat is actually on camera right now */
+.show-cat.detecting { animation: catflash 0.7s ease-in-out infinite; }
+.show-cat.detecting .show-cat-emoji { animation: catbounce 0.7s ease-in-out infinite; }
+@keyframes catflash {
+  0%, 100% { background: linear-gradient(135deg, #ffd86b, #ff9f43); box-shadow: 0 0 0 0 rgba(67, 209, 122, 0.7); }
+  50%      { background: linear-gradient(135deg, #b6f7a0, #43d17a); box-shadow: 0 0 0 16px rgba(67, 209, 122, 0); }
+}
+@keyframes catbounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px) rotate(-6deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .show-cat.detecting, .show-cat.detecting .show-cat-emoji { animation: none; outline: 3px solid var(--go); }
+}
 
 /* Cat sightings */
-.cat-last { display: flex; gap: 14px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+.cat-last { display: flex; gap: 14px; align-items: center; justify-content: center; margin: 10px 0; flex-wrap: wrap; }
 .cat-thumb {
   width: 180px; max-width: 45%; height: auto;
   border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in;

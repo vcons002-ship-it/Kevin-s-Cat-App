@@ -136,6 +136,11 @@ class DetectionLoop:
         det = self._detector
         return det.live_version() if det is not None else 0
 
+    def cat_present(self) -> bool:
+        """True if a cat is on camera right now (for the flashing Show-cat button)."""
+        det = self._detector
+        return det.cat_present() if det is not None else False
+
     def set_smooth(self, on: bool) -> None:
         """Request smooth-feed on/off on the running detector.
 

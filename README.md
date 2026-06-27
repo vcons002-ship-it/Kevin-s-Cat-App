@@ -148,12 +148,16 @@ camera's actual output rate and your network.
 ### Tracking cats ("Show cat")
 
 Cats never earn a treat — only people roll — but they're no longer just ignored.
-Every cat sighting is recorded in the **Cats** card: **when** it was seen, on
-**which camera**, and roughly **where** in the frame (e.g. *bottom-left*), with an
-annotated snapshot. **Show cat** pulls up the live feed of the camera that saw it
-(one camera today; the right camera once watching several at once lands). Sightings
-share the same throttle and snapshots as the activity log, so a pacing cat won't
-spam anything.
+The **🐱 Cat cam** card sits at the top of the page: a big **Show me the cat!**
+button that **flashes green while a cat is on camera right now**, plus the latest
+sighting — **when** it was seen, on **which camera**, and roughly **where** in the
+frame (e.g. *bottom-left*), with an annotated snapshot. Tapping the button pulls up
+the live feed of the camera that saw it (one camera today; the right camera once
+watching several at once lands). Sightings share the same throttle and snapshots as
+the activity log, so a pacing cat won't spam anything.
+
+The camera/speaker/rules **setup lives below** the cat cam, live feed, and activity
+log — it's saved to `config.yaml`, so you set it once and rarely touch it again.
 
 ### Snapshots & taming false positives
 

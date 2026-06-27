@@ -407,6 +407,15 @@ function updateLiveView(running) {
 async function loadCats() {
   const { body } = await api("/api/cats");
   if (!body) return;
+  // Flash the big button while a cat is actually on camera right now.
+  const btn = $("show-cat"), label = $("show-cat-label");
+  if (body.present) {
+    btn.classList.add("detecting");
+    label.textContent = "Cat spotted — show me!";
+  } else {
+    btn.classList.remove("detecting");
+    label.textContent = "Show me the cat!";
+  }
   const box = $("cat-last");
   if (!body.last) {
     box.innerHTML = '<p class="muted">No cats seen yet.</p>';
@@ -587,7 +596,8 @@ async function init() {
   loadLog();
   loadCats();
   loadVersion();
-  setInterval(() => { refreshStatus(); loadLog(); loadCats(); }, 3000);
+  setInterval(() => { refreshStatus(); loadLog(); }, 3000);
+  setInterval(loadCats, 1200);   // faster, so the Show-cat button flashes near real-time
 }
 
 init();

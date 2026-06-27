@@ -17,7 +17,74 @@
       <span id="status-dot" class="dot stopped"></span>
       <span id="status-text">Stopped</span>
       <span id="status-detail" class="muted"></span>
+      <span class="status-spacer"></span>
+      <button id="start-btn" class="go" type="button">Start watching</button>
+      <button id="stop-btn" class="stop" type="button" disabled>Stop</button>
     </section>
+
+    <!-- ===== Cat cam: the star of the show ===== -->
+    <section class="card cats-card" id="cats-card">
+      <h2>🐱 Cat cam</h2>
+      <button id="show-cat" class="show-cat" type="button">
+        <span class="show-cat-emoji" aria-hidden="true">🐱</span>
+        <span id="show-cat-label">Show me the cat!</span>
+      </button>
+      <div id="cat-last" class="cat-last"><p class="muted">No cats seen yet.</p></div>
+      <div class="cats-foot">
+        <button id="cats-clear" class="ghost" type="button">Clear log</button>
+      </div>
+      <p class="help">
+        Cats never trigger a treat — only people roll — but every sighting is
+        tracked here: <strong>when</strong>, on <strong>which camera</strong>, and
+        roughly <strong>where</strong> in the frame. The button <strong>flashes
+        when a cat is on camera right now</strong>; tap it to pull up the live feed
+        of the camera that saw it (one camera today; the right camera once multiple
+        are supported).
+      </p>
+    </section>
+
+    <!-- ===== Live feed ===== -->
+    <section class="card">
+      <div class="row log-head">
+        <h2>Live detection</h2>
+        <div class="row">
+          <label class="checkbox">
+            <input type="checkbox" id="smooth_feed" /> Smooth feed
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="live-enabled" checked /> Show live feed
+          </label>
+        </div>
+      </div>
+      <div id="live-stage" class="roi-stage">
+        <img id="live-img" class="hidden" alt="live detection feed" />
+      </div>
+      <p id="live-note" class="muted">Start watching to see the live feed.</p>
+      <p class="help">
+        A real-time view of what the detector sees, with boxes drawn around any
+        person (green) or cat (orange) as it recognises them. It streams only
+        while watching and only to browsers with this open, so it costs little —
+        turn <em>Show live feed</em> off on a slow connection.
+        <br><strong>Smooth feed</strong> runs a dedicated capture thread so the
+        video plays at the camera's frame rate instead of stuttering at your scan
+        rate (which is gated by detection speed — heavy on a slow CPU / big
+        model). It costs a little extra CPU and reads the camera continuously;
+        leave it off if you only need the occasional frame. Smoothness is still
+        limited by the camera's actual output rate.
+      </p>
+    </section>
+
+    <!-- ===== Activity log ===== -->
+    <section class="card">
+      <div class="row log-head">
+        <h2>Activity log</h2>
+        <button id="log-clear" class="ghost" type="button">Clear</button>
+      </div>
+      <div id="log-list" class="log-list"><p class="muted">No activity yet.</p></div>
+    </section>
+
+    <!-- ===== Setup & settings (saved — set once, rarely touched) ===== -->
+    <h2 class="section-divider">⚙ Setup &amp; settings <span class="muted">— saved automatically; set these once</span></h2>
 
     <section class="card">
       <h2>1. Camera <span class="muted">(where to watch for a person)</span></h2>
@@ -261,65 +328,7 @@
 
     <section class="actions">
       <button id="save-btn" class="primary" type="button">Save settings</button>
-      <button id="start-btn" class="go" type="button">Start watching</button>
-      <button id="stop-btn" class="stop" type="button" disabled>Stop</button>
       <span id="save-note" class="muted"></span>
-    </section>
-
-    <section class="card" id="cats-card">
-      <div class="row log-head">
-        <h2>🐱 Cats</h2>
-        <div class="row">
-          <button id="show-cat" class="primary" type="button">Show cat</button>
-          <button id="cats-clear" class="ghost" type="button">Clear</button>
-        </div>
-      </div>
-      <div id="cat-last" class="cat-last"><p class="muted">No cats seen yet.</p></div>
-      <p class="help">
-        Cats never trigger a treat — only people roll — but every sighting is
-        tracked here: <strong>when</strong>, on <strong>which camera</strong>, and
-        roughly <strong>where</strong> in the frame. <strong>Show cat</strong>
-        pulls up the live feed of the camera that saw it (one camera today; the
-        right camera once multiple are supported).
-      </p>
-    </section>
-
-    <section class="card">
-      <div class="row log-head">
-        <h2>Live detection</h2>
-        <div class="row">
-          <label class="checkbox">
-            <input type="checkbox" id="smooth_feed" /> Smooth feed
-          </label>
-          <label class="checkbox">
-            <input type="checkbox" id="live-enabled" checked /> Show live feed
-          </label>
-        </div>
-      </div>
-      <div id="live-stage" class="roi-stage">
-        <img id="live-img" class="hidden" alt="live detection feed" />
-      </div>
-      <p id="live-note" class="muted">Start watching to see the live feed.</p>
-      <p class="help">
-        A real-time view of what the detector sees, with boxes drawn around any
-        person (green) or cat (orange) as it recognises them. It streams only
-        while watching and only to browsers with this open, so it costs little —
-        turn <em>Show live feed</em> off on a slow connection.
-        <br><strong>Smooth feed</strong> runs a dedicated capture thread so the
-        video plays at the camera's frame rate instead of stuttering at your scan
-        rate (which is gated by detection speed — heavy on a slow CPU / big
-        model). It costs a little extra CPU and reads the camera continuously;
-        leave it off if you only need the occasional frame. Smoothness is still
-        limited by the camera's actual output rate.
-      </p>
-    </section>
-
-    <section class="card">
-      <div class="row log-head">
-        <h2>Activity log</h2>
-        <button id="log-clear" class="ghost" type="button">Clear</button>
-      </div>
-      <div id="log-list" class="log-list"><p class="muted">No activity yet.</p></div>
     </section>
 
     <footer>

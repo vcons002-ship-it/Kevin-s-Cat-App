@@ -59,7 +59,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **117 automated tests**, including a detection-accuracy regression guard over
+- **118 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and

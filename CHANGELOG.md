@@ -11,7 +11,26 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
-## [0.11.0] — 2026-06-27
+## [0.12.0] — 2026-06-27
+
+### Changed
+- **GUI reorganised around the cat.** The page now leads with the running
+  controls (Start/Stop in the status bar) and a prominent **🐱 Cat cam** card,
+  followed by the live feed and the activity log. All the camera/speaker/rules
+  **setup moves to the bottom under a "Setup & settings" divider** — it's saved
+  and rarely touched, so it no longer dominates the page.
+- **Big, fun "Show me the cat!" button** that **flashes green and bounces while a
+  cat is actually on camera right now** (and reads "Cat spotted — show me!").
+  Tapping it still pulls up the live feed.
+
+### Added
+- `cat_present` signal: `GET /api/cats` now returns `present` (a cat is on camera
+  this moment, via a fresh cat box above the label floor). The GUI polls it ~1 s
+  for a near-real-time flash. Respects `prefers-reduced-motion`.
+
+### Fixed
+- The live-feed image no longer renders as a broken-image icon when stopped
+  (a CSS specificity slip let `.roi-stage img` override `.hidden`).
 
 ### Added
 - **Smooth live feed** (optional, off by default). A "Smooth feed" checkbox on the
