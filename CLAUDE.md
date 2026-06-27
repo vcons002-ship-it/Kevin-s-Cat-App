@@ -8,7 +8,7 @@ Flask single-page GUI configures and runs it. CPU-only, no Docker, no cloud, no 
 
 ## Run / test
 - Python 3.11+. Virtualenv at `./venv`.
-- Tests: `./venv/bin/python -m pytest -q` (currently ~115 tests; keep them green).
+- Tests: `./venv/bin/python -m pytest -q` (currently ~117 tests; keep them green).
 - Launch: `./venv/bin/python run.py` → prints a `http://<lan-ip>:8080` GUI URL.
 - Setup: `setup.sh` (Linux/apt) or `setup.ps1` / `setup.bat` (Windows), `start.bat`
   to launch on Windows.

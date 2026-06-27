@@ -35,7 +35,12 @@ _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
   extra CPU and reads the camera continuously; leave it off if you only need the
   occasional frame.
 - The threading was put through an adversarial multi-lens review (concurrency,
-  lifecycle, regression, edge cases) before merge.
+  lifecycle, regression, edge cases) before merge, which hardened the
+  stalled-camera paths: the grab thread self-heals if it ever dies while smooth
+  is on, a camera that dies *after* a good frame is now surfaced to the loop
+  (not silently frozen on the stale frame), a wedged grabber on toggle-off keeps
+  reading rather than exiting, and shutdown never releases the capture out from
+  under an in-flight read.
 
 ## [0.10.0] — 2026-06-27
 

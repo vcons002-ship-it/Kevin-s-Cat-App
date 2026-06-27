@@ -59,12 +59,13 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **115 automated tests**, including a detection-accuracy regression guard over
+- **117 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
   the smooth-feed capture thread (toggle reconcile, version gating, error
-  surfacing), cat-sighting tracking (region labels, store persistence,
+  surfacing, watchdog respawn, camera-death detection), cat-sighting tracking
+  (region labels, store persistence,
   `/api/cats`), local USB camera + local PC speaker routing, and
   saved-camera/cooldown-pause/keep-warm coverage.
 

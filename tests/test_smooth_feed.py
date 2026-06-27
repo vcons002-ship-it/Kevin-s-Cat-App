@@ -37,6 +37,28 @@ class FakeCap:
         self._open = False
 
 
+class DyingCap:
+    """Hands out `good` real frames, then fails every read after that."""
+
+    def __init__(self, good=2):
+        self._open = True
+        self._left = good
+        self._lock = threading.Lock()
+
+    def isOpened(self):
+        return self._open
+
+    def read(self):
+        with self._lock:
+            if self._left > 0:
+                self._left -= 1
+                return True, np.full((48, 64, 3), 7, dtype=np.uint8)
+        return False, None
+
+    def release(self):
+        self._open = False
+
+
 def _detector_with_fake_cap(monkeypatch, **kw):
     det = PersonDetector(source="usb:0", confidence=0.4, model="mobilenet_ssd", **kw)
     cap = FakeCap()
@@ -109,6 +131,50 @@ def test_smooth_mode_surfaces_a_grab_error_to_the_loop(monkeypatch):
                 raised = True
             time.sleep(0.05)
         assert raised                            # the loop sees the camera failure
+    finally:
+        det.release()
+
+
+def test_smooth_mode_surfaces_a_camera_that_dies_after_a_good_frame(monkeypatch):
+    # Regression: the grab thread holds the last good frame, so the loop must still
+    # learn the camera died (otherwise detection silently freezes on a stale frame).
+    det = PersonDetector(source="usb:0", confidence=0.4,
+                         model="mobilenet_ssd", smooth_feed=True)
+    cap = DyingCap(good=2)
+    monkeypatch.setattr(det, "_ensure_cap", lambda: cap)
+    monkeypatch.setattr(det, "_GRAB_STALE_SECONDS", 0.3)   # don't wait the full 2s
+    det._cap = cap
+    try:
+        det.read_and_detect(detect=False)        # starts grabber; it gets ~2 frames
+        deadline = time.time() + 3.0
+        raised = False
+        while not raised and time.time() < deadline:
+            try:
+                det.read_and_detect(detect=False)
+            except CameraError:
+                raised = True
+            time.sleep(0.05)
+        assert raised                             # stale frame + grab error -> surfaced
+    finally:
+        det.release()
+
+
+def test_smooth_watchdog_respawns_a_dead_grabber(monkeypatch):
+    det, cap = _detector_with_fake_cap(monkeypatch, smooth_feed=True)
+    try:
+        det.read_and_detect(detect=False)         # starts the grabber
+        assert det._grab_thread is not None and det._grab_thread.is_alive()
+
+        # Simulate the grabber dying without a clean reconcile (the wedged-then-
+        # unwedged case): kill it but leave smooth_feed True.
+        original = det._grab_thread
+        det._grab_stop.set()
+        original.join(timeout=2)
+        assert not original.is_alive()
+
+        det.read_and_detect(detect=False)         # watchdog must respawn it
+        assert det._grab_thread is not None and det._grab_thread.is_alive()
+        assert det._grab_thread is not original
     finally:
         det.release()
 

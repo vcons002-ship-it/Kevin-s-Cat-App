@@ -281,6 +281,7 @@ class PersonDetector:
         # request thread reads them while the loop (or grab thread) writes.
         self._live_frame = None
         self._live_boxes_at = 0.0
+        self._live_published_at = 0.0   # monotonic time of the last frame publish
         self._live_version = 0
         self._live_lock = threading.Lock()
         # Smooth feed: when on, a dedicated thread reads the camera continuously so
@@ -296,6 +297,7 @@ class PersonDetector:
         self._grab_thread = None
         self._grab_stop = threading.Event()
         self._grab_error = ""
+        self._grab_fails = 0    # grab thread's own empty-read counter (not shared)
         self._motion = MotionPrefilter(
             min_area_frac=motion_min_area_frac,
             diff_threshold=motion_diff_threshold,
@@ -459,6 +461,11 @@ class PersonDetector:
     # enough that boxes don't linger over an empty frame once a subject leaves.
     _LIVE_BOX_TTL = 1.5
 
+    # In smooth mode, how long the published frame may go un-refreshed while the
+    # grab thread reports an error before we surface that error to the loop (so a
+    # camera that dies after a good frame is still noticed, not silently frozen).
+    _GRAB_STALE_SECONDS = 2.0
+
     def live_jpeg(self) -> bytes | None:
         """JPEG of the most recent frame, with recent detection boxes overlaid.
 
@@ -508,6 +515,7 @@ class PersonDetector:
             self._live_frame = frame
             self.frame_size = (frame.shape[1], frame.shape[0])
             self._live_version += 1
+            self._live_published_at = time.monotonic()
 
     # -- smooth feed: a dedicated capture thread ----------------------------
     def _grab_loop(self) -> None:
@@ -528,9 +536,11 @@ class PersonDetector:
                 self._grab_stop.wait(1.0)
                 continue
             ok, frame = cap.read()
+            if self._grab_stop.is_set():
+                break                       # stop requested during the blocking read
             if not ok or frame is None:
-                self._read_fails += 1
-                if self._read_fails >= 3:
+                self._grab_fails += 1       # own counter — not shared with the sync path
+                if self._grab_fails >= 3:
                     with self._live_lock:
                         self._grab_error = (
                             f"lost the camera stream {mask_credentials(self.source)} "
@@ -539,11 +549,22 @@ class PersonDetector:
                     self._cap = None        # force a reconnect next iteration
                 self._grab_stop.wait(0.1)
                 continue
-            self._read_fails = 0
+            self._grab_fails = 0
             if self._grab_error:
                 with self._live_lock:
                     self._grab_error = ""
             self._publish_frame(frame)
+
+    def _start_grab(self) -> None:
+        """Spawn the grab thread (loop thread only). Resets its retry/error state."""
+        self._grab_stop.clear()
+        self._grab_fails = 0
+        with self._live_lock:
+            self._grab_error = ""
+        self._grab_thread = threading.Thread(
+            target=self._grab_loop, name="cam-grab", daemon=True
+        )
+        self._grab_thread.start()
 
     def _apply_smooth(self, desired: bool) -> None:
         """Start or stop the grab thread. **Loop thread only**, so the capture is
@@ -552,12 +573,7 @@ class PersonDetector:
         flag and lets the loop reconcile it here).
         """
         if desired and not self.smooth_feed:
-            self._grab_stop.clear()
-            self._grab_error = ""
-            self._grab_thread = threading.Thread(
-                target=self._grab_loop, name="cam-grab", daemon=True
-            )
-            self._grab_thread.start()
+            self._start_grab()
             self.smooth_feed = True
             _log.info("Smooth live feed ON (dedicated capture thread)")
         elif not desired and self.smooth_feed:
@@ -566,10 +582,14 @@ class PersonDetector:
             if thread is not None:
                 thread.join(timeout=5)
                 if thread.is_alive():
-                    # The grabber is wedged in a blocking read (stalled camera);
-                    # stay in smooth mode rather than risk two readers on the cap.
-                    _log.warning("Smooth-feed grab thread didn't stop — staying smooth")
+                    # The grabber is wedged in a blocking read (stalled camera).
+                    # Keep it as the live reader rather than risk two readers, and
+                    # **clear the stop** so it doesn't silently exit when its read
+                    # returns (which would freeze the feed with no reader). The
+                    # user can toggle off again once the camera unwedges.
+                    self._grab_stop.clear()
                     self._smooth_desired = True
+                    _log.warning("Smooth-feed grab thread didn't stop — staying smooth")
                     return
             self._grab_thread = None
             self._read_fails = 0
@@ -599,11 +619,20 @@ class PersonDetector:
             self._apply_smooth(self._smooth_desired)
 
         if self.smooth_feed:
+            # Self-heal: if the grabber died (e.g. it unwedged after a stop while
+            # the stop event was briefly set), respawn it so the feed never stays
+            # frozen with no reader.
+            if self._grab_thread is None or not self._grab_thread.is_alive():
+                self._start_grab()
             # The grab thread is the sole reader; sample its latest frame.
             with self._live_lock:
                 frame = self._live_frame
                 err = self._grab_error
-            if frame is None:
+                age = time.monotonic() - self._live_published_at
+            # Surface a persistent failure even while a stale frame is still held
+            # (the camera died after a good frame) — mirrors the sync path's
+            # "give up after a run of empty reads" so the loop can report it.
+            if frame is None or (err and age >= self._GRAB_STALE_SECONDS):
                 if err:
                     raise CameraError(err)
                 return FrameOutcome(motion=False, person=False)   # warming up
@@ -653,9 +682,17 @@ class PersonDetector:
         # Stop the grab thread (if any) before releasing the capture it reads.
         self._grab_stop.set()
         thread = self._grab_thread
+        still_alive = False
         if thread is not None:
             thread.join(timeout=5)
+            still_alive = thread.is_alive()
         self._grab_thread = None
+        if still_alive:
+            # The grabber is wedged in a blocking read on self._cap; releasing the
+            # capture out from under it is cv2/FFmpeg undefined behaviour. It's a
+            # daemon thread, so leak the capture — the process reclaims it on exit.
+            _log.warning("Smooth-feed grab thread didn't stop — leaking the capture")
+            return
         if self._cap is not None:
             self._cap.release()
             self._cap = None
