@@ -155,3 +155,24 @@ def test_read_and_detect_skips_net_when_paused():
     out = det.read_and_detect(detect=False)
     assert out.motion is False and out.person is False
     assert det.frame_size == (60, 40)        # the frame was still read
+
+
+def test_read_and_detect_force_runs_net_without_motion():
+    # The periodic still-cat scan: force=True runs the net even when nothing moved
+    # (motion stays False), surfaces the cat label, and stamps cat_last_seen so the
+    # GUI flash can persist between scans.
+    det = detector.PersonDetector(source="unused")
+    frame = np.zeros((40, 60, 3), dtype=np.uint8)
+
+    class _FakeCap:
+        def read(self):
+            return True, frame
+
+    det._ensure_cap = lambda: _FakeCap()
+    # No motion (a static frame), but the forced scan still classifies it as a cat.
+    det._detect_boxes = lambda *a, **k: [("cat", 0.9, (1, 1, 9, 9))]
+
+    out = det.read_and_detect(detect=False, force=True)
+    assert out.motion is False            # the pre-filter didn't fire...
+    assert "cat" in out.labels            # ...but the net ran and saw the cat
+    assert det.cat_last_seen() > 0.0      # stamped for the flash window

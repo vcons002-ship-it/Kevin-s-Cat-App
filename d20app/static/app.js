@@ -348,6 +348,8 @@ async function loadConfig() {
   $("keep_speakers_warm").checked = !!cfg.keep_speakers_warm;
   $("pause_during_cooldown").checked = cfg.pause_during_cooldown !== false;
   $("smooth_feed").checked = !!cfg.smooth_live_feed;
+  if ($("cat_scan_interval") && cfg.cat_scan_interval !== undefined && cfg.cat_scan_interval !== null)
+    $("cat_scan_interval").value = String(cfg.cat_scan_interval);
   $("use_speech").checked = !!cfg.use_speech;
   if (cfg.speech_text) $("speech_text").value = cfg.speech_text;
   applySpeechVisibility();
@@ -376,6 +378,7 @@ function gatherConfig() {
     dc: Number($("dc").value),
     cooldown_seconds: Number($("cooldown_seconds").value),
     pause_during_cooldown: $("pause_during_cooldown").checked,
+    cat_scan_interval: Number($("cat_scan_interval").value),
     quiet_start: $("quiet_start").value,
     quiet_end: $("quiet_end").value,
     dont_interrupt_playback: $("dont_interrupt_playback").checked,
@@ -451,12 +454,24 @@ function updateLiveView(running) {
 }
 
 // ---- cat sightings ("show cat") --------------------------------------------
+// Rotation: when Show-cat is engaged and >1 camera is seeing a cat, cycle the
+// live feed between those rooms. `catRotate` is armed by showCat() and disarmed
+// when the user picks a camera manually.
+let catRotate = false, catCams = [], catRotateIdx = 0;
+
+const watchableCam = (name) =>
+  Array.from($("live-camera").options).some((o) => o.value === name);
+
 async function loadCats() {
   const { body } = await api("/api/cats");
   if (!body) return;
+  if (catRotate) catCams = (body.cameras || []).filter(watchableCam);
   const btn = $("show-cat"), label = $("show-cat-label");
-  if (body.present) { btn.classList.add("detecting"); label.textContent = "Cat spotted — show me!"; }
-  else { btn.classList.remove("detecting"); label.textContent = "Show me the cat!"; }
+  const n = (body.cameras || []).length;
+  if (body.present) {
+    btn.classList.add("detecting");
+    label.textContent = n > 1 ? `Cats in ${n} rooms — show me!` : "Cat spotted — show me!";
+  } else { btn.classList.remove("detecting"); label.textContent = "Show me the cat!"; }
   const box = $("cat-last");
   if (!body.last) { box.innerHTML = '<p class="muted">No cats seen yet.</p>'; return; }
   const s = body.last;
@@ -475,15 +490,34 @@ async function loadCats() {
 
 async function showCat() {
   const { body } = await api("/api/cats");
-  // Point the live feed at the camera that saw the cat, if it's being watched.
-  const cam = body && body.last && body.last.camera;
   const sel = $("live-camera");
-  if (cam && Array.from(sel.options).some((o) => o.value === cam)) sel.value = cam;
+  // Prefer a camera seeing a cat right now; fall back to the last sighting's camera.
+  const present = (body && body.cameras) || [];
+  const last = body && body.last && body.last.camera;
+  const pick = present.find(watchableCam)
+    || (last && watchableCam(last) ? last : null);
+  if (pick) sel.value = pick;
+  // Arm rotation only if more than one room has a cat right now.
+  catCams = present.filter(watchableCam);
+  catRotate = catCams.length > 1;
+  catRotateIdx = Math.max(0, catCams.indexOf(pick));
   await loadCats();
   $("live-enabled").checked = true;
+  if (liveOn) liveOn = false;          // force the feed to re-point at the chosen camera
   await refreshStatus();
   const target = isRunning ? "live-stage" : "cat-last";
   $(target).scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// Cycle the live feed between rooms that currently have a cat (when armed).
+function rotateCatFeed() {
+  if (!catRotate || !liveOn || catCams.length < 2) return;
+  catRotateIdx = (catRotateIdx + 1) % catCams.length;
+  const name = catCams[catRotateIdx];
+  if (!watchableCam(name)) return;
+  $("live-camera").value = name;
+  liveOn = false;                      // force updateLiveView to re-point the stream
+  updateLiveView(isRunning);
 }
 
 // ---- activity log ----------------------------------------------------------
@@ -596,7 +630,8 @@ function wire() {
   };
 
   $("live-enabled").onchange = () => refreshStatus();
-  $("live-camera").onchange = () => { if (liveOn) { liveOn = false; } refreshStatus(); };
+  $("live-camera").onchange = () => { catRotate = false; if (liveOn) { liveOn = false; } refreshStatus(); };
+  $("cat_scan_interval").onchange = saveConfig;
   $("live-img").onerror = () => { if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); } };
   $("smooth_feed").onchange = async () => {
     await api("/api/live/smooth", postJSON({ on: $("smooth_feed").checked }));
@@ -622,6 +657,7 @@ async function init() {
   loadVersion();
   setInterval(() => { refreshStatus(); loadLog(); }, 3000);
   setInterval(loadCats, 1200);
+  setInterval(rotateCatFeed, 4000);   // rotate among rooms with a cat when armed
 }
 
 init();

@@ -281,6 +281,7 @@ class PersonDetector:
         # request thread reads them while the loop (or grab thread) writes.
         self._live_frame = None
         self._live_boxes_at = 0.0
+        self._cat_last_seen = 0.0       # monotonic time the net last saw a cat (any motion)
         self._live_published_at = 0.0   # monotonic time of the last frame publish
         self._live_version = 0
         self._live_lock = threading.Lock()
@@ -522,6 +523,16 @@ class PersonDetector:
             lab == "cat" and score >= self.label_floor for lab, score, _ in boxes
         )
 
+    def cat_last_seen(self) -> float:
+        """Monotonic time the net last detected a cat (0.0 if never).
+
+        Unlike :meth:`cat_present` (a short, box-TTL window), this isn't bounded —
+        the loop decides the freshness window so a *still* cat re-found by a periodic
+        forced scan keeps the GUI's flash on between scans.
+        """
+        with self._live_lock:
+            return self._cat_last_seen
+
     def _publish_frame(self, frame) -> None:
         """Store the latest raw frame for the live feed and bump the version."""
         with self._live_lock:
@@ -609,7 +620,7 @@ class PersonDetector:
             self.smooth_feed = False
             _log.info("Smooth live feed OFF")
 
-    def read_and_detect(self, detect: bool = True) -> FrameOutcome:
+    def read_and_detect(self, detect: bool = True, force: bool = False) -> FrameOutcome:
         """Grab one frame, apply the motion pre-filter, then classify it.
 
         Returns a :class:`FrameOutcome`. ``motion`` is False when nothing moved
@@ -623,6 +634,11 @@ class PersonDetector:
         but the neural net is **skipped** entirely and a neutral, no-motion
         outcome is returned. The loop uses this to idle cheaply during the
         between-rolls cooldown, when nothing the net sees could trigger anyway.
+
+        With ``force=True`` the net runs **even when nothing moved** (and even when
+        ``detect`` is False), returning the real ``person``/``labels`` with
+        ``motion=False``. This is the periodic still-cat scan: a sleeping cat makes
+        no motion to trip the pre-filter, so the loop forces an occasional look.
         """
         import cv2
 
@@ -671,14 +687,20 @@ class PersonDetector:
         cropped = self._crop(frame)
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         moved = self._motion.update(gray)      # keep the baseline fresh even when paused
-        if not detect or not moved:
+        # Run the net on real motion, or when a forced still-cat scan asks for it.
+        if not force and (not detect or not moved):
             return FrameOutcome(motion=False, person=False)
 
         boxes = self._detect_boxes(frame, floor=min(self.label_floor, self.confidence))
         self._last_frame = cropped             # what the net saw (box coords match)
+        now = time.monotonic()
+        cat_seen = any(lab == "cat" and score >= self.label_floor
+                       for lab, score, _ in boxes)
         with self._live_lock:
             self._last_boxes = boxes           # fresh detections (possibly empty)
-            self._live_boxes_at = time.monotonic()
+            self._live_boxes_at = now
+            if cat_seen:
+                self._cat_last_seen = now
             self._live_version += 1            # boxes changed → stream re-renders
         person = self._best(boxes, "person") >= self.confidence
         # Identify non-person movers (cats!) at the label floor — lower than a
@@ -689,7 +711,9 @@ class PersonDetector:
             for label, score, _ in sorted(boxes, key=lambda b: -b[1])
             if label != "person" and score >= self.label_floor
         )
-        return FrameOutcome(motion=True, person=person, labels=labels)
+        # ``motion`` reflects the pre-filter: False on a forced still-cat scan, so
+        # the loop knows not to treat a forced look as real movement (it never rolls).
+        return FrameOutcome(motion=moved, person=person, labels=labels)
 
     def release(self) -> None:
         # Stop the grab thread (if any) before releasing the capture it reads.

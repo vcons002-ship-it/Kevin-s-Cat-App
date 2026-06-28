@@ -47,6 +47,9 @@ scan_fps: 10.0            # frames/sec read from the camera; lower = less CPU (g
 smooth_live_feed: false   # run a dedicated capture thread so the live GUI feed plays at camera rate (decoupled from inference); a little extra CPU/bandwidth
 roi: null                 # [x, y, w, h] region of interest — set this visually in the GUI
 
+# --- Cat check (a still/sleeping cat makes no motion to trip the net) ---
+cat_scan_interval: 30.0   # how often (sec) a cat-tracking camera runs the net even with NO motion, to catch a sleeping cat: >0 = every N seconds (30 default), 0 = always on (net every frame, most CPU), <0 = off (motion only)
+
 # --- Quiet time (no chimes during this daily window; leave blank to disable) ---
 quiet_start: ""           # "HH:MM" 24h, e.g. "22:00"
 quiet_end: ""             # "HH:MM" 24h, e.g. "07:00" (may wrap past midnight)

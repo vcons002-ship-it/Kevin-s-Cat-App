@@ -72,6 +72,33 @@ def _cooldown_resume_delay(cfg) -> float:
     return max(3.0, int(cfg.confirm_frames) * per_frame + 1.0)
 
 
+def _cat_flash_ttl(cfg) -> float:
+    """How long (sec) a cat counts as "present" after the net last saw it.
+
+    Spans the gap between periodic forced scans so a still cat keeps flashing the
+    button. With always-on / disabled scanning the net refreshes at frame rate (or
+    only on motion), so a short window is enough.
+    """
+    iv = float(getattr(cfg, "cat_scan_interval", 30.0))
+    return iv + 2.0 if iv > 0 else 2.0
+
+
+def _cat_scan_due(cfg, track_cats: bool, last_scan: float, now: float) -> bool:
+    """Whether a cat-tracking camera should force a still-cat scan this iteration.
+
+    ``cat_scan_interval``: ``<0`` off (motion only), ``0`` always-on (every frame),
+    ``>0`` every N seconds since the net last ran.
+    """
+    if not track_cats:
+        return False
+    iv = float(getattr(cfg, "cat_scan_interval", 30.0))
+    if iv < 0:
+        return False
+    if iv == 0:
+        return True
+    return (now - last_scan) >= iv
+
+
 class DetectionLoop:
     """Owns the worker thread and shared state for one detection session."""
 
@@ -97,6 +124,7 @@ class DetectionLoop:
         self._resume_at = 0.0                           # SHARED cooldown-pause deadline
         self._cam_status: dict[str, dict] = {}          # name -> {connected,last_error,roll,track_cats}
         self._live_name: str | None = None              # camera the GUI streams by default
+        self._cat_flash_ttl = 2.0                       # how long a cat stays "present" between scans
 
     def _caster_for(self, cfg) -> Caster:
         """A single long-lived Caster so speaker connections stay open."""
@@ -151,13 +179,29 @@ class DetectionLoop:
         det = self._pick(name)
         return det.live_version() if det is not None else 0
 
+    def cats_present_cameras(self) -> list:
+        """Names of **cat-tracking** cameras seeing a cat now, newest sighting first.
+
+        A cat is "present" if the net saw one within ``_cat_flash_ttl`` — a window
+        sized to the scan interval so a *still* cat re-found by the periodic forced
+        scan keeps flashing the button (and stays in the Show-cat rotation) between
+        scans, not just for the 1.5 s box-TTL.
+        """
+        status = self._cam_status
+        now = time.monotonic()
+        seen = []
+        for cam_name, det in self._detectors.items():
+            if not status.get(cam_name, {}).get("track_cats"):
+                continue
+            last = det.cat_last_seen()
+            if last and now - last <= self._cat_flash_ttl:
+                seen.append((last, cam_name))
+        seen.sort(reverse=True)        # most-recent sighting first
+        return [name for _, name in seen]
+
     def cat_present(self) -> bool:
         """True if **any cat-tracking** camera has a cat on it right now."""
-        status = self._cam_status
-        for cam_name, det in self._detectors.items():
-            if status.get(cam_name, {}).get("track_cats") and det.cat_present():
-                return True
-        return False
+        return bool(self.cats_present_cameras())
 
     def cam_status(self) -> list:
         """Per-camera {name, connected, last_error, roll, track_cats} for the GUI."""
@@ -206,6 +250,9 @@ class DetectionLoop:
 
         self._gate = dice.RollGate(cfg.cooldown_seconds)   # SHARED across cameras
         self._resume_at = 0.0
+        # Keep a cat "present" (flashing button / Show-cat rotation) across the gap
+        # between forced scans, so a still cat scanned every N s doesn't flicker.
+        self._cat_flash_ttl = _cat_flash_ttl(cfg)
         speakers_label = ", ".join(targets)
 
         # Build all detectors first, then publish them and spawn workers.
@@ -308,6 +355,8 @@ class DetectionLoop:
         streak = 0
         confirm_frames = max(1, int(spec["confirm_frames"]))
         interval = 1.0 / max(1.0, float(spec["scan_fps"]))
+        last_scan = 0.0          # monotonic time the net last ran (motion or forced)
+        cat_seen_still = False   # was a cat present on the previous *forced* still scan?
         # A camera may skip the net during the shared cooldown only if it has
         # nothing to do then: it rolls (so the closed gate blocks it anyway) AND
         # it doesn't track cats (which must keep detecting). A cat-tracking camera
@@ -318,10 +367,14 @@ class DetectionLoop:
                 # Shared cooldown-pause: once any roll-camera rolls, eligible cameras
                 # skip the net until just before the window reopens (read lock-free;
                 # the deadline is written inside _roll_lock).
+                now = time.monotonic()
                 paused = bool(can_pause and cfg.pause_during_cooldown and self._resume_at
-                              and time.monotonic() < self._resume_at)
+                              and now < self._resume_at)
+                # Periodic still-cat scan: a sleeping cat makes no motion, so on a
+                # cat-tracking camera force the net every cat_scan_interval seconds.
+                scan_due = _cat_scan_due(cfg, track_cats, last_scan, now)
                 try:
-                    outcome = detector.read_and_detect(detect=not paused)
+                    outcome = detector.read_and_detect(detect=not paused, force=scan_due)
                 except FileNotFoundError as exc:
                     # Missing MODEL files are global & unrecoverable — stop everything.
                     with self._status_lock:
@@ -350,10 +403,42 @@ class DetectionLoop:
                     connected = True
                     self._cam_set(name, connected=True)
 
+                if scan_due or outcome.motion:
+                    last_scan = now      # the net ran; defer the next forced scan
+
+                # Forced still-cat scan with no real motion: the net ran anyway and
+                # may have found a sleeping cat. Record it on the rising edge (so a
+                # long nap logs once, not every scan); the live flash/rotation are
+                # driven by cats_present_cameras(). Never rolls — a no-motion frame
+                # breaks the consecutive-motion person streak, same as any idle frame.
+                if scan_due and not outcome.motion:
+                    streak = 0
+                    cat = (detector.best_box("cat")
+                           if (track_cats and "cat" in outcome.labels) else None)
+                    if cat is not None:
+                        if not cat_seen_still:
+                            score, box = cat
+                            snap = self.snapshots.save(detector.annotated_jpeg())
+                            sighting = self.cats.record(
+                                name, box, detector.frame_size, score, image=snap)
+                            where = f" ({sighting['region']})" if sighting["region"] else ""
+                            self.activity.add(
+                                "motion",
+                                f"🐱 Still cat seen{where} on {cam_label} — tracked, no roll.",
+                                image=snap)
+                        cat_seen_still = True
+                    else:
+                        cat_seen_still = False
+                    self._stop.wait(interval)
+                    continue
+
                 if not outcome.motion:
+                    # Idle (no motion, no forced scan): the net didn't run, so leave
+                    # the still-scan edge intact — only real motion resets it below.
                     streak = 0
                     self._stop.wait(interval)
                     continue
+                cat_seen_still = False   # a real-motion frame supersedes the still-scan edge
 
                 # Motion, not a person: record a cat sighting (if this camera tracks
                 # cats) or just note the mover, throttled, with a snapshot.
