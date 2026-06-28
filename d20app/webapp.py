@@ -139,17 +139,20 @@ _BENCH_LOCK = threading.Lock()
 _BENCH_MAX_REPORTS = 8
 _BENCH_TILINGS = ["off", "2x2", "3x3", "4x4"]
 _BENCH_MAX_RUNS = 24            # cap the matrix so one request can't run forever
+# The MobileNet input-size variants the manual model dropdown offers — the sweep
+# uses the SAME list so the two can't drift (it was missing @512/@768).
+_SSD_VARIANTS = ["mobilenet_ssd", "mobilenet_ssd@512", "mobilenet_ssd@768"]
 
 
 def _benchmark_models():
-    """Model names worth offering in a sweep: the YOLO variants whose ONNX is
-    present, plus MobileNet. (A 960 export only appears if it was produced.)"""
+    """The models a sweep offers — the same set the manual dropdown shows: the
+    present YOLO variants (a 960 export only if produced) plus every MobileNet
+    size. Single source so the sweep and the dropdown stay in sync."""
     from . import yolo
 
     out = [v for v in ("yolo11n", "yolo11m", "yolo11m_960")
            if v in yolo.MODELS and os.path.exists(yolo.model_path(v))]
-    out.append("mobilenet_ssd")
-    return out
+    return out + list(_SSD_VARIANTS)
 
 
 def _model_native_size(model: str) -> int:
@@ -165,8 +168,29 @@ def _model_native_size(model: str) -> int:
     return 300
 
 
-def _bench_thumb(jpeg: bytes, width: int = 240):
-    """(data-url, raw-jpeg-bytes) thumbnail of an annotated frame for the reports."""
+def _slugify(text: str) -> str:
+    """Lowercase, hyphenated slug for a human-readable report filename."""
+    import re
+
+    s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return s[:60] or "report"
+
+
+def _full_jpeg_data_url(frame, quality: int = 95) -> str:
+    """The unannotated frame at full resolution, as a JPEG data URL — embedded once
+    in the report so the exact input can be re-run (reproducibility)."""
+    import cv2
+
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return ("data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")) if ok else ""
+
+
+def _bench_thumb(jpeg: bytes, width: int = 680):
+    """(data-url, raw-jpeg-bytes) thumbnail of an annotated frame for the reports.
+
+    Encoded at ~680px (not the old 240) so the drawn boxes/labels are actually
+    legible when enlarged; the report still displays them small but click-to-zoom.
+    """
     import cv2
     import numpy as np
 
@@ -221,14 +245,18 @@ def _score_color(score: float) -> str:
     return f"rgb({r},{g},70)"
 
 
-def _benchmark_html(runs: list, meta: dict) -> str:
+def _benchmark_html(runs: list, meta: dict, original_url: str = "",
+                    original_name: str = "original.jpg") -> str:
     """A self-contained HTML report — every thumbnail inlined, no external assets,
-    so it renders for a remote viewer and emails cleanly."""
+    so it renders for a remote viewer and emails cleanly. Each run thumbnail is
+    click-to-enlarge, and the full-resolution **original** frame is embedded once at
+    the top with a download link, so the exact test can be re-run later."""
     rows = []
     for r in runs:
         hit = "✓" if r["detected"] else "·"
         rows.append(
-            f"<tr><td><img src='{r['thumb']}'></td>"
+            f"<tr><td><a href='{r['thumb']}' target='_blank' title='click to enlarge'>"
+            f"<img src='{r['thumb']}'></a></td>"
             f"<td>{esc(r['model'])}</td><td>{r['size']}</td><td>{esc(r['tiling'])}</td>"
             f"<td style='background:{_score_color(r['combined_score'])}'>"
             f"<b>{r['combined_score']:.2f}</b></td>"
@@ -237,18 +265,29 @@ def _benchmark_html(runs: list, meta: dict) -> str:
     fixed = (f"cat threshold <b>{meta['cat_threshold']:.2f}</b> · accelerator "
              f"<b>{esc(meta['accelerator'])}</b> · tile overlap 0.2 · person 0.50 · "
              f"locator [cat, dog]")
+    original = ""
+    if original_url:
+        original = (
+            "<details open><summary><b>Original frame</b> "
+            f"({meta['width']}×{meta['height']}) — "
+            f"<a href='{original_url}' download='{esc(original_name)}'>download to re-run</a>"
+            "</summary>"
+            f"<a href='{original_url}' target='_blank'>"
+            f"<img class='orig' src='{original_url}'></a></details>")
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<title>Cat detection benchmark</title><style>"
         "body{font-family:system-ui,Arial,sans-serif;margin:24px;color:#111}"
         "table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;"
         "padding:6px 8px;text-align:center;font-size:14px}th{background:#f3f3f3}"
-        "img{height:90px;border-radius:4px;display:block}"
+        "td img{max-width:240px;height:auto;border-radius:4px;display:block;cursor:zoom-in}"
+        "img.orig{max-width:100%;border-radius:6px;margin:8px 0}"
         ".fixed{background:#f7f7f9;border:1px solid #e3e3e8;border-radius:8px;"
         "padding:10px 14px;margin:10px 0;font-size:14px}</style></head><body>"
         f"<h2>🐱 Cat detection benchmark — {esc(meta['image'])}</h2>"
         f"<p class='muted'>{esc(meta['ts'])} · {len(runs)} runs</p>"
         f"<div class='fixed'><b>Settings held fixed for every run:</b> {fixed}</div>"
+        + original +
         "<table><tr><th>frame</th><th>model</th><th>size</th><th>tiling</th>"
         "<th>cat-or-dog</th><th>cat</th><th>dog</th><th>found?</th><th>time</th></tr>"
         + "".join(rows) + "</table>"
@@ -671,10 +710,18 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         accelerator = body.get("accelerator") or "cpu"
         runs = _run_benchmark(frames[idx], models, tilings, cat_threshold, accelerator)
         h, w = frames[idx].shape[:2]
+        image_name = body.get("name") or "uploaded image"
         meta = {"cat_threshold": cat_threshold, "accelerator": accelerator,
-                "image": body.get("name") or "uploaded image",
+                "image": image_name,
                 "ts": time.strftime("%Y-%m-%d %H:%M"), "width": int(w), "height": int(h)}
-        html = _benchmark_html(runs, meta)
+        # A human-readable filename slug for the downloaded report (#27), and the
+        # full-res original frame embedded once for reproducibility (#25).
+        stem = os.path.splitext(os.path.basename(image_name))[0]
+        slug = f"benchmark-{_slugify(stem)}-{time.strftime('%Y%m%d-%H%M%S')}"
+        original_url = _full_jpeg_data_url(frames[idx])
+        original_name = f"{_slugify(stem)}.jpg"
+        html = _benchmark_html(runs, meta, original_url=original_url,
+                               original_name=original_name)
         try:
             xlsx = _benchmark_xlsx(runs, meta)
             xlsx_error = None
@@ -682,7 +729,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             xlsx, xlsx_error = None, str(exc)
         rid = uuid.uuid4().hex
         with _BENCH_LOCK:
-            _BENCHMARKS[rid] = {"html": html, "xlsx": xlsx}
+            _BENCHMARKS[rid] = {"html": html, "xlsx": xlsx, "slug": slug}
             while len(_BENCHMARKS) > _BENCH_MAX_REPORTS:
                 _BENCHMARKS.popitem(last=False)
         public = [{k: v for k, v in r.items() if k != "_raw"} for r in runs]
@@ -698,17 +745,20 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         rep = _BENCHMARKS.get(rid)
         if not rep:
             return jsonify({"error": "report expired"}), 404
-        return Response(rep["html"], mimetype="text/html")
+        slug = rep.get("slug") or f"benchmark_{rid}"
+        return Response(rep["html"], mimetype="text/html",
+                        headers={"Content-Disposition": f'inline; filename="{slug}.html"'})
 
     @app.get("/api/test/benchmark/<rid>.xlsx")
     def api_benchmark_xlsx(rid):
         rep = _BENCHMARKS.get(rid)
         if not rep or not rep.get("xlsx"):
             return jsonify({"error": "no XLSX (install openpyxl) or report expired"}), 404
+        slug = rep.get("slug") or f"benchmark_{rid}"
         return Response(
             rep["xlsx"],
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="benchmark_{rid}.xlsx"'})
+            headers={"Content-Disposition": f'attachment; filename="{slug}.xlsx"'})
 
     @app.post("/api/cats/boost")
     def api_cats_boost():

@@ -745,15 +745,23 @@ async function runBenchmark() {
   $("bench-note").textContent = "";
   $("bench-results").classList.remove("hidden");
   $("bench-html").href = body.html_url;
-  const xl = $("bench-xlsx");
-  if (body.xlsx_url) { xl.href = body.xlsx_url; xl.style.display = ""; xl.title = ""; }
-  else { xl.removeAttribute("href"); xl.style.display = ""; xl.title = body.xlsx_error || "install openpyxl for XLSX"; }
+  const xl = $("bench-xlsx"), xlNote = $("bench-xlsx-note");
+  if (body.xlsx_url) {
+    xl.href = body.xlsx_url; xl.classList.remove("disabled"); xl.title = "";
+    xlNote.classList.add("hidden"); xlNote.textContent = "";
+  } else {
+    // Don't leave a dead control: visibly disable it and say why + how to fix.
+    xl.removeAttribute("href"); xl.classList.add("disabled");
+    const why = body.xlsx_error || "XLSX export needs the 'openpyxl' package — pip install openpyxl";
+    xl.title = why;
+    xlNote.textContent = why; xlNote.classList.remove("hidden");
+  }
   renderBenchTable(body.runs, body.meta);
 }
 
 function renderBenchTable(runs, meta) {
   const rows = runs.map((r) => `<tr>
-    <td><img class="bench-thumb" src="${r.thumb}" alt=""/></td>
+    <td><a href="${r.thumb}" target="_blank" title="click to enlarge"><img class="bench-thumb" src="${r.thumb}" alt=""/></a></td>
     <td>${esc(r.model)}</td><td>${r.size}</td><td>${esc(r.tiling)}</td>
     <td><strong>${r.combined_score.toFixed(2)}</strong></td>
     <td>${r.cat_score.toFixed(2)}</td><td>${r.dog_score.toFixed(2)}</td>
