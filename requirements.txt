@@ -20,3 +20,9 @@ onvif-zeep>=0.2.12
 # GPU compute drivers. Not installed by default — setup.sh / setup.ps1 offer it, or:
 #   pip install openvino
 # openvino>=2024.0
+
+# Optional: export the "Benchmark this image" results to an XLSX with embedded
+# thumbnails (the HTML report needs nothing extra). Not installed by default —
+# setup.sh / setup.ps1 offer it, or:
+#   pip install openpyxl
+# openpyxl>=3.0

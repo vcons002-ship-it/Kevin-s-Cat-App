@@ -11,7 +11,28 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
-## [0.17.0] — 2026-06-28
+## [0.18.0] — 2026-06-28
+
+### Added
+- **"Benchmark this image"** (#21). One click in the Test-detection tool sweeps
+  **models × tiling** on the uploaded frame and emits a **shareable report** — a
+  **self-contained HTML** file (every annotated thumbnail inlined as base64, no
+  external assets, so it emails/opens anywhere off the LAN-only NAS) **and an
+  optional XLSX** with embedded thumbnails. Each run records the **best cat score,
+  best dog score, combined (cat-or-dog) score**, whether it cleared the cat
+  threshold, and **inference time** (summed across tiles). Checkboxes trim the
+  matrix; a "settings held fixed for all runs" block makes results unambiguous.
+  Reuses the live `detector`/`yolo` code (no parallel detection path). Endpoints:
+  `POST /api/test/benchmark`, `GET /api/test/benchmark/<id>.{html,xlsx}`.
+
+### Notes
+- **XLSX needs the optional `openpyxl`** (mirrors the openvino/playsound3 pattern):
+  `setup.sh`/`setup.ps1` offer it, and it degrades gracefully — the HTML report
+  always works and the response carries an `xlsx_error` if openpyxl is absent.
+- The sweep runs synchronously and is **capped at 24 runs**; a 4×4 × `yolo11m_960`
+  matrix is genuinely heavy on CPU (16 tiles/run) — trim it or run it on the iGPU.
+  180 tests (was 176): the sweep matrix, self-contained HTML, XLSX present/absent
+  paths, and the run cap.
 
 ### Added
 - **Independent cat confidence** (#19). Cat detection was gated by `label_floor`

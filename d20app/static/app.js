@@ -667,7 +667,7 @@ async function uploadTest(file) {
   const fd = new FormData(); fd.append("file", file);
   const { ok, body } = await api("/api/test/upload", { method: "POST", body: fd });
   if (!ok || !body || body.error) { $("test-note").textContent = (body && body.error) || "Upload failed."; return; }
-  testSession = body; testFrameIdx = 0;
+  testSession = body; testSession.name = file.name; testFrameIdx = 0;
   $("test-note").textContent = body.kind === "video" ? `${body.count} frames sampled — pick one below.` : "";
   renderFilmstrip();
   runTestDetection();
@@ -713,6 +713,55 @@ async function saveTestSettings() {
   $("test-note").textContent = ok ? "Saved ✓" : "Save failed";
   populateTestSaveTargets();
   setTimeout(() => { if ($("test-note").textContent === "Saved ✓") $("test-note").textContent = ""; }, 2500);
+}
+
+// ---- benchmark (sweep models × tiling, shareable report) -------------------
+async function loadBenchOptions() {
+  const { body } = await api("/api/test/benchmark/models");
+  if (!body) return;
+  const box = (id, items) => $(id).innerHTML = items.map((v) =>
+    `<label class="checkbox"><input type="checkbox" value="${esc(v)}" checked/> ${esc(v)}</label>`).join("");
+  box("bench-models", body.models);
+  box("bench-tilings", body.tilings);
+}
+
+const benchChecked = (id) =>
+  Array.from($(id).querySelectorAll("input:checked")).map((el) => el.value);
+
+async function runBenchmark() {
+  if (!testSession) { $("bench-note").textContent = "Upload a photo first."; return; }
+  const models = benchChecked("bench-models"), tilings = benchChecked("bench-tilings");
+  if (!models.length || !tilings.length) { $("bench-note").textContent = "Pick a model and a tiling."; return; }
+  const n = models.length * tilings.length;
+  $("bench-run").disabled = true;
+  $("bench-note").textContent = `Benchmarking ${n} run${n === 1 ? "" : "s"}… (4×4 / large models can take a while)`;
+  const { ok, body } = await api("/api/test/benchmark", postJSON({
+    id: testSession.id, frame_index: testFrameIdx, models, tilings,
+    cat_threshold: Number($("t_cat_confidence").value),
+    accelerator: $("t_accelerator").value, name: testSession.name || "uploaded image",
+  }));
+  $("bench-run").disabled = false;
+  if (!ok || !body || body.error) { $("bench-note").textContent = (body && body.error) || "Benchmark failed."; return; }
+  $("bench-note").textContent = "";
+  $("bench-results").classList.remove("hidden");
+  $("bench-html").href = body.html_url;
+  const xl = $("bench-xlsx");
+  if (body.xlsx_url) { xl.href = body.xlsx_url; xl.style.display = ""; xl.title = ""; }
+  else { xl.removeAttribute("href"); xl.style.display = ""; xl.title = body.xlsx_error || "install openpyxl for XLSX"; }
+  renderBenchTable(body.runs, body.meta);
+}
+
+function renderBenchTable(runs, meta) {
+  const rows = runs.map((r) => `<tr>
+    <td><img class="bench-thumb" src="${r.thumb}" alt=""/></td>
+    <td>${esc(r.model)}</td><td>${r.size}</td><td>${esc(r.tiling)}</td>
+    <td><strong>${r.combined_score.toFixed(2)}</strong></td>
+    <td>${r.cat_score.toFixed(2)}</td><td>${r.dog_score.toFixed(2)}</td>
+    <td>${r.detected ? "✓" : "·"}</td><td>${Math.round(r.inference_ms)} ms</td></tr>`).join("");
+  $("bench-table").innerHTML =
+    `<p class="muted">Best cat-or-dog score first · cat threshold ${meta.cat_threshold.toFixed(2)} · ${esc(meta.accelerator)}</p>
+     <table class="bench-tbl"><tr><th>frame</th><th>model</th><th>size</th><th>tiling</th>
+     <th>cat-or-dog</th><th>cat</th><th>dog</th><th>found?</th><th>time</th></tr>${rows}</table>`;
 }
 
 // ---- activity log ----------------------------------------------------------
@@ -854,6 +903,7 @@ function wire() {
     scheduleTestDetect();
   };
   $("test-save").onclick = saveTestSettings;
+  $("bench-run").onclick = runBenchmark;
 }
 
 async function loadVersion() {
@@ -864,7 +914,7 @@ async function loadVersion() {
 async function init() {
   wire();
   await loadConfig();
-  await Promise.all([loadSpeakers(false), loadSounds(), loadCamerasList()]);
+  await Promise.all([loadSpeakers(false), loadSounds(), loadCamerasList(), loadBenchOptions()]);
   refreshStatus();
   loadLog();
   loadCats();

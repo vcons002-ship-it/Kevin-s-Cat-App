@@ -143,6 +143,19 @@ if ($wantOpenvino) {
     }
 }
 
+# Optional: XLSX export for the benchmark tool (the HTML report works without it).
+$wantXlsx = $false
+if ([Environment]::UserInteractive) {
+    $a = Read-Host "Install XLSX export for the benchmark tool (optional)? [y/N]"
+    if ($a -and $a.Trim().ToLower().StartsWith('y')) { $wantXlsx = $true }
+}
+if ($wantXlsx) {
+    & $vpy -m pip install 'openpyxl>=3.0'
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "    (openpyxl install failed - benchmark XLSX export will be unavailable; HTML still works)"
+    }
+}
+
 Write-Host "==> Generating the default treat chime"
 & $vpy d20app\sounds\generate_chime.py
 
