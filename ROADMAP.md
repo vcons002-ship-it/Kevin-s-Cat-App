@@ -62,7 +62,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **168 automated tests**, including a detection-accuracy regression guard over
+- **176 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
@@ -103,6 +103,15 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       effective resolution (**tiling**, default 4×4, and/or a **larger input** like
       the bundled `yolo11m_960`) so a small/distant cat clears the net, while the
       fast treat path stays at the native size (0.16.0, issue #17).
+- [x] **Independent cat / person confidence** — the cat (locator) path has its own
+      `cat_confidence`, separate from `person_confidence` and `label_floor`, tunable
+      per camera and in the test tool (0.17.0, #19).
+- [x] **"Animal present" locator classes** — a no-dog household can count a **dog** as
+      the cat (`locator_classes: ["cat","dog"]`), since the model often mislabels a cat
+      as a dog and resolution raises "dog", not "cat" (0.17.0, #22).
+- [x] **Resolution in the model dropdown** — removed the YOLO-no-op "Net input size"
+      control; MobileNet sizes are named variants (`mobilenet_ssd@512`), YOLO size is
+      its export (0.17.0, #20).
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

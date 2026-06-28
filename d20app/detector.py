@@ -320,9 +320,15 @@ class PersonDetector:
                  gamma: float = 1.0, brightness: int = 0,
                  contrast: float = 1.0, saturation: float = 1.0,
                  cat_scan_tiling: str = "off", cat_scan_tile_overlap: float = 0.2,
-                 cat_scan_imgsz: int = 0) -> None:
+                 cat_scan_imgsz: int = 0, cat_confidence: float = 0.5,
+                 locator_classes=None) -> None:
         self.source = source
         self.confidence = confidence
+        # The locator ("the cat") path: which classes count, and the confidence they
+        # must clear — independent of the person threshold and of label_floor. A house
+        # with no dog can include "dog" since the model often mislabels a cat as one.
+        self.cat_confidence = float(cat_confidence)
+        self.locator_classes = tuple(locator_classes) if locator_classes else ("cat",)
         # Locator-scan resolution knobs (used only by the still-cat forced scan, not
         # the fast treat path). See :meth:`_detect_locator`.
         self.cat_scan_tiling = cat_scan_tiling or "off"
@@ -488,7 +494,7 @@ class PersonDetector:
             return yolo.detect_boxes(net, img, floor, size=self._yolo_size)
 
         h, w = img.shape[:2]
-        s = int(size or self.detect_size)
+        s = int(size or self._ssd_size())
         blob = cv2.dnn.blobFromImage(
             cv2.resize(img, (s, s)),
             scalefactor=0.007843,        # 1/127.5
@@ -604,7 +610,32 @@ class PersonDetector:
         boxes = self._detect_boxes(frame, floor=min(0.3, self.confidence))
         return self._best(boxes, "person") >= self.confidence
 
-    # Colours (BGR) for drawing boxes: person = green, cat = orange, other = grey.
+    # -- per-class gating -----------------------------------------------------
+    def _floor_for(self, label: str) -> float:
+        """The confidence a box of ``label`` must clear to count/draw: person →
+        ``confidence`` (treats), a locator class (the cat) → ``cat_confidence``,
+        anything else → ``label_floor`` (just naming a mover in the log)."""
+        if label == "person":
+            return self.confidence
+        if label in self.locator_classes:
+            return self.cat_confidence
+        return self.label_floor
+
+    def _is_locator_hit(self, label: str, score: float) -> bool:
+        """True if ``label`` counts as 'the cat' for the locator at its threshold."""
+        return label in self.locator_classes and score >= self.cat_confidence
+
+    def _ssd_size(self) -> int:
+        """MobileNet blob size: from a ``mobilenet_ssd@N`` model name, else
+        ``detect_size`` (so old configs and the bare name still work)."""
+        if "@" in (self.model or ""):
+            try:
+                return int(self.model.split("@", 1)[1])
+            except ValueError:
+                pass
+        return self.detect_size
+
+    # Colours (BGR) for drawing boxes: person = green, cat/locator = orange, other = grey.
     _BOX_COLORS = {"person": (80, 220, 80), "cat": (40, 170, 240)}
 
     def _draw_boxes(self, img, boxes) -> None:
@@ -617,10 +648,12 @@ class PersonDetector:
         import cv2
 
         for label, score, (x1, y1, x2, y2) in boxes:
-            floor = self.confidence if label == "person" else self.label_floor
-            if score < floor:
+            if score < self._floor_for(label):
                 continue
-            color = self._BOX_COLORS.get(label, (160, 160, 160))
+            # A locator class (the cat — maybe a "dog" standing in for it) draws in
+            # the cat colour even if it isn't literally "cat".
+            color = self._BOX_COLORS.get(label) or (
+                self._BOX_COLORS["cat"] if label in self.locator_classes else (160, 160, 160))
             cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
             tag = f"{label} {score:.2f}"
             ty = max(y1 - 6, 12)
@@ -649,7 +682,7 @@ class PersonDetector:
         import cv2
 
         adjusted = self._adjust(frame)
-        floor = min(self.label_floor, self.confidence)
+        floor = min(self.label_floor, self.confidence, self.cat_confidence)
         # Use the locator (tiled / larger-input) path when either is enabled, so the
         # tester measures exactly what the still-cat scan would do.
         use_locator = self._tiling_grid() > 1 or self.cat_scan_imgsz > 0
@@ -661,7 +694,7 @@ class PersonDetector:
             {"label": label, "score": round(float(score), 3),
              "box": [int(v) for v in box]}
             for label, score, box in boxes
-            if score >= (self.confidence if label == "person" else self.label_floor)
+            if score >= self._floor_for(label)
         ]
         dets.sort(key=lambda d: -d["score"])
         return (buf.tobytes() if ok else None), dets
@@ -698,15 +731,7 @@ class PersonDetector:
         # detaches us from the grab thread swapping the buffer underneath.
         img = self._crop(frame).copy()
         if fresh:
-            for label, score, (x1, y1, x2, y2) in boxes:
-                floor = self.confidence if label == "person" else self.label_floor
-                if score < floor:
-                    continue
-                color = self._BOX_COLORS.get(label, (160, 160, 160))
-                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-                ty = max(y1 - 6, 12)
-                cv2.putText(img, f"{label} {score:.2f}", (x1, ty),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            self._draw_boxes(img, boxes)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return buf.tobytes() if ok else None
 
@@ -720,7 +745,8 @@ class PersonDetector:
             return self._live_version
 
     def cat_present(self) -> bool:
-        """True if a cat box (>= label floor) was seen in the last fresh frame.
+        """True if a locator-class box (the cat) cleared its threshold in the last
+        fresh frame.
 
         Drives the GUI's flashing "Show cat" button. Bounded by ``_LIVE_BOX_TTL``
         so it clears shortly after the cat leaves (or detection stops refreshing).
@@ -729,7 +755,7 @@ class PersonDetector:
             fresh = (time.monotonic() - self._live_boxes_at) <= self._LIVE_BOX_TTL
             boxes = self._last_boxes
         return fresh and any(
-            lab == "cat" and score >= self.label_floor for lab, score, _ in boxes
+            self._is_locator_hit(lab, score) for lab, score, _ in boxes
         )
 
     def cat_last_seen(self) -> float:
@@ -907,14 +933,13 @@ class PersonDetector:
         if not force and (not detect or not moved):
             return FrameOutcome(motion=False, person=False)
 
-        floor = min(self.label_floor, self.confidence)
+        floor = min(self.label_floor, self.confidence, self.cat_confidence)
         # A forced (still-cat) scan uses the higher-resolution locator path; the
         # motion/treat path stays fast at the native size.
         boxes = self._detect_locator(frame, floor) if force else self._detect_boxes(frame, floor)
         self._last_frame = cropped             # what the net saw (box coords match)
         now = time.monotonic()
-        cat_seen = any(lab == "cat" and score >= self.label_floor
-                       for lab, score, _ in boxes)
+        cat_seen = any(self._is_locator_hit(lab, score) for lab, score, _ in boxes)
         with self._live_lock:
             self._last_boxes = boxes           # fresh detections (possibly empty)
             self._live_boxes_at = now
@@ -922,13 +947,15 @@ class PersonDetector:
                 self._cat_last_seen = now
             self._live_version += 1            # boxes changed → stream re-renders
         person = self._best(boxes, "person") >= self.confidence
-        # Identify non-person movers (cats!) at the label floor — lower than a
-        # person needs, so a smaller/less-certain cat is still named, but high
-        # enough (default 0.5) to keep stray "pottedplant"/"sofa" guesses out.
+        # Identify non-person movers: a locator class (the cat) at cat_confidence,
+        # any other mover at label_floor (just to name it in the log) — keeping stray
+        # "pottedplant"/"sofa" guesses out.
         labels = tuple(
             label
             for label, score, _ in sorted(boxes, key=lambda b: -b[1])
-            if label != "person" and score >= self.label_floor
+            if label != "person" and (
+                self._is_locator_hit(label, score)
+                or (label not in self.locator_classes and score >= self.label_floor))
         )
         # ``motion`` reflects the pre-filter: False on a forced still-cat scan, so
         # the loop knows not to treat a forced look as real movement (it never rolls).

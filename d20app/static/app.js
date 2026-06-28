@@ -25,9 +25,17 @@ const MOTION_PRESETS = {
 };
 
 // Per-camera dropdown options.
-const MODEL_OPTS = [["yolo11n", "YOLO11n — low light (rec.)"], ["yolo11m", "YOLO11m — heavier"], ["mobilenet_ssd", "MobileNet — lightest"]];
+// The model dropdown is the single resolution selector: YOLO sizes are baked into
+// the export (320/640/960); MobileNet carries its blob size as a "@N" suffix.
+const MODEL_OPTS = [
+  ["yolo11n", "YOLO11n (320) — low light, rec."],
+  ["yolo11m", "YOLO11m (640) — heavier"],
+  ["yolo11m_960", "YOLO11m (960) — max"],
+  ["mobilenet_ssd", "MobileNet (300) — lightest"],
+  ["mobilenet_ssd@512", "MobileNet (512)"],
+  ["mobilenet_ssd@768", "MobileNet (768)"],
+];
 const ACCEL_OPTS = [["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"]];
-const SIZE_OPTS = [["300", "Standard"], ["512", "High"], ["768", "Max"]];
 const SENS_OPTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"]];
 const TILING_OPTS = [["off", "Off"], ["2x2", "2×2"], ["3x3", "3×3"], ["4x4", "4×4"]];
 const IMGSZ_OPTS = [["0", "Native"], ["640", "640"], ["960", "960"], ["1280", "1280"]];
@@ -104,10 +112,11 @@ function cameraCardHTML(cam) {
         <label>Model <select data-f="model">${optsHTML(MODEL_OPTS, cam.model)}</select></label>
         <label>Accelerator <select data-f="accelerator">${optsHTML(ACCEL_OPTS, cam.accelerator)}</select></label>
         <label>Person confidence <input type="number" step="0.05" min="0.1" max="1" data-f="person_confidence" value="${cam.person_confidence}"/></label>
+        <label title="how confident a cat detection must be to count (the locator path; independent of person)">Cat confidence <input type="number" step="0.05" min="0.1" max="1" data-f="cat_confidence" value="${cam.cat_confidence}"/></label>
         <label>Confirm frames <input type="number" min="1" max="30" data-f="confirm_frames" value="${cam.confirm_frames}"/></label>
-        <label>Detection detail <select data-f="detect_size">${optsHTML(SIZE_OPTS, cam.detect_size)}</select></label>
         <label>Scan rate (fps) <input type="number" min="1" max="30" data-f="scan_fps" value="${cam.scan_fps}"/></label>
         <label>Notify floor <input type="number" step="0.05" min="0.1" max="1" data-f="label_floor" value="${cam.label_floor}"/></label>
+        <label class="checkbox" title="count a 'dog' as the cat — for a no-dog household where the model mislabels the cat"><input type="checkbox" data-dog ${(cam.locator_classes || []).includes("dog") ? "checked" : ""}/> Count dogs as the cat</label>
         <label>Motion sensitivity <select data-f="motion_sensitivity">${optsHTML(SENS_OPTS, cam.motion_sensitivity)}</select></label>
         <label title="still-cat scan: tile the frame so a small/distant cat fills more of the net">Cat tiling <select data-f="cat_scan_tiling">${optsHTML(TILING_OPTS, cam.cat_scan_tiling)}</select></label>
         <label title="still-cat scan input size (YOLO needs a matching exported model; MobileNet resizes freely)">Cat input size <select data-f="cat_scan_imgsz">${optsHTML(IMGSZ_OPTS, cam.cat_scan_imgsz)}</select></label>
@@ -134,6 +143,8 @@ function readCard(card) {
     else if (el.type === "number") cam[f] = Number(el.value);
     else cam[f] = el.value;
   });
+  // Locator classes: "the cat" is always included; the dog checkbox adds "dog".
+  cam.locator_classes = card.querySelector("[data-dog]").checked ? ["cat", "dog"] : ["cat"];
   // Region: the picker stashes the chosen box on the card; else keep stored.
   cam.roi = card._roi !== undefined ? card._roi : (stored.roi || null);
   // Expand a motion preset into the three raw knobs the detector actually reads.
@@ -375,6 +386,7 @@ async function loadConfig() {
     motion_sensitivity: cfg.motion_sensitivity,
     gamma: cfg.gamma, brightness: cfg.brightness,
     contrast: cfg.contrast, saturation: cfg.saturation,
+    cat_confidence: cfg.cat_confidence, locator_classes: cfg.locator_classes,
   };
   if (!testTouched) setTestControls(camDefaults);   // seed the test tool from saved settings
   updateOdds();
@@ -551,8 +563,9 @@ function testSettings() {
   const n = (id) => Number($(id).value);
   return {
     model: $("t_model").value,
-    detect_size: n("t_detect_size"),
     person_confidence: n("t_person_confidence"),
+    cat_confidence: n("t_cat_confidence"),
+    locator_classes: $("t_dog").checked ? ["cat", "dog"] : ["cat"],
     label_floor: n("t_label_floor"),
     gamma: n("t_gamma"),
     brightness: n("t_brightness"),
@@ -567,6 +580,7 @@ function testSettings() {
 function testRangeLabels() {
   const s = testSettings();
   $("t_person_confidence_v").textContent = s.person_confidence.toFixed(2);
+  $("t_cat_confidence_v").textContent = s.cat_confidence.toFixed(2);
   $("t_label_floor_v").textContent = s.label_floor.toFixed(2);
   $("t_gamma_v").textContent = s.gamma.toFixed(1);
   $("t_brightness_v").textContent = (s.brightness > 0 ? "+" : "") + s.brightness;
@@ -579,9 +593,10 @@ function testRangeLabels() {
 function setTestControls(v) {
   v = v || {};
   if (v.model || v.detector_model) $("t_model").value = v.model || v.detector_model;
-  if (v.detect_size) $("t_detect_size").value = String(v.detect_size);
   const set = (id, val, dflt) => { $(id).value = (val === undefined || val === null) ? dflt : val; };
   set("t_person_confidence", v.person_confidence, 0.5);
+  set("t_cat_confidence", v.cat_confidence, 0.5);
+  $("t_dog").checked = Array.isArray(v.locator_classes) && v.locator_classes.includes("dog");
   set("t_label_floor", v.label_floor, 0.55);
   set("t_gamma", v.gamma, 1.0);
   set("t_brightness", v.brightness, 0);
@@ -675,8 +690,9 @@ async function saveTestSettings() {
   let ok;
   if (target === "__global__") {
     ({ ok } = await api("/api/config", postJSON({
-      detector_model: s.model, detect_size: s.detect_size, accelerator: s.accelerator,
-      person_confidence: s.person_confidence, label_floor: s.label_floor,
+      detector_model: s.model, accelerator: s.accelerator,
+      person_confidence: s.person_confidence, cat_confidence: s.cat_confidence,
+      locator_classes: s.locator_classes, label_floor: s.label_floor,
       gamma: s.gamma, brightness: s.brightness, contrast: s.contrast, saturation: s.saturation,
       cat_scan_tiling: s.tiling, cat_scan_tile_overlap: s.tile_overlap,
     })));
@@ -686,8 +702,9 @@ async function saveTestSettings() {
     if (!cam) { $("test-note").textContent = "Pick a camera to save to."; return; }
     ({ ok } = await api("/api/cameras/saved", postJSON({
       name: cam.name, url: cam.url, model: s.model, accelerator: s.accelerator,
-      detect_size: s.detect_size, person_confidence: s.person_confidence,
-      label_floor: s.label_floor, gamma: s.gamma, brightness: s.brightness,
+      person_confidence: s.person_confidence, cat_confidence: s.cat_confidence,
+      locator_classes: s.locator_classes, label_floor: s.label_floor,
+      gamma: s.gamma, brightness: s.brightness,
       contrast: s.contrast, saturation: s.saturation,
       cat_scan_tiling: s.tiling, cat_scan_tile_overlap: s.tile_overlap,
     })));
@@ -821,11 +838,11 @@ function wire() {
 
   // Test-detection tool
   $("test-file").onchange = (e) => uploadTest(e.target.files[0]);
-  for (const f of ["model", "detect_size", "person_confidence", "label_floor",
+  for (const f of ["model", "person_confidence", "cat_confidence", "label_floor",
                    "gamma", "brightness", "contrast", "saturation",
-                   "tiling", "tile_overlap", "accelerator"]) {
+                   "tiling", "tile_overlap", "accelerator", "dog"]) {
     const el = $("t_" + f);
-    if (el) el.oninput = scheduleTestDetect;
+    if (el) el[el.type === "checkbox" ? "onchange" : "oninput"] = scheduleTestDetect;
   }
   for (const id of ["round_robin", "round_robin_size", "round_robin_interval"]) {
     const el = $(id);

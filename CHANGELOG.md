@@ -11,6 +11,30 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.17.0] — 2026-06-28
+
+### Added
+- **Independent cat confidence** (#19). Cat detection was gated by `label_floor`
+  (shared with every other non-person mover); it now has its own **`cat_confidence`**
+  (default 0.5), tunable per camera and in the Test-detection tool — separate from
+  `person_confidence` and `label_floor`. The treat/roll path is untouched.
+- **"Count dogs as the cat"** (#22). The model often mislabels a cat as a **dog**
+  with high confidence, and more resolution raises *dog*, not *cat*. A no-dog house
+  can set **`locator_classes: ["cat", "dog"]`** so a dog counts as a locator hit
+  (recorded with its real label). Default stays cat-only. New `label` field on cat
+  sightings + `/api/cats`.
+- **Resolution lives in the model dropdown** (#20). The "Net input size" control was
+  a **no-op for YOLO** (fixed-shape exports) and only worked for MobileNet — removed.
+  MobileNet sizes are now named variants in the model picker (**`mobilenet_ssd@512`**,
+  `@768`); YOLO already encodes its size (320/640/960). `detect_size` is kept only for
+  reading old configs.
+
+### Notes
+- New config fields `cat_confidence` / `locator_classes` (global + per-camera). The
+  net's return-floor now also accounts for `cat_confidence`, so a *lower* cat threshold
+  genuinely surfaces fainter cats. 176 tests (was 168). Reproduces #22: with
+  `["cat","dog"]`, a cat the model calls a dog becomes a logged sighting.
+
 ## [0.16.0] — 2026-06-28
 
 ### Added

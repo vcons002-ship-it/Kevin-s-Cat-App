@@ -188,8 +188,13 @@ click any frame to test it.
 The card surfaces the settings that actually change whether things are identified
 correctly, as live sliders that **re-run detection as you drag**:
 
-- **Model**, **net input size**, **person confidence**, **notify floor** — what
+- **Model** (which carries the resolution — YOLO sizes are fixed by the export;
+  MobileNet offers `@300/@512/@768`), **person confidence**, **cat confidence**
+  (the cat has its **own** threshold, separate from people), **notify floor** — what
   counts as a detection.
+- **Count dogs as the cat** — the model often calls a cat a **dog** with high
+  confidence (and more resolution raises *dog*, not *cat*). In a house with no dog,
+  tick this so a "dog" counts as the cat (it's recorded with its real label).
 - **Gamma, brightness, contrast, saturation** — image adjustments applied **before
   the net runs**. These are the lever to rescue a **too-dark or washed-out** feed:
   lift the gamma until the cat pops out of the shadows, then check the box still

@@ -110,12 +110,19 @@ class CatTracker:
 
     # -- public API ----------------------------------------------------------
     def record(self, camera: str, box, frame_size, score: float,
-               image: str | None = None, ts: float | None = None) -> dict:
-        """Store one cat sighting and persist it. Returns the stored record."""
+               image: str | None = None, ts: float | None = None,
+               label: str = "cat") -> dict:
+        """Store one cat sighting and persist it. Returns the stored record.
+
+        ``label`` is the detected locator class (usually ``cat``; may be ``dog`` when
+        a no-dog household opts into treating dogs as the cat). Old records without it
+        read back as ``cat``.
+        """
         x1, y1, x2, y2 = (int(v) for v in box)
         sighting = {
             "ts": time.time() if ts is None else float(ts),
             "camera": str(camera or ""),
+            "label": str(label or "cat"),
             "region": describe_region((x1, y1, x2, y2), frame_size),
             "box": [x1, y1, x2, y2],
             "score": round(float(score), 3),
