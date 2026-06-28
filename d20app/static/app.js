@@ -785,6 +785,76 @@ function renderBenchTable(runs, meta) {
      <th>cat-or-dog</th><th>cat</th><th>dog</th><th>found?</th><th>time</th></tr>${rows}</table>`;
 }
 
+// ---- batch benchmark (several images → cross-image summary) ----------------
+let batchItems = [];   // [{id, name, frame_index, has_cat}]
+
+async function addBatchFiles(files) {
+  if (!files || !files.length) return;
+  $("bench-batch-note").textContent = `Uploading ${files.length}…`;
+  for (const f of files) {
+    const fd = new FormData(); fd.append("file", f);
+    const { ok, body } = await api("/api/test/upload", { method: "POST", body: fd });
+    if (ok && body && body.id) {
+      batchItems.push({ id: body.id, name: f.name, frame_index: 0, has_cat: true });
+    }
+  }
+  $("bench-batch-note").textContent = "";
+  renderBatchList();
+}
+
+function renderBatchList() {
+  const box = $("bench-batch-list");
+  $("bench-batch-run").disabled = batchItems.length === 0;
+  if (!batchItems.length) { box.innerHTML = ""; return; }
+  box.innerHTML = batchItems.map((it, i) => `<div class="batch-row">
+    <span class="grow">${esc(it.name)}</span>
+    <label class="inline" title="Untick for an empty-room control frame (false-positive check)">
+      <input type="checkbox" data-i="${i}" class="batch-cat" ${it.has_cat ? "checked" : ""}/> cat present</label>
+    <button type="button" class="link batch-rm" data-i="${i}">remove</button>
+  </div>`).join("");
+  box.querySelectorAll(".batch-cat").forEach((el) => {
+    el.onchange = () => { batchItems[Number(el.dataset.i)].has_cat = el.checked; };
+  });
+  box.querySelectorAll(".batch-rm").forEach((el) => {
+    el.onclick = () => { batchItems.splice(Number(el.dataset.i), 1); renderBatchList(); };
+  });
+}
+
+async function runBatch() {
+  if (!batchItems.length) return;
+  const models = benchChecked("bench-models"), tilings = benchChecked("bench-tilings");
+  if (!models.length || !tilings.length) { $("bench-batch-note").textContent = "Pick a model and a tiling above."; return; }
+  const n = batchItems.length * models.length * tilings.length;
+  $("bench-batch-run").disabled = true;
+  $("bench-batch-note").textContent = `Benchmarking ${batchItems.length} images (~${n} runs)… this can take minutes.`;
+  const { ok, body } = await api("/api/test/benchmark/batch", postJSON({
+    items: batchItems, models, tilings,
+    cat_threshold: Number($("t_cat_confidence").value), accelerator: $("t_accelerator").value,
+  }));
+  $("bench-batch-run").disabled = false;
+  if (!ok || !body || body.error) { $("bench-batch-note").textContent = (body && body.error) || "Batch failed."; return; }
+  $("bench-batch-note").textContent = "";
+  $("bench-batch-results").classList.remove("hidden");
+  $("bench-summary-html").href = body.summary_url;
+  renderBatchSummary(body.configs, body.meta, body.images);
+}
+
+function renderBatchSummary(configs, meta, images) {
+  const rows = configs.map((c) => {
+    const found = `${c.found}/${c.total}`;
+    const fp = meta.n_nocat ? `${c.fp}/${c.fp_total}` : "—";
+    return `<tr><td style="text-align:left">${esc(displayModel(c.model))} ${c.size} ${esc(c.tiling)}</td>
+      <td>${found}${c.found === c.total && c.total ? " ✓" : ""}</td>
+      <td>${c.avg_score.toFixed(2)}</td><td>${Math.round(c.avg_ms)} ms</td><td>${fp}</td></tr>`;
+  }).join("");
+  const links = (images || []).map((im) =>
+    `<a href="${im.report_url}" target="_blank" rel="noopener">${esc(im.name)}${im.has_cat ? "" : " ∅"}</a>`).join(" · ");
+  $("bench-summary-table").innerHTML =
+    `<p class="muted">${meta.n_images} images (${meta.n_cat} with a cat) · sorted by detection rate · cat threshold ${meta.cat_threshold.toFixed(2)} · ${esc(meta.accelerator)}. Open the summary report for the miss detail and the config×image grid.</p>
+     <table class="bench-tbl"><tr><th>config</th><th>found</th><th>avg conf</th><th>avg ms</th><th>false +</th></tr>${rows}</table>
+     <p class="muted" style="font-size:12px">Per-image reports: ${links}</p>`;
+}
+
 // ---- activity log ----------------------------------------------------------
 let lastLogKey = "";
 
@@ -925,6 +995,10 @@ function wire() {
   };
   $("test-save").onclick = saveTestSettings;
   $("bench-run").onclick = runBenchmark;
+  const bf = $("bench-batch-files");
+  if (bf) bf.onchange = (e) => { addBatchFiles(Array.from(e.target.files)); e.target.value = ""; };
+  const br = $("bench-batch-run");
+  if (br) br.onclick = runBatch;
 }
 
 async function loadVersion() {

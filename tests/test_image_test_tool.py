@@ -268,6 +268,77 @@ def test_benchmark_model_list_includes_ssd_size_variants():
     assert {"mobilenet_ssd", "mobilenet_ssd@512", "mobilenet_ssd@768"} <= set(models)
 
 
+# ---- batch benchmark + cross-image summary (#32) ---------------------------
+def _upload_blank(c, filename="empty-room.jpg"):
+    import cv2
+
+    ok, buf = cv2.imencode(".jpg", np.full((240, 320, 3), 90, np.uint8))
+    return c.post("/api/test/upload",
+                  data={"file": (io.BytesIO(buf.tobytes()), filename)},
+                  content_type="multipart/form-data").get_json()
+
+
+def test_benchmark_batch_aggregates_and_summarizes():
+    c = _client()
+    a = _upload(c, _CAT, "kitchen.jpg").get_json()
+    b = _upload(c, _CAT, "hallway.jpg").get_json()
+    res = c.post("/api/test/benchmark/batch", json={
+        "items": [{"id": a["id"], "name": "kitchen.jpg", "has_cat": True},
+                  {"id": b["id"], "name": "hallway.jpg", "has_cat": True}],
+        "models": ["mobilenet_ssd"], "tilings": ["off", "2x2"],
+    })
+    body = res.get_json()
+    assert res.status_code == 200
+    assert len(body["images"]) == 2 and body["meta"]["n_images"] == 2
+    # one aggregate per config (1 model × 2 tilings), with cross-image fields
+    assert len(body["configs"]) == 2
+    cfg = body["configs"][0]
+    for k in ("found", "total", "rate", "avg_score", "avg_ms", "misses", "fp"):
+        assert k in cfg
+    assert cfg["total"] == 2                      # both images are cat-present
+    # the cat is the same fixture twice, so a working config finds it in both
+    assert any(c2["found"] == 2 for c2 in body["configs"])
+    # summary report is self-contained-ish: lightbox + grid, links to per-image reports
+    html = c.get(body["summary_url"]).get_data(as_text=True)
+    assert "cross-image summary" in html and "config × image" in html
+    assert "function zoom(" in html and "target='_blank'" not in html.split("<script")[0]
+    # per-image reports are reachable
+    assert c.get(body["images"][0]["report_url"]).status_code == 200
+
+
+def test_benchmark_batch_nocat_control_reports_false_positives():
+    c = _client()
+    cat = _upload(c, _CAT, "with-cat.jpg").get_json()
+    empty = _upload_blank(c)
+    body = c.post("/api/test/benchmark/batch", json={
+        "items": [{"id": cat["id"], "name": "with-cat.jpg", "has_cat": True},
+                  {"id": empty["id"], "name": "empty-room.jpg", "has_cat": False}],
+        "models": ["mobilenet_ssd"], "tilings": ["off"],
+    }).get_json()
+    assert body["meta"]["n_cat"] == 1 and body["meta"]["n_nocat"] == 1
+    cfg = body["configs"][0]
+    assert cfg["total"] == 1 and cfg["fp_total"] == 1     # 1 cat image, 1 control
+    assert cfg["fp"] == 0                                  # blank frame → no false fire
+    html = c.get(body["summary_url"]).get_data(as_text=True)
+    assert "false-positive check" in html
+
+
+def test_benchmark_batch_rejects_empty_and_oversized():
+    c = _client()
+    assert c.post("/api/test/benchmark/batch", json={"items": []}).status_code == 400
+    big = {"items": [{"id": "x", "name": str(i)} for i in range(20)],
+           "models": ["mobilenet_ssd"], "tilings": ["off"]}
+    assert c.post("/api/test/benchmark/batch", json=big).status_code == 400
+
+
+def test_benchmark_batch_404_when_all_uploads_expired():
+    c = _client()
+    r = c.post("/api/test/benchmark/batch", json={
+        "items": [{"id": "gone", "name": "x.jpg"}],
+        "models": ["mobilenet_ssd"], "tilings": ["off"]})
+    assert r.status_code == 404
+
+
 def test_test_detect_returns_inference_ms_and_respects_tiling():
     c = _client()
     up = _upload(c, _CAT).get_json()

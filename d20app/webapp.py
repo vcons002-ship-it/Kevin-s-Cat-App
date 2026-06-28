@@ -136,7 +136,7 @@ def _run_test_detection(frame, settings: dict):
 # self-contained HTML report + an optional XLSX (needs openpyxl). ---------------
 _BENCHMARKS: "OrderedDict[str, dict]" = OrderedDict()     # id -> {html, xlsx, xlsx_error}
 _BENCH_LOCK = threading.Lock()
-_BENCH_MAX_REPORTS = 8
+_BENCH_MAX_REPORTS = 40         # hold a full batch (per-image reports + summary) at once
 _BENCH_TILINGS = ["off", "2x2", "3x3", "4x4"]
 _BENCH_MAX_RUNS = 24            # cap the matrix so one request can't run forever
 # The MobileNet input-size variants the manual model dropdown offers — the sweep
@@ -360,6 +360,186 @@ def _benchmark_xlsx(runs: list, meta: dict) -> bytes:
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# --- Batch benchmark: run the sweep across many images and aggregate which config
+# is most reliable across all of them (the cross-image question single reports can't
+# answer). Per-image reports are still produced; the summary links out to them. ----
+_BENCH_MAX_IMAGES = 12          # cap a batch so one request can't run for ages
+
+
+def _orig_thumb_data_url(frame, width: int = 200) -> str:
+    """A small **unannotated** original thumbnail (data URL) for the summary's image
+    catalog — embedded once per image (not once per miss), so summary size scales
+    with image count, not miss count (#32 3c)."""
+    import cv2
+
+    h, w = frame.shape[:2]
+    img = cv2.resize(frame, (width, max(1, int(h * width / w)))) if w > width else frame
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    return ("data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")) if ok else ""
+
+
+def _aggregate_configs(per_image: list) -> list:
+    """Aggregate every model×tiling config across all images. For cat-present images:
+    detection rate, average combined score, and which images it missed. For no-cat
+    images: how often it false-fired. Average inference time over all images. Sorted
+    by detection rate, then average score (the deploy-config shortlist)."""
+    cat_imgs = [im for im in per_image if im["has_cat"]]
+    nocat_imgs = [im for im in per_image if not im["has_cat"]]
+    keys = OrderedDict()        # preserve first-seen order
+    for im in per_image:
+        for r in im["runs"]:
+            keys.setdefault((r["model"], r["tiling"]), r["size"])
+
+    def run_for(im, model, tiling):
+        return next((r for r in im["runs"]
+                     if r["model"] == model and r["tiling"] == tiling), None)
+
+    out = []
+    for (model, tiling), size in keys.items():
+        cat_runs = [(im, run_for(im, model, tiling)) for im in cat_imgs]
+        found = [im["idx"] for im, r in cat_runs if r and r["detected"]]
+        misses = [im["idx"] for im, r in cat_runs if r and not r["detected"]]
+        scores = [r["combined_score"] for _, r in cat_runs if r]
+        all_ms = [r["inference_ms"] for r in
+                  (run_for(im, model, tiling) for im in per_image) if r]
+        fp = [im["idx"] for im in nocat_imgs
+              if (run_for(im, model, tiling) or {}).get("detected")]
+        out.append({
+            "model": model, "tiling": tiling, "size": size,
+            "found": len(found), "total": len(cat_imgs),
+            "rate": (len(found) / len(cat_imgs)) if cat_imgs else 0.0,
+            "avg_score": round(sum(scores) / len(scores), 3) if scores else 0.0,
+            "avg_ms": round(sum(all_ms) / len(all_ms), 1) if all_ms else 0.0,
+            "misses": misses, "fp": len(fp),
+            "fp_total": len(nocat_imgs), "fp_imgs": fp,
+        })
+    out.sort(key=lambda c: (-c["rate"], -c["avg_score"]))
+    return out
+
+
+def _benchmark_summary_html(per_image: list, configs: list, meta: dict) -> str:
+    """The cross-image summary: a clean config table (sorted by detection rate) whose
+    'found' cell expands to the missed frames, a config×image heatmap, and an image
+    catalog embedded once each. Links out to the per-image reports (kept small)."""
+    n_cat = sum(1 for im in per_image if im["has_cat"])
+    n_nocat = len(per_image) - n_cat
+    # Image catalog: one embedded original thumbnail per image (by idx), for the
+    # miss lists and the lightbox — referenced, never duplicated per miss.
+    cat_js = ",".join(f"'{im['orig_thumb']}'" for im in per_image)
+    by_idx = {im["idx"]: im for im in per_image}
+
+    def miss_detail(c):
+        if not c["misses"]:
+            return ""
+        cells = []
+        for idx in c["misses"]:
+            im = by_idx[idx]
+            r = next((x for x in im["runs"]
+                      if x["model"] == c["model"] and x["tiling"] == c["tiling"]), None)
+            sc = f"{r['combined_score']:.2f}" if r else "—"
+            cells.append(
+                f"<div class='miss'><img src='{im['orig_thumb']}' onclick='zoom(this.src)' "
+                f"title='click to enlarge'><div><a href='{im['report_id']}.html' "
+                f"target='_blank'>{esc(im['name'])}</a><br><span class='sub'>scored {sc}, "
+                f"below {meta['cat_threshold']:.2f}</span></div></div>")
+        return "<div class='misses'>" + "".join(cells) + "</div>"
+
+    rows, details = [], []
+    for i, c in enumerate(configs):
+        label = f"{esc(_display_model(c['model']))} {c['size']} {esc(c['tiling'])}"
+        rate_txt = f"{c['found']}/{c['total']}"
+        perfect = c["found"] == c["total"]
+        # Only an imperfect rate with traceable misses invites a click.
+        if c["misses"]:
+            found_cell = (f"<td class='exp' onclick='tog({i})'>{rate_txt} "
+                          f"<span class='car'>▸</span></td>")
+        else:
+            mark = "✓" if perfect and c["total"] else ""
+            found_cell = f"<td>{rate_txt} {mark}</td>"
+        fp_cell = (f"{c['fp']}/{c['fp_total']}" if n_nocat else "—")
+        rows.append(
+            f"<tr><td style='text-align:left'>{label}</td>{found_cell}"
+            f"<td style='background:{_score_color(c['avg_score'])}'>"
+            f"{c['avg_score']:.2f}</td><td>{c['avg_ms']:.0f} ms</td>"
+            f"<td>{fp_cell}</td></tr>")
+        if c["misses"]:
+            details.append(
+                f"<tr id='d{i}' class='detail' style='display:none'><td colspan='5'>"
+                f"<b>Missed:</b> {miss_detail(c)}</td></tr>")
+        else:
+            details.append("")
+    body_rows = "".join(r + d for r, d in zip(rows, details))
+
+    # config × image heatmap: rows = configs (best first), cols = images.
+    head_cells = "".join(
+        f"<th title='{esc(im['name'])}'>#{im['idx'] + 1}"
+        + ("" if im["has_cat"] else " ∅") + "</th>" for im in per_image)
+    grid_rows = []
+    for c in configs:
+        cells = []
+        for im in per_image:
+            r = next((x for x in im["runs"] if x["model"] == c["model"]
+                      and x["tiling"] == c["tiling"]), None)
+            sc = r["combined_score"] if r else 0.0
+            if im["has_cat"]:
+                txt = f"{sc:.2f}" if (r and r["detected"]) else "✗"
+                bg = _score_color(sc) if (r and r["detected"]) else "#e66"
+            else:                       # no-cat control: a detection here is a false +
+                txt = "FP" if (r and r["detected"]) else "·"
+                bg = "#e66" if (r and r["detected"]) else "#eee"
+            cells.append(f"<td title='{esc(im['name'])}: {sc:.2f}' "
+                         f"style='background:{bg}'>{txt}</td>")
+        grid_rows.append(
+            f"<tr><td style='text-align:left'>{esc(_display_model(c['model']))} "
+            f"{c['size']} {esc(c['tiling'])}</td>" + "".join(cells) + "</tr>")
+
+    fp_note = (f" · {n_nocat} no-cat control"
+               f"{'s' if n_nocat != 1 else ''} (false-positive check)"
+               if n_nocat else "")
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>Cat detection benchmark — cross-image summary</title><style>"
+        "body{font-family:system-ui,Arial,sans-serif;margin:24px;color:#111}"
+        "h2{margin-bottom:2px}table{border-collapse:collapse;margin:12px 0}"
+        "th,td{border:1px solid #ddd;padding:6px 9px;text-align:center;font-size:14px}"
+        "th{background:#f3f3f3}td.exp{cursor:pointer;user-select:none}"
+        ".car{color:#888;font-size:12px}.detail td{text-align:left;background:#fafafa}"
+        ".misses{display:flex;flex-wrap:wrap;gap:12px;margin:6px 0}"
+        ".miss{display:flex;gap:8px;align-items:center;font-size:13px}"
+        ".miss img{width:90px;border-radius:4px;cursor:zoom-in}"
+        ".miss .sub{color:#a33}.grid td{font-size:12px;padding:4px 6px}"
+        ".fixed{background:#f7f7f9;border:1px solid #e3e3e8;border-radius:8px;"
+        "padding:10px 14px;margin:10px 0;font-size:14px}"
+        "#lb{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;"
+        "align-items:center;justify-content:center;cursor:zoom-out;z-index:9}"
+        "#lb img{max-width:96vw;max-height:96vh;border-radius:6px}"
+        "</style></head><body>"
+        "<div id='lb' onclick='this.style.display=\"none\"'><img id='lbimg'></div>"
+        f"<script>var CAT=[{cat_js}];"
+        "function zoom(s){var b=document.getElementById('lb');"
+        "document.getElementById('lbimg').src=s;b.style.display='flex';}"
+        "function tog(i){var r=document.getElementById('d'+i);"
+        "if(!r)return;r.style.display=r.style.display==='none'?'table-row':'none';}"
+        "</script>"
+        "<h2>🐱 Cat detection benchmark — cross-image summary</h2>"
+        f"<p class='muted'>{esc(meta['ts'])} · {len(per_image)} images "
+        f"({n_cat} with a cat{fp_note}) · {len(configs)} configs</p>"
+        f"<div class='fixed'><b>Held fixed for every run:</b> cat threshold "
+        f"<b>{meta['cat_threshold']:.2f}</b> · accelerator "
+        f"<b>{esc(meta['accelerator'])}</b> · tile overlap 0.2 · locator [cat, dog]. "
+        "<b>found</b> = images where the cat cleared the threshold; click an imperfect "
+        "rate to see which frames it missed.</div>"
+        "<table><tr><th style='text-align:left'>config</th><th>found</th>"
+        "<th>avg conf</th><th>avg ms</th><th>false +</th></tr>"
+        + body_rows + "</table>"
+        "<h3>config × image</h3>"
+        "<p class='muted' style='font-size:13px'>✗ = cat missed · FP = fired on a "
+        "no-cat frame (∅) · number = combined score. Hover a cell for the image.</p>"
+        "<table class='grid'><tr><th style='text-align:left'>config</th>"
+        + head_cells + "</tr>" + "".join(grid_rows) + "</table>"
+        "</body></html>")
 
 
 def _mask_cameras(cameras, cfg=None) -> list:
@@ -758,6 +938,90 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             "html_url": f"/api/test/benchmark/{rid}.html",
             "xlsx_url": (f"/api/test/benchmark/{rid}.xlsx" if xlsx else None),
             "xlsx_error": xlsx_error,
+        })
+
+    @app.post("/api/test/benchmark/batch")
+    def api_test_benchmark_batch():
+        # Run the sweep across many uploaded images, emit a per-image report for each
+        # plus one cross-image summary that aggregates which config is most reliable.
+        body = request.get_json(silent=True) or {}
+        items = body.get("items") or []
+        if not items:
+            return jsonify({"error": "Add at least one image to the batch."}), 400
+        if len(items) > _BENCH_MAX_IMAGES:
+            return jsonify({"error": f"Too many images ({len(items)}); "
+                            f"cap is {_BENCH_MAX_IMAGES} per batch."}), 400
+        models = [m for m in (body.get("models") or _benchmark_models()) if m]
+        tilings = [t for t in (body.get("tilings") or _BENCH_TILINGS) if t]
+        if not models or not tilings:
+            return jsonify({"error": "Pick at least one model and tiling."}), 400
+        if len(models) * len(tilings) > _BENCH_MAX_RUNS:
+            return jsonify({"error": f"Too many runs per image "
+                            f"({len(models) * len(tilings)}); trim to ≤ {_BENCH_MAX_RUNS}."}), 400
+        try:
+            cat_threshold = float(body.get("cat_threshold",
+                                           config_mod.load().cat_confidence))
+        except (TypeError, ValueError):
+            cat_threshold = 0.5
+        accelerator = body.get("accelerator") or "cpu"
+        ts_disp = time.strftime("%Y-%m-%d %H:%M")
+        ts_file = time.strftime("%Y%m%d-%H%M%S")
+
+        per_image, images = [], []
+        for i, it in enumerate(items):
+            with _TEST_SESSIONS_LOCK:
+                frames = _TEST_SESSIONS.get((it or {}).get("id"))
+            if not frames:
+                continue                # an upload expired — skip it, don't fail the batch
+            try:
+                idx = max(0, min(int(it.get("frame_index", 0)), len(frames) - 1))
+            except (TypeError, ValueError):
+                idx = 0
+            frame = frames[idx]
+            name = it.get("name") or f"image {i + 1}"
+            has_cat = it.get("has_cat", True) is not False
+            runs = _run_benchmark(frame, models, tilings, cat_threshold, accelerator)
+            h, w = frame.shape[:2]
+            stem = os.path.splitext(os.path.basename(name))[0]
+            meta_i = {"cat_threshold": cat_threshold, "accelerator": accelerator,
+                      "image": name, "ts": ts_disp, "width": int(w), "height": int(h)}
+            rid = uuid.uuid4().hex
+            html = _benchmark_html(runs, meta_i,
+                                   original_url=_full_jpeg_data_url(frame),
+                                   original_name=f"{_slugify(stem)}.jpg")
+            with _BENCH_LOCK:
+                _BENCHMARKS[rid] = {"html": html, "xlsx": None,
+                                    "slug": f"benchmark-{_slugify(stem)}-{ts_file}"}
+            # Keep only the light fields the summary needs (no thumbs/raw bytes).
+            light = [{"model": r["model"], "tiling": r["tiling"], "size": r["size"],
+                      "combined_score": r["combined_score"], "detected": r["detected"],
+                      "inference_ms": r["inference_ms"]} for r in runs]
+            per_image.append({"idx": len(per_image), "name": name, "report_id": rid,
+                              "has_cat": has_cat, "orig_thumb": _orig_thumb_data_url(frame),
+                              "runs": light})
+            images.append({"name": name, "has_cat": has_cat,
+                           "report_url": f"/api/test/benchmark/{rid}.html"})
+
+        if not per_image:
+            return jsonify({"error": "All uploads expired — re-select the images."}), 404
+
+        configs = _aggregate_configs(per_image)
+        smeta = {"cat_threshold": cat_threshold, "accelerator": accelerator, "ts": ts_disp}
+        summary_html = _benchmark_summary_html(per_image, configs, smeta)
+        sid = uuid.uuid4().hex
+        with _BENCH_LOCK:
+            _BENCHMARKS[sid] = {"html": summary_html, "xlsx": None,
+                                "slug": f"benchmark-summary-{ts_file}"}
+            while len(_BENCHMARKS) > _BENCH_MAX_REPORTS:
+                _BENCHMARKS.popitem(last=False)
+        n_cat = sum(1 for im in per_image if im["has_cat"])
+        return jsonify({
+            "summary_id": sid,
+            "summary_url": f"/api/test/benchmark/{sid}.html",
+            "images": images, "configs": configs,
+            "meta": {"n_images": len(per_image), "n_cat": n_cat,
+                     "n_nocat": len(per_image) - n_cat,
+                     "cat_threshold": cat_threshold, "accelerator": accelerator},
         })
 
     @app.get("/api/test/benchmark/<rid>.html")
