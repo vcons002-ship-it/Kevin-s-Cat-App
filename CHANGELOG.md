@@ -11,6 +11,31 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.19.0] — 2026-06-28
+
+### Added
+- **Batch benchmark + cross-image summary** (#32). The benchmark tool now accepts
+  **several images at once** (add as many as 12) and runs the same models × tiling
+  sweep on each — you still get the per-image self-contained report, **plus one
+  cross-image summary** that answers the question single reports can't: *which config
+  is most reliable across many frames?* The summary ranks every config by
+  **detection rate** (e.g. `13/13`), with **average combined score** and **average
+  inference time**, and is the table you'd use to pick a deploy config.
+  - **Misses are traceable, never just counted.** An imperfect rate (e.g. `12/13`)
+    is click-to-expand: it lists the **frames it missed** — a small original
+    thumbnail, the score it got (`0.31, below 0.50` — near-miss vs total whiff), and
+    a link to that image's per-image report. A perfect row has nothing to expand and
+    stays quiet, so the eye goes to the configs worth investigating.
+  - **config × image heatmap** so the whole pattern is visible at a glance — you can
+    instantly see whether misses cluster on one hard frame (everything struggles) or
+    are scattered (config-specific weakness).
+  - **Size-safe:** each original thumbnail is embedded **once per image** in a catalog
+    and referenced by id, so the summary stays ~1–2 MB regardless of how many configs
+    miss a hard frame; the heavy annotated detail lives in the linked per-image reports.
+  - **Empty-room controls.** Tick a frame "no cat" and the summary reports its
+    **false-positive** count separately — a good locator finds the cat *and* stays
+    quiet on empty rooms. Endpoint: `POST /api/test/benchmark/batch`.
+
 ## [0.18.2] — 2026-06-28
 
 ### Fixed

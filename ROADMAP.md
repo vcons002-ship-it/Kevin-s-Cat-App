@@ -62,7 +62,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **185 automated tests**, including a detection-accuracy regression guard over
+- **189 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
@@ -120,7 +120,15 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       Report polish (0.18.1): legible click-to-enlarge thumbnails, the **full-res
       original frame embedded** for reproducibility, human-readable download filenames,
       and a clearly-disabled (not dead) XLSX button when `openpyxl` is absent
-      (#25/#26/#27/#28).
+      (#25/#26/#27/#28). Report fixes (0.18.2): in-page lightbox so thumbnails enlarge
+      instead of hitting the browser's `data:`-URL navigation block, and SSD labels no
+      longer show the size twice (#30/#31).
+- [x] **Batch benchmark + cross-image summary** — sweep many images at once and get
+      one summary ranking each config by **detection rate across all frames**, with
+      click-to-expand **miss traceability** (which frame, what score, link to its
+      report), a **config×image heatmap**, and optional **empty-room controls** that
+      turn the summary into a false-positive check (0.19.0, #32). Answers "which config
+      should the locator use?" inside the app.
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

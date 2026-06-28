@@ -71,6 +71,11 @@ a.disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
 }
 .img-lightbox.hidden { display: none; }
 .img-lightbox img { max-width: 96vw; max-height: 96vh; border-radius: 6px; }
+.batch-row { display: flex; align-items: center; gap: 12px; padding: 4px 0;
+  border-bottom: 1px solid var(--line); font-size: 0.9em; }
+.batch-row .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.link { background: none; border: none; color: var(--stop); cursor: pointer;
+  padding: 0; font-size: 0.85em; width: auto; }
 .upload { display: inline-flex; align-items: center; }
 .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 details { margin-top: 12px; }

@@ -221,6 +221,16 @@ identical sweep after a code/model change to compare), and downloads get
 to enable it, rather than silently doing nothing — the HTML report needs no extra
 packages.
 
+**Batch several images → cross-image summary.** Add up to 12 frames at once and the
+tool runs the same sweep on each, giving a per-image report **plus one summary** that
+ranks every config by **detection rate across all the frames** (e.g. `13/13`), with
+average score and inference time — the table for picking a deploy config. An imperfect
+rate is **click-to-expand**: it shows exactly which frames a config missed (thumbnail,
+the score it got, link to that image's report), and a **config×image heatmap** makes
+the pattern obvious (one hard frame vs a weak config). Tick a frame **"no cat"** to use
+it as an empty-room control, and the summary reports that config's **false-positive**
+rate separately — a good locator finds the cat *and* stays quiet on empty rooms.
+
 ### Finding a still cat that's too small (resolution)
 
 A sleeping cat shrunk into a wide 640 frame can be **too small for the net to detect

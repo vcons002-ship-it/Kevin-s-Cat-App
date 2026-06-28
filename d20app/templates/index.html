@@ -192,6 +192,32 @@
           <p id="bench-xlsx-note" class="muted hidden"></p>
           <div id="bench-table"></div>
         </div>
+
+        <!-- Batch: sweep several images at once + a cross-image summary report -->
+        <details id="bench-batch">
+          <summary class="muted">batch several images → cross-image summary</summary>
+          <p class="help" style="font-size:13px">
+            Add multiple frames (mixing in a few empty rooms makes the summary double
+            as a false-positive check). Each runs the same sweep; you get a per-image
+            report plus one <strong>summary ranking which config is most reliable
+            across all of them</strong>. A big batch takes minutes — run it and walk away.
+          </p>
+          <div class="row">
+            <label class="upload ghost">
+              <input type="file" id="bench-batch-files" accept="image/*" multiple hidden/>
+              ＋ Add images
+            </label>
+            <button id="bench-batch-run" class="ghost" type="button" disabled>📊 Run batch + summary</button>
+            <span id="bench-batch-note" class="muted"></span>
+          </div>
+          <div id="bench-batch-list"></div>
+          <div id="bench-batch-results" class="hidden">
+            <div class="row">
+              <a id="bench-summary-html" class="ghost" target="_blank" rel="noopener">⬇ Cross-image summary</a>
+            </div>
+            <div id="bench-summary-table"></div>
+          </div>
+        </details>
       </div>
       <p class="help">
         Run the detector on a still or a short clip and tune the knobs until it
