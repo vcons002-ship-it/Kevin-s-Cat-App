@@ -82,7 +82,7 @@ class Config:
     # --- Locator resolution (the still-cat scan only; the fast treat path is untouched).
     # A sleeping cat shrunk into a 640 frame can be too small to detect at all; tiling
     # and/or a larger input give the locator scan more effective resolution. ---
-    cat_scan_tiling: str = "2x2"     # "off" | "2x2" | "3x3" | "4x4" — split the frame into an overlapping grid, detect per tile, merge (more tiles = catches smaller cats, more CPU). Default on (2x2).
+    cat_scan_tiling: str = "4x4"     # "off" | "2x2" | "3x3" | "4x4" — split the frame into an overlapping grid, detect per tile, merge (more tiles = catches smaller cats, more CPU). Default 4x4 (what actually resolves a small/sleeping cat in testing).
     cat_scan_tile_overlap: float = 0.2   # fraction each tile overlaps its neighbour so a cat on a seam still lands whole in one tile
     cat_scan_imgsz: int = 0          # locator input size: 0 = native model size. MobileNet resizes freely; YOLO needs a matching exported model (e.g. yolo11m_960.onnx) or this falls back to native + tiling
 

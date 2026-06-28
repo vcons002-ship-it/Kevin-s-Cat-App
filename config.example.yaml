@@ -50,7 +50,7 @@ roi: null                 # [x, y, w, h] region of interest — set this visuall
 # --- Locator resolution (the still-cat scan only; the fast treat path is untouched).
 # A sleeping cat shrunk into a 640 frame can be too small to detect; tiling and/or a
 # larger input give the locator scan more effective resolution. ---
-cat_scan_tiling: "2x2"     # "off" | "2x2" | "3x3" | "4x4" — split into an overlapping grid, detect per tile, merge (more tiles catch smaller cats, more CPU). Default on.
+cat_scan_tiling: "4x4"     # "off" | "2x2" | "3x3" | "4x4" — split into an overlapping grid, detect per tile, merge (more tiles catch smaller cats, more CPU). Default 4x4 (resolves a small/sleeping cat).
 cat_scan_tile_overlap: 0.2 # fraction each tile overlaps its neighbour
 cat_scan_imgsz: 0          # locator input size: 0 = native. MobileNet resizes freely; YOLO needs a matching exported model (e.g. yolo11m_960) or falls back to native + tiling
 

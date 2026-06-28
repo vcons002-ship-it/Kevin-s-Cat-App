@@ -100,7 +100,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       inference-time readout) as live controls; save what works to a camera or the
       global defaults (0.15.0 / 0.16.0). Adjustments apply before the net.
 - [x] **Higher-resolution locator scan** — the still-cat scan runs at higher
-      effective resolution (**tiling**, default 2×2, and/or a **larger input** like
+      effective resolution (**tiling**, default 4×4, and/or a **larger input** like
       the bundled `yolo11m_960`) so a small/distant cat clears the net, while the
       fast treat path stays at the native size (0.16.0, issue #17).
 - [ ] Multiple / per-zone regions of interest.

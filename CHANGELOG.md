@@ -18,9 +18,10 @@ _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
   sleeping cat shrunk into a 640 frame can be **too small for the net to detect at
   all**; the periodic still-cat scan now runs at higher effective resolution while
   the fast treat path is untouched:
-  - **Tiling (default on, `2x2`)** — splits the frame into an overlapping grid and
+  - **Tiling (default `4x4`)** — splits the frame into an overlapping grid and
     detects per tile, so a small/distant cat fills more of the net's input. Merged
-    with NMS. Works with the bundled models, no re-export. `off`/`2x2`/`3x3`/`4x4`.
+    with NMS. Works with the bundled models, no re-export. `off`/`2x2`/`3x3`/`4x4`
+    (4×4 is what actually resolved a sleeping cat in testing; fewer tiles = less CPU).
   - **Larger input (`cat_scan_imgsz`)** — MobileNet resizes freely; for YOLO a
     **`yolo11m_960`** export is now bundled (and `scripts/export_yolo.py` +
     `yolo11m_1280` registration for more). Missing export → graceful fallback.

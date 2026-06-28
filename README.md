@@ -207,8 +207,9 @@ at all** (0.00 confidence — not a weak detection, an actual zero). The fix is 
 **effective resolution on the still-cat (locator) scan only**, leaving the fast
 person/treat path untouched:
 
-- **Tiling** (default **2×2**, up to 4×4) splits the frame into an overlapping grid
-  and detects per tile, so a small/distant cat fills more of the net's input. Works
+- **Tiling** (default **4×4**, down to off) splits the frame into an overlapping grid
+  and detects per tile, so a small/distant cat fills more of the net's input. 4×4 is
+  what actually resolved a sleeping cat in testing; drop to 2×2/off to save CPU. Works
   with the bundled models — no extra downloads.
 - **Larger input** (`Cat input size`) runs the locator scan at 960/1280. MobileNet
   resizes freely; for YOLO a **`yolo11m_960`** model is bundled (export more sizes
