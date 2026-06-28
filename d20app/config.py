@@ -62,6 +62,14 @@ class Config:
     roi: list | None = None          # optional [x, y, w, h] crop of the frame (set in the GUI)
     label_floor: float = 0.55        # min confidence to NAME a non-person mover in the log/snapshot (higher = fewer stray "pottedplant"/"sofa" labels; no effect on treats)
 
+    # --- Image adjustments (applied to the frame BEFORE the net runs; can rescue a
+    # too-dark / washed-out feed). Defaults are all no-ops. Tune them in the GUI's
+    # "Test detection" tool against a real photo, then save to a camera. ---
+    gamma: float = 1.0               # >1 brightens midtones (lifts shadows), <1 darkens; 1.0 = off
+    brightness: int = 0              # add to every pixel (-100..100); 0 = off
+    contrast: float = 1.0            # multiply around mid-grey (0.5..2.0); 1.0 = off
+    saturation: float = 1.0          # scale colour intensity (0 = greyscale, 1.0 = off, >1 = punchier)
+
     # --- Motion pre-filter (cheap gate before the neural net runs) ---
     motion_sensitivity: str = "medium"   # "low"|"medium"|"high"|"custom" — GUI preset that drives the three knobs below
     motion_min_area_frac: float = 0.003  # fraction of the frame that must change to count as motion (higher = less sensitive)
@@ -111,6 +119,8 @@ _CAMERA_FROM_CFG = {
     "person_confidence": "person_confidence", "confirm_frames": "confirm_frames",
     "detect_size": "detect_size", "scan_fps": "scan_fps", "label_floor": "label_floor",
     "smooth_feed": "smooth_live_feed", "roi": "roi",
+    "gamma": "gamma", "brightness": "brightness",
+    "contrast": "contrast", "saturation": "saturation",
     "motion_sensitivity": "motion_sensitivity",
     "motion_min_area_frac": "motion_min_area_frac",
     "motion_diff_threshold": "motion_diff_threshold",

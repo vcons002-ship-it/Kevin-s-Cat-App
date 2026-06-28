@@ -194,6 +194,7 @@ async function loadCamerasList() {
   const { body } = await api("/api/cameras/saved");
   cameras = body || [];
   renderCameras();
+  populateTestSaveTargets();
 }
 
 function populateLiveCameras() {
@@ -364,7 +365,10 @@ async function loadConfig() {
     person_confidence: cfg.person_confidence, confirm_frames: cfg.confirm_frames,
     detect_size: cfg.detect_size, scan_fps: cfg.scan_fps, label_floor: cfg.label_floor,
     motion_sensitivity: cfg.motion_sensitivity,
+    gamma: cfg.gamma, brightness: cfg.brightness,
+    contrast: cfg.contrast, saturation: cfg.saturation,
   };
+  if (!testTouched) setTestControls(camDefaults);   // seed the test tool from saved settings
   updateOdds();
 }
 
@@ -462,6 +466,12 @@ let catRotate = false, catCams = [], catRotateIdx = 0;
 const watchableCam = (name) =>
   Array.from($("live-camera").options).some((o) => o.value === name);
 
+// Ask the loop to run that camera's detector continuously for a short window, so
+// the live feed keeps boxing the cat (even a still one) while the user looks.
+function boostCam(name) {
+  if (name) api("/api/cats/boost", postJSON({ camera: name }));
+}
+
 async function loadCats() {
   const { body } = await api("/api/cats");
   if (!body) return;
@@ -501,6 +511,7 @@ async function showCat() {
   catCams = present.filter(watchableCam);
   catRotate = catCams.length > 1;
   catRotateIdx = Math.max(0, catCams.indexOf(pick));
+  boostCam(pick);   // keep the jumped-to camera actively detecting so the box shows
   await loadCats();
   $("live-enabled").checked = true;
   if (liveOn) liveOn = false;          // force the feed to re-point at the chosen camera
@@ -516,8 +527,147 @@ function rotateCatFeed() {
   const name = catCams[catRotateIdx];
   if (!watchableCam(name)) return;
   $("live-camera").value = name;
+  boostCam(name);                      // keep the room we rotate to actively detecting
   liveOn = false;                      // force updateLiveView to re-point the stream
   updateLiveView(isRunning);
+}
+
+// ---- test detection (photo / video) ----------------------------------------
+let testSession = null, testFrameIdx = 0, testTimer = null, testTouched = false;
+
+function testSettings() {
+  const n = (id) => Number($(id).value);
+  return {
+    model: $("t_model").value,
+    detect_size: n("t_detect_size"),
+    person_confidence: n("t_person_confidence"),
+    label_floor: n("t_label_floor"),
+    gamma: n("t_gamma"),
+    brightness: n("t_brightness"),
+    contrast: n("t_contrast"),
+    saturation: n("t_saturation"),
+  };
+}
+
+function testRangeLabels() {
+  const s = testSettings();
+  $("t_person_confidence_v").textContent = s.person_confidence.toFixed(2);
+  $("t_label_floor_v").textContent = s.label_floor.toFixed(2);
+  $("t_gamma_v").textContent = s.gamma.toFixed(1);
+  $("t_brightness_v").textContent = (s.brightness > 0 ? "+" : "") + s.brightness;
+  $("t_contrast_v").textContent = s.contrast.toFixed(2);
+  $("t_saturation_v").textContent = s.saturation.toFixed(2);
+}
+
+// Seed the controls from a settings object (camera defaults or global config).
+function setTestControls(v) {
+  v = v || {};
+  if (v.model || v.detector_model) $("t_model").value = v.model || v.detector_model;
+  if (v.detect_size) $("t_detect_size").value = String(v.detect_size);
+  const set = (id, val, dflt) => { $(id).value = (val === undefined || val === null) ? dflt : val; };
+  set("t_person_confidence", v.person_confidence, 0.5);
+  set("t_label_floor", v.label_floor, 0.55);
+  set("t_gamma", v.gamma, 1.0);
+  set("t_brightness", v.brightness, 0);
+  set("t_contrast", v.contrast, 1.0);
+  set("t_saturation", v.saturation, 1.0);
+  testRangeLabels();
+}
+
+function scheduleTestDetect() {
+  testTouched = true;
+  testRangeLabels();
+  if (!testSession) return;
+  clearTimeout(testTimer);
+  testTimer = setTimeout(runTestDetection, 250);   // debounce slider drags
+}
+
+async function runTestDetection() {
+  if (!testSession) return;
+  $("test-note").textContent = "Detecting…";
+  const { ok, body } = await api("/api/test/detect", postJSON({
+    id: testSession.id, frame_index: testFrameIdx, settings: testSettings(),
+  }));
+  if (!ok || !body || body.error) {
+    const msg = (body && body.error) || "Detection failed.";
+    $("test-note").textContent = msg;
+    if (/expired/i.test(msg)) testSession = null;
+    return;
+  }
+  const img = $("test-img");
+  img.src = body.annotated;
+  img.classList.remove("hidden");
+  $("test-placeholder").classList.add("hidden");
+  renderTestDetections(body.detections);
+  $("test-note").textContent = "";
+}
+
+function renderTestDetections(list) {
+  const box = $("test-detections");
+  if (!list || !list.length) {
+    box.innerHTML = '<span class="muted">No person or cat detected — try a lower confidence, a bigger input size, or lift the gamma.</span>';
+    return;
+  }
+  box.innerHTML = list.map((d) => {
+    const cls = d.label === "person" ? "det-person" : (d.label === "cat" ? "det-cat" : "det-other");
+    return `<span class="det-chip ${cls}">${esc(d.label)} ${Number(d.score).toFixed(2)}</span>`;
+  }).join("");
+}
+
+function renderFilmstrip() {
+  const film = $("test-film");
+  if (!testSession || testSession.count <= 1) { film.classList.add("hidden"); film.innerHTML = ""; return; }
+  film.classList.remove("hidden");
+  film.innerHTML = testSession.thumbs.map((t, i) =>
+    `<img class="film-thumb ${i === testFrameIdx ? "sel" : ""}" data-i="${i}" src="${t}" alt="frame ${i + 1}" />`).join("");
+  film.querySelectorAll(".film-thumb").forEach((el) => {
+    el.onclick = () => { testFrameIdx = Number(el.dataset.i); renderFilmstrip(); runTestDetection(); };
+  });
+}
+
+async function uploadTest(file) {
+  if (!file) return;
+  $("test-note").textContent = "Uploading…";
+  const fd = new FormData(); fd.append("file", file);
+  const { ok, body } = await api("/api/test/upload", { method: "POST", body: fd });
+  if (!ok || !body || body.error) { $("test-note").textContent = (body && body.error) || "Upload failed."; return; }
+  testSession = body; testFrameIdx = 0;
+  $("test-note").textContent = body.kind === "video" ? `${body.count} frames sampled — pick one below.` : "";
+  renderFilmstrip();
+  runTestDetection();
+}
+
+function populateTestSaveTargets() {
+  const sel = $("test-save-target");
+  if (!sel) return;
+  const prev = sel.value;
+  const opts = ['<option value="__global__">Global defaults (new cameras)</option>'];
+  for (const c of cameras) opts.push(`<option value="${esc(c.name)}">${esc(c.name)}</option>`);
+  sel.innerHTML = opts.join("");
+  if (Array.from(sel.options).some((o) => o.value === prev)) sel.value = prev;
+}
+
+async function saveTestSettings() {
+  const s = testSettings();
+  const target = $("test-save-target").value;
+  $("test-note").textContent = "Saving…";
+  let ok;
+  if (target === "__global__") {
+    ({ ok } = await api("/api/config", postJSON({
+      detector_model: s.model, detect_size: s.detect_size,
+      person_confidence: s.person_confidence, label_floor: s.label_floor,
+      gamma: s.gamma, brightness: s.brightness, contrast: s.contrast, saturation: s.saturation,
+    })));
+    await loadConfig();
+  } else {
+    const cam = cameras.find((c) => c.name === target);
+    if (!cam) { $("test-note").textContent = "Pick a camera to save to."; return; }
+    ({ ok } = await api("/api/cameras/saved", postJSON({ name: cam.name, url: cam.url, ...s })));
+    await loadCamerasList();
+  }
+  $("test-note").textContent = ok ? "Saved ✓" : "Save failed";
+  populateTestSaveTargets();
+  setTimeout(() => { if ($("test-note").textContent === "Saved ✓") $("test-note").textContent = ""; }, 2500);
 }
 
 // ---- activity log ----------------------------------------------------------
@@ -640,6 +790,20 @@ function wire() {
 
   $("show-cat").onclick = showCat;
   $("cats-clear").onclick = async () => { await api("/api/cats/clear", { method: "POST" }); loadCats(); };
+
+  // Test-detection tool
+  $("test-file").onchange = (e) => uploadTest(e.target.files[0]);
+  for (const f of ["model", "detect_size", "person_confidence", "label_floor",
+                   "gamma", "brightness", "contrast", "saturation"]) {
+    const el = $("t_" + f);
+    if (el) el.oninput = scheduleTestDetect;
+  }
+  $("test-reset").onclick = () => {
+    $("t_gamma").value = 1.0; $("t_brightness").value = 0;
+    $("t_contrast").value = 1.0; $("t_saturation").value = 1.0;
+    scheduleTestDetect();
+  };
+  $("test-save").onclick = saveTestSettings;
 }
 
 async function loadVersion() {

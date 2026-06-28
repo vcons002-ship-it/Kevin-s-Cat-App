@@ -47,6 +47,13 @@ scan_fps: 10.0            # frames/sec read from the camera; lower = less CPU (g
 smooth_live_feed: false   # run a dedicated capture thread so the live GUI feed plays at camera rate (decoupled from inference); a little extra CPU/bandwidth
 roi: null                 # [x, y, w, h] region of interest — set this visually in the GUI
 
+# --- Image adjustments (applied BEFORE the net; tune in the GUI's "Test detection"
+# tool against a real photo). All defaults are no-ops. ---
+gamma: 1.0                # >1 brightens midtones / lifts shadows, <1 darkens; 1.0 = off
+brightness: 0             # add to every pixel, -100..100; 0 = off
+contrast: 1.0             # multiply around mid-grey, 0.5..2.0; 1.0 = off
+saturation: 1.0           # colour intensity: 0 = greyscale, 1.0 = off, >1 = punchier
+
 # --- Cat check (a still/sleeping cat makes no motion to trip the net) ---
 cat_scan_interval: 30.0   # how often (sec) a cat-tracking camera runs the net even with NO motion, to catch a sleeping cat: >0 = every N seconds (30 default), 0 = always on (net every frame, most CPU), <0 = off (motion only)
 

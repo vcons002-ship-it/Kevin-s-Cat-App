@@ -309,6 +309,26 @@ def test_still_person_on_scan_does_not_roll(monkeypatch, tmp_path):
         lp.stop()
 
 
+def test_show_cat_boost_forces_detection_when_scanning_off(monkeypatch, tmp_path):
+    # Periodic scanning OFF: a still cat is normally unseen. A "Show cat" boost must
+    # force continuous detection so the live feed boxes the cat — and it gets recorded.
+    global OUTCOMES
+    OUTCOMES = {"rtsp://nap/s": FrameOutcome(False, False, labels=("cat",))}
+    cfg = _base_cfg([_cam("Nap", "rtsp://nap/s", roll=False, track_cats=True)],
+                    cat_scan_interval=-1)        # off (motion only)
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path, seconds=0.2)
+    try:
+        assert lp.cats.last() is None            # scanning off → still cat unseen
+        assert lp.boost_detection("Ghost") is False   # not a watched camera
+        assert lp.boost_detection("Nap") is True
+        time.sleep(0.3)
+        last = lp.cats.last()
+        assert last is not None and last["camera"] == "Nap"   # boost found the still cat
+        assert lp.cat_present() is True
+    finally:
+        lp.stop()
+
+
 def test_stop_releases_all_detectors(monkeypatch, tmp_path):
     global OUTCOMES
     OUTCOMES = {"rtsp://a/s": FrameOutcome(False, False),
@@ -363,6 +383,13 @@ def test_cats_endpoint_exposes_present_cameras(tmp_path, monkeypatch):
     body = c.get("/api/cats").get_json()
     assert body["cameras"] == []        # nothing running → no cat-cams present
     assert "present" in body
+
+
+def test_cats_boost_endpoint(tmp_path, monkeypatch):
+    c, _ = _client(tmp_path, monkeypatch)
+    # Nothing running → the camera isn't watched, so the boost is a no-op.
+    assert c.post("/api/cats/boost", json={"camera": "Kitchen"}).get_json()["ok"] is False
+    assert c.post("/api/cats/boost", json={}).get_json()["ok"] is False
 
 
 def test_cat_scan_interval_default_and_coercion():

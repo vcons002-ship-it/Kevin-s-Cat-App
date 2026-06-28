@@ -27,6 +27,10 @@ log = logging.getLogger("d20app.loop")
 # Don't log every frame of a wandering cat — at most one motion note this often.
 _MOTION_LOG_INTERVAL = 10.0
 
+# How long "Show cat" forces continuous detection on the camera it jumps to, so the
+# live feed keeps drawing a box around the cat (even a still one) while the user looks.
+_CAT_BOOST_SECONDS = 20.0
+
 
 def _parse_hhmm(value: str):
     """Parse 'HH:MM' to a datetime.time, or None if blank/invalid."""
@@ -125,6 +129,7 @@ class DetectionLoop:
         self._cam_status: dict[str, dict] = {}          # name -> {connected,last_error,roll,track_cats}
         self._live_name: str | None = None              # camera the GUI streams by default
         self._cat_flash_ttl = 2.0                       # how long a cat stays "present" between scans
+        self._cat_boost: dict[str, float] = {}          # name -> monotonic deadline for forced detection
 
     def _caster_for(self, cfg) -> Caster:
         """A single long-lived Caster so speaker connections stay open."""
@@ -203,6 +208,21 @@ class DetectionLoop:
         """True if **any cat-tracking** camera has a cat on it right now."""
         return bool(self.cats_present_cameras())
 
+    def boost_detection(self, name: str, seconds: float | None = None) -> bool:
+        """Run the net continuously on ``name`` for ``seconds`` (default
+        :data:`_CAT_BOOST_SECONDS`), so the live feed keeps drawing a box around the
+        cat — even a motionless one between periodic scans — while the user looks.
+
+        Returns False if that camera isn't currently being watched. The worker reads
+        the deadline lock-free (one float key per camera; the GIL makes the dict
+        get/set atomic), the same build-once/read-many pattern as ``_detectors``.
+        """
+        if not name or name not in self._detectors:
+            return False
+        dur = _CAT_BOOST_SECONDS if seconds is None else max(0.0, float(seconds))
+        self._cat_boost[name] = time.monotonic() + dur
+        return True
+
     def cam_status(self) -> list:
         """Per-camera {name, connected, last_error, roll, track_cats} for the GUI."""
         with self._cam_lock:
@@ -272,6 +292,10 @@ class DetectionLoop:
                 model=spec["model"],
                 accelerator=spec["accelerator"],
                 smooth_feed=spec["smooth_feed"],
+                gamma=spec["gamma"],
+                brightness=spec["brightness"],
+                contrast=spec["contrast"],
+                saturation=spec["saturation"],
             )
             cam_status[name] = {"connected": False, "last_error": "",
                                 "roll": bool(spec["roll"]),
@@ -313,6 +337,7 @@ class DetectionLoop:
                     log.exception("error releasing a detector")
             self._detectors = {}       # stop serving the live feed
             self._threads = []
+            self._cat_boost = {}       # drop any pending detection boosts
             caster.close()             # drop held speaker connections when we stop
             with self._status_lock:
                 self.status.running = False
@@ -372,9 +397,12 @@ class DetectionLoop:
                               and now < self._resume_at)
                 # Periodic still-cat scan: a sleeping cat makes no motion, so on a
                 # cat-tracking camera force the net every cat_scan_interval seconds.
-                scan_due = _cat_scan_due(cfg, track_cats, last_scan, now)
+                # A "Show cat" boost forces it continuously for a short window so the
+                # live feed keeps boxing the cat while the user looks (any camera).
+                boost = now < self._cat_boost.get(name, 0.0)
+                force_scan = _cat_scan_due(cfg, track_cats, last_scan, now) or boost
                 try:
-                    outcome = detector.read_and_detect(detect=not paused, force=scan_due)
+                    outcome = detector.read_and_detect(detect=not paused, force=force_scan)
                 except FileNotFoundError as exc:
                     # Missing MODEL files are global & unrecoverable — stop everything.
                     with self._status_lock:
@@ -403,15 +431,16 @@ class DetectionLoop:
                     connected = True
                     self._cam_set(name, connected=True)
 
-                if scan_due or outcome.motion:
+                if force_scan or outcome.motion:
                     last_scan = now      # the net ran; defer the next forced scan
 
-                # Forced still-cat scan with no real motion: the net ran anyway and
-                # may have found a sleeping cat. Record it on the rising edge (so a
-                # long nap logs once, not every scan); the live flash/rotation are
-                # driven by cats_present_cameras(). Never rolls — a no-motion frame
-                # breaks the consecutive-motion person streak, same as any idle frame.
-                if scan_due and not outcome.motion:
+                # Forced scan (periodic still-cat check or a Show-cat boost) with no
+                # real motion: the net ran anyway and may have found a sleeping cat.
+                # Record it on the rising edge (so a long nap logs once, not every
+                # scan); the live flash/rotation are driven by cats_present_cameras().
+                # Never rolls — a no-motion frame breaks the consecutive-motion person
+                # streak, same as any idle frame.
+                if force_scan and not outcome.motion:
                     streak = 0
                     cat = (detector.best_box("cat")
                            if (track_cats and "cat" in outcome.labels) else None)

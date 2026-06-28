@@ -160,9 +160,12 @@ The **🐱 Cat cam** card sits at the top of the page: a big **Show me the cat!*
 button that **flashes green while a cat is on camera right now — moving _or_
 sleeping**, plus the latest sighting — **when** it was seen, on **which camera**,
 and roughly **where** in the frame (e.g. *bottom-left*), with an annotated snapshot.
-Tapping the button pulls up the live feed of **the camera that saw it**; when
-**more than one room has a cat**, the feed **rotates** between them (pick a camera
-manually to stop). Only cameras with the 🐱 *Tracks cats* role record sightings.
+Tapping the button pulls up the live feed of **the camera that saw it** and
+**runs that camera's detector continuously for ~20 s**, so you see a box drawn
+around the cat — even a sleeping one — while you find it. When **more than one
+room has a cat**, the feed **rotates** between them (each room is boosted as the
+feed lands on it; pick a camera manually to stop). Only cameras with the 🐱
+*Tracks cats* role record sightings.
 
 **Still / sleeping cats.** A motionless cat makes no motion, so it never trips the
 detector's cheap motion gate. To catch a napping cat, a cat-tracking camera
@@ -174,6 +177,26 @@ motion can trigger a treat.
 
 The camera/speaker/rules **setup lives below** the cat cam, live feed, and activity
 log — it's saved to `config.yaml`, so you set it once and rarely touch it again.
+
+### Test detection & image tuning
+
+The **🔬 Test detection** card lets you **upload a photo or a short video** and see
+exactly what the detector finds — boxes drawn on the image and a list of each
+person/cat with its score. A video is sampled into an evenly-spaced **filmstrip**;
+click any frame to test it.
+
+The card surfaces the settings that actually change whether things are identified
+correctly, as live sliders that **re-run detection as you drag**:
+
+- **Model**, **net input size**, **person confidence**, **notify floor** — what
+  counts as a detection.
+- **Gamma, brightness, contrast, saturation** — image adjustments applied **before
+  the net runs**. These are the lever to rescue a **too-dark or washed-out** feed:
+  lift the gamma until the cat pops out of the shadows, then check the box still
+  lands. They're real per-camera settings, so once it looks right, **Save** them to
+  that camera (or to the global defaults new cameras start from) and the live
+  detector uses them too. (Defaults are all no-ops, so nothing changes until you
+  tune it.)
 
 ### Snapshots & taming false positives
 

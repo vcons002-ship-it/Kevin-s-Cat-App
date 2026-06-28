@@ -111,6 +111,23 @@ footer { margin-top: 20px; }
 .cats-card h2 { font-size: 1.5rem; }
 .cats-card .help { text-align: left; }
 .cats-foot { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 4px; }
+
+/* Test detection tool */
+.btn-file { cursor: pointer; display: inline-block; }
+.test-film { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; }
+.film-thumb { height: 56px; border-radius: 6px; cursor: pointer; border: 2px solid transparent; opacity: 0.7; flex: none; }
+.film-thumb.sel { border-color: #6ea8fe; opacity: 1; }
+#test-img { max-width: 100%; border-radius: 8px; display: block; }
+.test-detections { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; min-height: 1.4em; }
+.det-chip { padding: 3px 10px; border-radius: 999px; font-size: 0.85em; font-weight: 600; }
+.det-person { background: rgba(80,220,80,0.18); color: #8ee68e; }
+.det-cat { background: rgba(240,170,40,0.18); color: #f0b450; }
+.det-other { background: #2a3350; color: #aab; }
+.test-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 16px; margin-top: 8px; }
+.test-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 0.9em; }
+.rngval { color: #6ea8fe; font-variant-numeric: tabular-nums; }
+.test-actions { align-items: center; gap: 10px; margin-top: 12px; }
+.test-actions .grow { flex: 1; }
 .inline { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; }
 .inline select { width: auto; }
 

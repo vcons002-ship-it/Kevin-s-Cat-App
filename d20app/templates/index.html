@@ -90,6 +90,80 @@
       </p>
     </section>
 
+    <!-- ===== Test detection (tune settings against a photo/video) ===== -->
+    <section class="card" id="test-card">
+      <div class="row log-head">
+        <h2>🔬 Test detection</h2>
+        <label class="btn-file ghost" title="upload a photo or a short video clip">
+          ＋ Photo / video
+          <input id="test-file" type="file" accept="image/*,video/*" hidden />
+        </label>
+      </div>
+      <div id="test-film" class="test-film hidden"></div>
+      <div id="test-stage" class="roi-stage">
+        <img id="test-img" class="hidden" alt="test detection result" />
+        <p id="test-placeholder" class="muted">
+          Upload a photo or a short video to see exactly what the detector finds —
+          then tweak the settings until it gets the cat (or person) right.
+        </p>
+      </div>
+      <div id="test-detections" class="test-detections"></div>
+
+      <div class="test-grid">
+        <label>Model
+          <select id="t_model">
+            <option value="yolo11n">YOLO11n (default)</option>
+            <option value="yolo11m">YOLO11m (medium)</option>
+            <option value="mobilenet_ssd">MobileNet-SSD (light)</option>
+          </select>
+        </label>
+        <label>Net input size
+          <select id="t_detect_size">
+            <option value="300">300 (people)</option>
+            <option value="512">512 (distant / cats)</option>
+            <option value="768">768 (max, heavy)</option>
+          </select>
+        </label>
+        <label>Person confidence <span id="t_person_confidence_v" class="rngval"></span>
+          <input id="t_person_confidence" type="range" min="0.1" max="0.9" step="0.05" />
+        </label>
+        <label>Notify floor <span id="t_label_floor_v" class="rngval"></span>
+          <input id="t_label_floor" type="range" min="0.1" max="0.9" step="0.05" />
+        </label>
+        <label>Gamma <span id="t_gamma_v" class="rngval"></span>
+          <input id="t_gamma" type="range" min="0.3" max="3" step="0.1" />
+        </label>
+        <label>Brightness <span id="t_brightness_v" class="rngval"></span>
+          <input id="t_brightness" type="range" min="-100" max="100" step="5" />
+        </label>
+        <label>Contrast <span id="t_contrast_v" class="rngval"></span>
+          <input id="t_contrast" type="range" min="0.5" max="2" step="0.05" />
+        </label>
+        <label>Saturation <span id="t_saturation_v" class="rngval"></span>
+          <input id="t_saturation" type="range" min="0" max="2" step="0.05" />
+        </label>
+      </div>
+      <div class="row test-actions">
+        <button id="test-reset" class="ghost" type="button">Reset adjustments</button>
+        <span class="grow"></span>
+        <label class="inline">Save to
+          <select id="test-save-target"></select>
+        </label>
+        <button id="test-save" class="primary" type="button">Save settings</button>
+      </div>
+      <p id="test-note" class="muted"></p>
+      <p class="help">
+        Run the detector on a still or a short clip and tune the knobs until it
+        identifies things correctly. <strong>Gamma / brightness / contrast /
+        saturation</strong> adjust the image <em>before</em> the net runs — the lever
+        to rescue a dark or washed-out feed. <strong>Model</strong>, <strong>input
+        size</strong>, <strong>confidence</strong> and <strong>notify floor</strong>
+        change what counts as a detection. When it looks right, <strong>save</strong>
+        the settings to a camera — or to the global defaults new cameras start from.
+        These are the same settings the live detector uses.
+      </p>
+    </section>
+
     <!-- ===== Activity log ===== -->
     <section class="card">
       <div class="row log-head">
