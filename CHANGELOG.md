@@ -11,6 +11,21 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.18.2] — 2026-06-28
+
+### Fixed
+- **Benchmark thumbnails enlarge again** (#30). Clicking a thumbnail (in the HTML
+  report *and* the in-GUI table) opened a blank `about:blank` tab — browsers block
+  top-level navigation to a `data:` URL. They now enlarge **in-page via a tiny
+  lightbox overlay** (click anywhere to dismiss); the report stays self-contained
+  and works offline. The **download** link is untouched (the `download` attribute
+  still works for `data:` URLs — only *navigation* to them is blocked).
+- **SSD model labels no longer show the size twice** (#31). The MobileNet size
+  variants read `mobilenet_ssd@512` in the model column next to `512` in the size
+  column. The reports/table now show the **base name** (`mobilenet_ssd`) and let the
+  size column carry the number, matching the YOLO rows. The `model` key itself is
+  unchanged, so re-runs and the benchmark sweep still resolve the size from `@N`.
+
 ## [0.18.1] — 2026-06-28
 
 ### Fixed

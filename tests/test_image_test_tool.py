@@ -218,13 +218,36 @@ def test_benchmark_caps_matrix_size():
 
 def test_benchmark_html_embeds_full_res_original_and_zoomable_thumbs():
     # #25: the report carries the unannotated original frame (download to re-run)
-    # and each run thumbnail is wrapped in a click-to-enlarge link.
+    # and each run thumbnail is click-to-enlarge.
     c = _client()
     body = _benchmark(c, name="kitchen-cam.jpg").get_json()
     html = c.get(body["html_url"]).get_data(as_text=True)
     assert "Original frame" in html and "download='kitchen-cam.jpg'" in html
-    # thumbnails are click-to-enlarge (anchor wrapping the img)
-    assert "target='_blank'" in html and "<img" in html
+    # thumbnails are click-to-enlarge via the in-page lightbox, not a data: nav
+    assert "onclick='zoom(this.src)'" in html and "<img" in html
+
+
+def test_benchmark_html_uses_lightbox_not_data_url_navigation():
+    # #30: clicking a thumbnail must enlarge in-page; browsers block top-level
+    # navigation to a data: URL (lands on about:blank). So no <a href='data:...'
+    # target=_blank> wrappers — only the download link keeps its href.
+    c = _client()
+    html = c.get(_benchmark(c).get_json()["html_url"]).get_data(as_text=True)
+    assert "id='lb'" in html and "function zoom(" in html
+    assert "onclick='zoom(this.src)'" in html         # thumbnails enlarge in-page
+    assert "target='_blank'" not in html              # no blocked data: navigation
+    assert "download='" in html                        # download link (download=) kept
+
+
+def test_benchmark_report_strips_at_size_from_model_label():
+    # #31: SSD size variants shouldn't read "mobilenet_ssd@512" next to size 512 —
+    # the model column shows the base name, the size column carries the number.
+    c = _client()
+    body = _benchmark(c, models=["mobilenet_ssd@512"], tilings=["off"]).get_json()
+    assert body["runs"][0]["model"] == "mobilenet_ssd@512"   # key unchanged (re-runs)
+    html = c.get(body["html_url"]).get_data(as_text=True)
+    assert "mobilenet_ssd@512" not in html              # not in the visible label
+    assert "<td>mobilenet_ssd</td>" in html             # base name in the model column
 
 
 def test_benchmark_reports_have_human_readable_filenames():
