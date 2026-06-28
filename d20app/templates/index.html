@@ -108,12 +108,14 @@
         </p>
       </div>
       <div id="test-detections" class="test-detections"></div>
+      <p id="test-infer" class="muted"></p>
 
       <div class="test-grid">
         <label>Model
           <select id="t_model">
             <option value="yolo11n">YOLO11n (default)</option>
             <option value="yolo11m">YOLO11m (medium)</option>
+            <option value="yolo11m_960">YOLO11m @960 (locator)</option>
             <option value="mobilenet_ssd">MobileNet-SSD (light)</option>
           </select>
         </label>
@@ -141,6 +143,25 @@
         </label>
         <label>Saturation <span id="t_saturation_v" class="rngval"></span>
           <input id="t_saturation" type="range" min="0" max="2" step="0.05" />
+        </label>
+        <label title="split the frame into an overlapping grid so a small/distant cat fills more of the net (the locator lever)">Tiling
+          <select id="t_tiling">
+            <option value="off">Off</option>
+            <option value="2x2">2×2</option>
+            <option value="3x3">3×3</option>
+            <option value="4x4">4×4</option>
+          </select>
+        </label>
+        <label>Tile overlap <span id="t_tile_overlap_v" class="rngval"></span>
+          <input id="t_tile_overlap" type="range" min="0" max="0.5" step="0.05" />
+        </label>
+        <label>Accelerator
+          <select id="t_accelerator">
+            <option value="cpu">CPU</option>
+            <option value="opencl">OpenCL (iGPU)</option>
+            <option value="openvino-gpu">OpenVINO GPU</option>
+            <option value="openvino-auto">OpenVINO AUTO</option>
+          </select>
         </label>
       </div>
       <div class="row test-actions">
@@ -186,12 +207,27 @@
         <button id="camera-local-refresh" class="ghost" type="button">↻</button>
       </div>
       <div id="camera-list"></div>
+      <div class="rr-bar">
+        <label class="checkbox" title="watch only a few cameras at a time, rotating sets — caps CPU for big camera counts">
+          <input type="checkbox" id="round_robin" /> ⟳ Round-robin
+        </label>
+        <label class="inline">watch
+          <input type="number" id="round_robin_size" min="1" max="16" />
+          at once</label>
+        <label class="inline">rotate every
+          <input type="number" id="round_robin_interval" min="1" max="600" /> s</label>
+      </div>
       <p class="help">
         Tick <strong>Watch</strong> on each camera you want running at once. Every camera
         chooses a <strong>role</strong> — 🎲 <em>Rolls</em> (a person rolls for a treat) and/or
         🐱 <em>Tracks cats</em> (sightings logged) — and has its own detection settings and
         region of interest. <strong>CPU:</strong> each watched camera adds roughly one camera's
         load, but the neural net only runs when something moves, so idle cameras are cheap.
+        <br><strong>⟳ Round-robin</strong> caps that: only a few cameras detect at a time and
+        the app rotates through the rest on an interval, so many cameras cost about as much as a
+        few (the trade-off is a slower reaction on whichever cameras are currently resting 💤).
+        Mark a camera <strong>👁 always-watch</strong> to keep it from ever resting (e.g. the
+        treat camera); the camera you're viewing live never rests either.
         Credentials are stored locally in <code>config.yaml</code> in plain text.
       </p>
       <!-- shared region-of-interest picker, opened from a camera's "Set region" -->

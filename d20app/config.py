@@ -79,8 +79,21 @@ class Config:
     # --- Cat check (still/sleeping cats produce no motion to trigger the net) ---
     cat_scan_interval: float = 30.0  # how often (sec) a cat-tracking camera runs the net even with no motion, to catch a still/sleeping cat: >0 = every N seconds (default 30), 0 = always on (net every frame; most CPU), <0 = off (motion only, legacy behaviour)
 
+    # --- Locator resolution (the still-cat scan only; the fast treat path is untouched).
+    # A sleeping cat shrunk into a 640 frame can be too small to detect at all; tiling
+    # and/or a larger input give the locator scan more effective resolution. ---
+    cat_scan_tiling: str = "4x4"     # "off" | "2x2" | "3x3" | "4x4" — split the frame into an overlapping grid, detect per tile, merge (more tiles = catches smaller cats, more CPU). Default 4x4 (what actually resolves a small/sleeping cat in testing).
+    cat_scan_tile_overlap: float = 0.2   # fraction each tile overlaps its neighbour so a cat on a seam still lands whole in one tile
+    cat_scan_imgsz: int = 0          # locator input size: 0 = native model size. MobileNet resizes freely; YOLO needs a matching exported model (e.g. yolo11m_960.onnx) or this falls back to native + tiling
+
     # --- CPU saving ---
     pause_during_cooldown: bool = True   # skip the neural net while in the between-rolls cooldown (nothing it sees can trigger anyway); resumes just before the window reopens
+
+    # --- Round-robin (cap CPU when watching many cameras: run only a few at a time,
+    # rotating sets on an interval — high camera counts at the CPU of a few). ---
+    round_robin: bool = False        # rotate detection across the watched cameras instead of all-at-once
+    round_robin_size: int = 2        # how many cameras detect at once (the rest rest, releasing their capture)
+    round_robin_interval: float = 15.0   # seconds each set is watched before rotating to the next
 
     # --- Quiet time (no chimes during this daily window; "" = disabled) ---
     quiet_start: str = ""            # "HH:MM", e.g. "22:00"
@@ -111,6 +124,7 @@ def speaker_targets(cfg: "Config") -> list:
 _CAMERA_BASE = {
     "name": "", "url": "", "username": "", "password": "",
     "roll": True, "track_cats": True,
+    "always_watch": False,        # exclude from round-robin — this camera never rests
 }
 # Per-camera detection fields → the global Config attribute that supplies the
 # default (so a new/old camera inherits the current global detection settings).
@@ -121,6 +135,9 @@ _CAMERA_FROM_CFG = {
     "smooth_feed": "smooth_live_feed", "roi": "roi",
     "gamma": "gamma", "brightness": "brightness",
     "contrast": "contrast", "saturation": "saturation",
+    "cat_scan_tiling": "cat_scan_tiling",
+    "cat_scan_tile_overlap": "cat_scan_tile_overlap",
+    "cat_scan_imgsz": "cat_scan_imgsz",
     "motion_sensitivity": "motion_sensitivity",
     "motion_min_area_frac": "motion_min_area_frac",
     "motion_diff_threshold": "motion_diff_threshold",

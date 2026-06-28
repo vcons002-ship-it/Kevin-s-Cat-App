@@ -29,6 +29,8 @@ const MODEL_OPTS = [["yolo11n", "YOLO11n — low light (rec.)"], ["yolo11m", "YO
 const ACCEL_OPTS = [["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"]];
 const SIZE_OPTS = [["300", "Standard"], ["512", "High"], ["768", "Max"]];
 const SENS_OPTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"]];
+const TILING_OPTS = [["off", "Off"], ["2x2", "2×2"], ["3x3", "3×3"], ["4x4", "4×4"]];
+const IMGSZ_OPTS = [["0", "Native"], ["640", "640"], ["960", "960"], ["1280", "1280"]];
 const optsHTML = (list, val) => list.map(([v, l]) =>
   `<option value="${v}" ${String(v) === String(val) ? "selected" : ""}>${l}</option>`).join("");
 
@@ -91,6 +93,7 @@ function cameraCardHTML(cam) {
       <label class="checkbox" title="watch this camera"><input type="checkbox" data-watch ${watched ? "checked" : ""}/> Watch</label>
       <label class="checkbox" title="a person here rolls for a treat"><input type="checkbox" data-f="roll" ${cam.roll ? "checked" : ""}/> 🎲</label>
       <label class="checkbox" title="log cat sightings from here"><input type="checkbox" data-f="track_cats" ${cam.track_cats ? "checked" : ""}/> 🐱</label>
+      <label class="checkbox" title="never rest this camera under round-robin"><input type="checkbox" data-f="always_watch" ${cam.always_watch ? "checked" : ""}/> 👁</label>
       <button type="button" class="ghost" data-toggle>Edit ▾</button>
     </div>
     <div class="cam-body hidden">
@@ -106,6 +109,8 @@ function cameraCardHTML(cam) {
         <label>Scan rate (fps) <input type="number" min="1" max="30" data-f="scan_fps" value="${cam.scan_fps}"/></label>
         <label>Notify floor <input type="number" step="0.05" min="0.1" max="1" data-f="label_floor" value="${cam.label_floor}"/></label>
         <label>Motion sensitivity <select data-f="motion_sensitivity">${optsHTML(SENS_OPTS, cam.motion_sensitivity)}</select></label>
+        <label title="still-cat scan: tile the frame so a small/distant cat fills more of the net">Cat tiling <select data-f="cat_scan_tiling">${optsHTML(TILING_OPTS, cam.cat_scan_tiling)}</select></label>
+        <label title="still-cat scan input size (YOLO needs a matching exported model; MobileNet resizes freely)">Cat input size <select data-f="cat_scan_imgsz">${optsHTML(IMGSZ_OPTS, cam.cat_scan_imgsz)}</select></label>
       </div>
       <div class="row">
         <button type="button" class="ghost" data-roi>📷 Set region…</button>
@@ -348,6 +353,9 @@ async function loadConfig() {
   $("dont_interrupt_playback").checked = !!cfg.dont_interrupt_playback;
   $("keep_speakers_warm").checked = !!cfg.keep_speakers_warm;
   $("pause_during_cooldown").checked = cfg.pause_during_cooldown !== false;
+  $("round_robin").checked = !!cfg.round_robin;
+  $("round_robin_size").value = cfg.round_robin_size;
+  $("round_robin_interval").value = cfg.round_robin_interval;
   $("smooth_feed").checked = !!cfg.smooth_live_feed;
   if ($("cat_scan_interval") && cfg.cat_scan_interval !== undefined && cfg.cat_scan_interval !== null)
     $("cat_scan_interval").value = String(cfg.cat_scan_interval);
@@ -382,6 +390,9 @@ function gatherConfig() {
     dc: Number($("dc").value),
     cooldown_seconds: Number($("cooldown_seconds").value),
     pause_during_cooldown: $("pause_during_cooldown").checked,
+    round_robin: $("round_robin").checked,
+    round_robin_size: Number($("round_robin_size").value),
+    round_robin_interval: Number($("round_robin_interval").value),
     cat_scan_interval: Number($("cat_scan_interval").value),
     quiet_start: $("quiet_start").value,
     quiet_end: $("quiet_end").value,
@@ -409,6 +420,7 @@ function renderCamChips(cams) {
     const chip = card.querySelector("[data-chip]");
     if (!chip) continue;
     if (c.last_error) { chip.textContent = "⚠ failing"; chip.className = "cam-chip chip-bad"; }
+    else if (c.resting) { chip.textContent = "💤 resting"; chip.className = "cam-chip muted"; }
     else if (c.connected) { chip.textContent = "● live"; chip.className = "cam-chip chip-ok"; }
     else { chip.textContent = "… connecting"; chip.className = "cam-chip muted"; }
   }
@@ -546,6 +558,9 @@ function testSettings() {
     brightness: n("t_brightness"),
     contrast: n("t_contrast"),
     saturation: n("t_saturation"),
+    tiling: $("t_tiling").value,
+    tile_overlap: n("t_tile_overlap"),
+    accelerator: $("t_accelerator").value,
   };
 }
 
@@ -557,6 +572,7 @@ function testRangeLabels() {
   $("t_brightness_v").textContent = (s.brightness > 0 ? "+" : "") + s.brightness;
   $("t_contrast_v").textContent = s.contrast.toFixed(2);
   $("t_saturation_v").textContent = s.saturation.toFixed(2);
+  $("t_tile_overlap_v").textContent = s.tile_overlap.toFixed(2);
 }
 
 // Seed the controls from a settings object (camera defaults or global config).
@@ -571,6 +587,9 @@ function setTestControls(v) {
   set("t_brightness", v.brightness, 0);
   set("t_contrast", v.contrast, 1.0);
   set("t_saturation", v.saturation, 1.0);
+  if (v.cat_scan_tiling) $("t_tiling").value = v.cat_scan_tiling;
+  set("t_tile_overlap", v.cat_scan_tile_overlap, 0.2);
+  if (v.accelerator) $("t_accelerator").value = v.accelerator;
   testRangeLabels();
 }
 
@@ -599,6 +618,8 @@ async function runTestDetection() {
   img.classList.remove("hidden");
   $("test-placeholder").classList.add("hidden");
   renderTestDetections(body.detections);
+  $("test-infer").textContent = body.inference_ms != null
+    ? `Inference: ${body.inference_ms} ms` : "";
   $("test-note").textContent = "";
 }
 
@@ -654,15 +675,22 @@ async function saveTestSettings() {
   let ok;
   if (target === "__global__") {
     ({ ok } = await api("/api/config", postJSON({
-      detector_model: s.model, detect_size: s.detect_size,
+      detector_model: s.model, detect_size: s.detect_size, accelerator: s.accelerator,
       person_confidence: s.person_confidence, label_floor: s.label_floor,
       gamma: s.gamma, brightness: s.brightness, contrast: s.contrast, saturation: s.saturation,
+      cat_scan_tiling: s.tiling, cat_scan_tile_overlap: s.tile_overlap,
     })));
     await loadConfig();
   } else {
     const cam = cameras.find((c) => c.name === target);
     if (!cam) { $("test-note").textContent = "Pick a camera to save to."; return; }
-    ({ ok } = await api("/api/cameras/saved", postJSON({ name: cam.name, url: cam.url, ...s })));
+    ({ ok } = await api("/api/cameras/saved", postJSON({
+      name: cam.name, url: cam.url, model: s.model, accelerator: s.accelerator,
+      detect_size: s.detect_size, person_confidence: s.person_confidence,
+      label_floor: s.label_floor, gamma: s.gamma, brightness: s.brightness,
+      contrast: s.contrast, saturation: s.saturation,
+      cat_scan_tiling: s.tiling, cat_scan_tile_overlap: s.tile_overlap,
+    })));
     await loadCamerasList();
   }
   $("test-note").textContent = ok ? "Saved ✓" : "Save failed";
@@ -794,9 +822,14 @@ function wire() {
   // Test-detection tool
   $("test-file").onchange = (e) => uploadTest(e.target.files[0]);
   for (const f of ["model", "detect_size", "person_confidence", "label_floor",
-                   "gamma", "brightness", "contrast", "saturation"]) {
+                   "gamma", "brightness", "contrast", "saturation",
+                   "tiling", "tile_overlap", "accelerator"]) {
     const el = $("t_" + f);
     if (el) el.oninput = scheduleTestDetect;
+  }
+  for (const id of ["round_robin", "round_robin_size", "round_robin_interval"]) {
+    const el = $(id);
+    if (el) el.onchange = saveConfig;
   }
   $("test-reset").onclick = () => {
     $("t_gamma").value = 1.0; $("t_brightness").value = 0;

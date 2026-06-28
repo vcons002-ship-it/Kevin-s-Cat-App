@@ -11,6 +11,39 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.16.0] — 2026-06-28
+
+### Added
+- **Higher-resolution locator scan** (fixes the still-cat half of issue #17). A
+  sleeping cat shrunk into a 640 frame can be **too small for the net to detect at
+  all**; the periodic still-cat scan now runs at higher effective resolution while
+  the fast treat path is untouched:
+  - **Tiling (default `4x4`)** — splits the frame into an overlapping grid and
+    detects per tile, so a small/distant cat fills more of the net's input. Merged
+    with NMS. Works with the bundled models, no re-export. `off`/`2x2`/`3x3`/`4x4`
+    (4×4 is what actually resolved a sleeping cat in testing; fewer tiles = less CPU).
+  - **Larger input (`cat_scan_imgsz`)** — MobileNet resizes freely; for YOLO a
+    **`yolo11m_960`** export is now bundled (and `scripts/export_yolo.py` +
+    `yolo11m_1280` registration for more). Missing export → graceful fallback.
+  - Per-camera settings (defaults are global); the **Test detection** tool gains
+    **tiling / tile-overlap / accelerator** knobs and an **inference-time** readout
+    so you can A/B configs on real frames — the rest of the GUI tester issue #17 asked for.
+- **Round-robin camera scheduling.** Optional: watch only **N cameras at a time**
+  and **rotate** through the rest on an interval, so many cameras cost about as much
+  as a few. Resting cameras release their capture (stop decoding — the CPU win).
+  Per-camera **"always watch" (👁)** exempts a camera (e.g. the treat camera); the
+  camera you're viewing live never rests. GUI toggle + size + interval; a **💤
+  resting** chip per camera. `round_robin` / `round_robin_size` / `round_robin_interval`.
+
+### Notes
+- New config: `cat_scan_tiling`/`cat_scan_tile_overlap`/`cat_scan_imgsz` and
+  `round_robin*` (global + per-camera `always_watch`/locator). `GET /api/test/detect`
+  returns `inference_ms`. 168 tests (was 157): tiling/NMS-merge, locator fallback,
+  round-robin rotation/rest/always-watch/viewed-pin, and the new endpoints/config.
+- A bundled **`yolo11m_960.onnx`** (~78 MB) ships for Option A; `yolo11m_1280` is
+  script-only (run `scripts/export_yolo.py`). Round-robin rests release/reopen the
+  capture each rotation — there's reconnect latency, amortised by the interval.
+
 ## [0.15.0] — 2026-06-28
 
 ### Added

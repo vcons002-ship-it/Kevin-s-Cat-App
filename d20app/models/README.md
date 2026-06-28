@@ -115,3 +115,19 @@ mv yolo11m.onnx d20app/models/yolo11m.onnx
 The input size is fixed at export time; if you re-export at a different size,
 update that variant's `size` in the `MODELS` table in `d20app/yolo.py` to match
 (OpenCV's importer needs a static shape).
+
+### High-resolution locator variants (optional)
+
+The still-cat "locator" scan can run at a larger input to resolve a small/distant
+cat (Option A). Those variants — `yolo11m_960`, `yolo11m_1280` — are already
+registered in `MODELS` but **not committed**; produce them with the helper:
+
+```
+pip install ultralytics                 # export-only, offline; use a throwaway venv
+python scripts/export_yolo.py --model yolo11m --imgsz 960
+python scripts/export_yolo.py --model yolo11m --imgsz 1280
+```
+
+Until the file is present, selecting that locator size **falls back** to the native
+size + tiling (no crash) — so tiling (Option B), which needs no export, is the
+default. MobileNet resizes freely and needs no export for a larger locator input.

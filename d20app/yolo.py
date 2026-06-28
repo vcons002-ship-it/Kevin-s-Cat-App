@@ -68,6 +68,11 @@ _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 MODELS = {
     "yolo11n": {"file": "yolo11n.onnx", "size": 320},
     "yolo11m": {"file": "yolo11m.onnx", "size": 640},
+    # Larger-input exports for the high-resolution "locator" scan (Option A). These
+    # ONNX files aren't committed by default — run scripts/export_yolo.py to produce
+    # them (see models/README.md). Until present, selecting one falls back gracefully.
+    "yolo11m_960": {"file": "yolo11m_960.onnx", "size": 960},
+    "yolo11m_1280": {"file": "yolo11m_1280.onnx", "size": 1280},
 }
 DEFAULT_VARIANT = "yolo11n"
 
@@ -222,3 +227,26 @@ def detect_boxes(net, frame, floor: float, size: int = INPUT_SIZE) -> list:
         label = COCO_CLASSES[cid] if 0 <= cid < len(COCO_CLASSES) else str(cid)
         boxes.append((label, scores[i], (x, y, x + w, y + h)))
     return boxes
+
+
+def merge_nms(boxes: list, floor: float) -> list:
+    """Per-class NMS over ``[(label, score, (x1, y1, x2, y2))]`` boxes.
+
+    Model-agnostic — used to de-duplicate detections collected from overlapping
+    tiles (a subject in a seam region is found by two tiles; NMS keeps one). Reuses
+    the same :data:`_NMS_IOU` as the single-pass path.
+    """
+    import cv2
+    import numpy as np
+
+    by_label: dict = {}
+    for label, score, box in boxes:
+        by_label.setdefault(label, []).append((float(score), box))
+    merged = []
+    for label, items in by_label.items():
+        rects = [[b[0], b[1], b[2] - b[0], b[3] - b[1]] for _, b in items]
+        scores = [s for s, _ in items]
+        idxs = cv2.dnn.NMSBoxes(rects, scores, float(floor), _NMS_IOU)
+        for i in np.array(idxs).reshape(-1):
+            merged.append((label, items[i][0], items[i][1]))
+    return merged

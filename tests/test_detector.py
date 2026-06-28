@@ -170,7 +170,8 @@ def test_read_and_detect_force_runs_net_without_motion():
 
     det._ensure_cap = lambda: _FakeCap()
     # No motion (a static frame), but the forced scan still classifies it as a cat.
-    det._detect_boxes = lambda *a, **k: [("cat", 0.9, (1, 1, 9, 9))]
+    # force=True routes through the locator path → _run_net (tiling off by default).
+    det._run_net = lambda img, floor, size=None: [("cat", 0.9, (1, 1, 9, 9))]
 
     out = det.read_and_detect(detect=False, force=True)
     assert out.motion is False            # the pre-filter didn't fire...

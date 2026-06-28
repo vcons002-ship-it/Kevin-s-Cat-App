@@ -31,6 +31,10 @@ _MOTION_LOG_INTERVAL = 10.0
 # live feed keeps drawing a box around the cat (even a still one) while the user looks.
 _CAT_BOOST_SECONDS = 20.0
 
+# How long a camera stays pinned-active after the GUI last fetched a frame of it, so a
+# camera you're watching never sleeps under round-robin (refreshed each streamed frame).
+_VIEW_TTL = 8.0
+
 
 def _parse_hhmm(value: str):
     """Parse 'HH:MM' to a datetime.time, or None if blank/invalid."""
@@ -130,6 +134,8 @@ class DetectionLoop:
         self._live_name: str | None = None              # camera the GUI streams by default
         self._cat_flash_ttl = 2.0                       # how long a cat stays "present" between scans
         self._cat_boost: dict[str, float] = {}          # name -> monotonic deadline for forced detection
+        self._viewing: dict[str, float] = {}            # name -> deadline; the GUI is streaming this camera
+        self._active_cams: set[str] | None = None       # round-robin: which cameras detect now (None = all)
 
     def _caster_for(self, cfg) -> Caster:
         """A single long-lived Caster so speaker connections stay open."""
@@ -207,6 +213,35 @@ class DetectionLoop:
     def cat_present(self) -> bool:
         """True if **any cat-tracking** camera has a cat on it right now."""
         return bool(self.cats_present_cameras())
+
+    def note_viewing(self, name: str | None = None) -> None:
+        """Mark a camera as actively viewed by the GUI (refreshed each streamed
+        frame), so round-robin keeps it active while you watch it."""
+        target = name or self._live_name
+        if target:
+            self._viewing[target] = time.monotonic() + _VIEW_TTL
+
+    @staticmethod
+    def _rr_window(rotatable: list, always_on: set, start: int, size: int) -> set:
+        """The round-robin active set: the always-on cameras plus a window of
+        ``size`` rotatable cameras starting at ``start`` (wrapping)."""
+        window = set(always_on)
+        n = len(rotatable)
+        for i in range(min(size, n)):
+            window.add(rotatable[(start + i) % n])
+        return window
+
+    def _is_pinned(self, name: str, now: float) -> bool:
+        """A viewed or boosted camera stays active regardless of the rotation."""
+        return self._viewing.get(name, 0.0) > now or self._cat_boost.get(name, 0.0) > now
+
+    def _camera_active(self, name: str) -> bool:
+        """Whether a camera should detect now (round-robin gate). True for all when
+        round-robin is off (``_active_cams is None``)."""
+        active = self._active_cams
+        if active is None or name in active:
+            return True
+        return self._is_pinned(name, time.monotonic())
 
     def boost_detection(self, name: str, seconds: float | None = None) -> bool:
         """Run the net continuously on ``name`` for ``seconds`` (default
@@ -296,10 +331,15 @@ class DetectionLoop:
                 brightness=spec["brightness"],
                 contrast=spec["contrast"],
                 saturation=spec["saturation"],
+                cat_scan_tiling=spec["cat_scan_tiling"],
+                cat_scan_tile_overlap=spec["cat_scan_tile_overlap"],
+                cat_scan_imgsz=spec["cat_scan_imgsz"],
             )
             cam_status[name] = {"connected": False, "last_error": "",
                                 "roll": bool(spec["roll"]),
-                                "track_cats": bool(spec["track_cats"])}
+                                "track_cats": bool(spec["track_cats"]),
+                                "always_watch": bool(spec["always_watch"]),
+                                "resting": False}
         self._detectors = detectors            # built once; rebound to {} after joins
         with self._cam_lock:
             self._cam_status = cam_status
@@ -314,6 +354,19 @@ class DetectionLoop:
             f"(speakers: {speakers_label}, treat on d{cfg.dice_sides} ≥ {cfg.dc}).",
         )
 
+        # Round-robin: rotate which cameras detect at once to cap CPU. Off (or when
+        # every rotatable camera already fits in one set) → all active (None).
+        rr_size = max(1, int(cfg.round_robin_size))
+        rotatable = [s["name"] for s in specs if not s["always_watch"]]
+        always_on = {s["name"] for s in specs if s["always_watch"]}
+        rotating = bool(cfg.round_robin) and len(rotatable) > rr_size
+        self._active_cams = self._rr_window(rotatable, always_on, 0, rr_size) if rotating else None
+        if rotating:
+            self.activity.add(
+                "info",
+                f"Round-robin: {rr_size} of {len(rotatable)} cameras at a time, "
+                f"rotating every {round(float(cfg.round_robin_interval))}s.")
+
         threads = []
         for spec in specs:
             t = threading.Thread(
@@ -326,7 +379,17 @@ class DetectionLoop:
         self._threads = threads
 
         try:
-            self._stop.wait()      # supervise until stop() is called or a fatal error
+            if not rotating:
+                self._stop.wait()  # supervise until stop() is called or a fatal error
+            else:
+                interval = max(0.2, float(cfg.round_robin_interval))
+                start = 0
+                while not self._stop.is_set():
+                    self._stop.wait(interval)
+                    if self._stop.is_set():
+                        break
+                    start = (start + rr_size) % len(rotatable)
+                    self._active_cams = self._rr_window(rotatable, always_on, start, rr_size)
         finally:
             for t in threads:
                 t.join(timeout=10)
@@ -338,6 +401,8 @@ class DetectionLoop:
             self._detectors = {}       # stop serving the live feed
             self._threads = []
             self._cat_boost = {}       # drop any pending detection boosts
+            self._viewing = {}
+            self._active_cams = None
             caster.close()             # drop held speaker connections when we stop
             with self._status_lock:
                 self.status.running = False
@@ -382,6 +447,7 @@ class DetectionLoop:
         interval = 1.0 / max(1.0, float(spec["scan_fps"]))
         last_scan = 0.0          # monotonic time the net last ran (motion or forced)
         cat_seen_still = False   # was a cat present on the previous *forced* still scan?
+        resting = False          # round-robin: currently asleep (capture released)
         # A camera may skip the net during the shared cooldown only if it has
         # nothing to do then: it rolls (so the closed gate blocks it anyway) AND
         # it doesn't track cats (which must keep detecting). A cat-tracking camera
@@ -389,6 +455,25 @@ class DetectionLoop:
         can_pause = roll_enabled and not track_cats
         try:
             while not self._stop.is_set():
+                # Round-robin gate: when it's not this camera's turn, release the
+                # capture (stop decoding → the CPU win) and idle until it is. A
+                # viewed/boosted camera is never rested (see _camera_active).
+                if not self._camera_active(name):
+                    if not resting:
+                        resting = True
+                        # Keep `connected` as-is: a rotation rest isn't an error, so the
+                        # camera shouldn't re-log its "connected" heartbeat on every wake.
+                        try:
+                            detector.release()
+                        except Exception:      # noqa: BLE001 — never let rest raise
+                            log.exception("error resting detector %s", name)
+                        self._cam_set(name, resting=True)
+                    self._stop.wait(0.2)   # fine poll so a camera wakes promptly on its turn
+                    continue
+                if resting:
+                    resting = False
+                    self._cam_set(name, resting=False)
+
                 # Shared cooldown-pause: once any roll-camera rolls, eligible cameras
                 # skip the net until just before the window reopens (read lock-free;
                 # the deadline is written inside _roll_lock).

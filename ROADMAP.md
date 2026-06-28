@@ -62,7 +62,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **157 automated tests**, including a detection-accuracy regression guard over
+- **168 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
@@ -73,8 +73,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   `/api/cats`), the still/sleeping-cat scan (forced no-motion detection,
   rising-edge de-dup, always-on/off, per-room present list, no-roll-on-still-scan
   guard), the "Test detection" tool (image adjustment maths, stateless
-  `detect_image`, video frame sampling, upload/detect endpoints), local USB camera
-  + local PC speaker routing, and saved-camera/cooldown-pause/keep-warm coverage.
+  `detect_image`, video frame sampling, upload/detect endpoints), the
+  higher-resolution locator scan (tiling + NMS merge, larger-input fallback), the
+  round-robin scheduler (rotation, rest/release, always-watch, viewed-pin), local USB
+  camera + local PC speaker routing, and saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
 
@@ -84,18 +86,23 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [x] **Multi-camera** — watch several feeds at once, each with its own role
       (rolls / tracks cats) and its own detection settings; "Show cat" switches the
       live feed to whichever camera saw the cat (0.13.0). One shared treat dispenser.
-- [ ] **Round-robin / shared-detector mode** — an optional CPU hard-cap where one
-      detector cycles the watched cameras (~1× CPU regardless of count) instead of a
-      thread each; trade-off is ~N× slower reactions. (Recorded from the 0.13.0 plan.)
+- [x] **Round-robin scheduling** — optional CPU cap: only *N* cameras detect at a
+      time, rotating sets on an interval, so many cameras cost ~a few; resting cameras
+      release their capture. Per-camera "always watch" exempts one; the live-viewed
+      camera never rests (0.16.0). Trade-off: slower reaction on resting cameras.
 - [ ] **GPU-batched inference** — on the iGPU/OpenVINO path, batch same-model
       cameras' frames into one `forward()` (needs a dynamic-batch ONNX re-export);
       GPU-only win. (Recorded from the 0.13.0 plan.)
 - [x] **Test detection on a photo/video + image adjustments** — upload a still or
       a sampled-frame video clip and run the detector on it in the GUI, with the
-      impactful settings (model, input size, confidence, notify floor, and **gamma
-      / brightness / contrast / saturation**) as live sliders; save what works to a
-      camera or the global defaults (0.15.0). Adjustments apply before the net, so
-      they can rescue a dark/washed-out feed.
+      impactful settings (model, input size, confidence, notify floor, **gamma /
+      brightness / contrast / saturation**, **tiling/overlap/accelerator** + an
+      inference-time readout) as live controls; save what works to a camera or the
+      global defaults (0.15.0 / 0.16.0). Adjustments apply before the net.
+- [x] **Higher-resolution locator scan** — the still-cat scan runs at higher
+      effective resolution (**tiling**, default 4×4, and/or a **larger input** like
+      the bundled `yolo11m_960`) so a small/distant cat clears the net, while the
+      fast treat path stays at the native size (0.16.0, issue #17).
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on
