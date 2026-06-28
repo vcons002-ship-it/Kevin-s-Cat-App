@@ -759,10 +759,23 @@ async function runBenchmark() {
   renderBenchTable(body.runs, body.meta);
 }
 
+// Drop the @size suffix from a model name for display — the size column carries it
+// (so SSD variants don't read "mobilenet_ssd@512" next to size 512). #31
+function displayModel(model) { return String(model).split("@")[0]; }
+
+// Enlarge a thumbnail in-page. Navigating a new tab to a data: URL is blocked by
+// browsers (lands on about:blank), so we use a lightbox overlay instead. #30
+function zoomImg(src) {
+  const lb = $("img-lightbox");
+  if (!lb) { window.open(src, "_blank"); return; }
+  $("img-lightbox-img").src = src;
+  lb.classList.remove("hidden");
+}
+
 function renderBenchTable(runs, meta) {
   const rows = runs.map((r) => `<tr>
-    <td><a href="${r.thumb}" target="_blank" title="click to enlarge"><img class="bench-thumb" src="${r.thumb}" alt=""/></a></td>
-    <td>${esc(r.model)}</td><td>${r.size}</td><td>${esc(r.tiling)}</td>
+    <td><img class="bench-thumb" src="${r.thumb}" alt="" title="click to enlarge" onclick="zoomImg(this.src)"/></td>
+    <td>${esc(displayModel(r.model))}</td><td>${r.size}</td><td>${esc(r.tiling)}</td>
     <td><strong>${r.combined_score.toFixed(2)}</strong></td>
     <td>${r.cat_score.toFixed(2)}</td><td>${r.dog_score.toFixed(2)}</td>
     <td>${r.detected ? "✓" : "·"}</td><td>${Math.round(r.inference_ms)} ms</td></tr>`).join("");

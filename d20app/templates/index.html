@@ -361,6 +361,12 @@
     </footer>
   </main>
 
+  <!-- Click-to-enlarge overlay for benchmark thumbnails (data: URLs can't be
+       opened in a new tab — browsers block it). Click anywhere to dismiss. -->
+  <div id="img-lightbox" class="img-lightbox hidden" onclick="this.classList.add('hidden')">
+    <img id="img-lightbox-img" alt="enlarged frame"/>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

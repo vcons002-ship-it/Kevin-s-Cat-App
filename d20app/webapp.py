@@ -168,6 +168,14 @@ def _model_native_size(model: str) -> int:
     return 300
 
 
+def _display_model(model: str) -> str:
+    """Visible model name for reports: drop the ``@size`` suffix, since the size
+    column already carries it — otherwise an SSD variant reads ``mobilenet_ssd@512``
+    next to size ``512`` (the size shown twice). The full ``model`` key is kept
+    elsewhere for re-runs; only the label changes (#31)."""
+    return model.split("@", 1)[0]
+
+
 def _slugify(text: str) -> str:
     """Lowercase, hyphenated slug for a human-readable report filename."""
     import re
@@ -255,9 +263,10 @@ def _benchmark_html(runs: list, meta: dict, original_url: str = "",
     for r in runs:
         hit = "✓" if r["detected"] else "·"
         rows.append(
-            f"<tr><td><a href='{r['thumb']}' target='_blank' title='click to enlarge'>"
-            f"<img src='{r['thumb']}'></a></td>"
-            f"<td>{esc(r['model'])}</td><td>{r['size']}</td><td>{esc(r['tiling'])}</td>"
+            f"<tr><td><img src='{r['thumb']}' title='click to enlarge' "
+            f"onclick='zoom(this.src)'></td>"
+            f"<td>{esc(_display_model(r['model']))}</td><td>{r['size']}</td>"
+            f"<td>{esc(r['tiling'])}</td>"
             f"<td style='background:{_score_color(r['combined_score'])}'>"
             f"<b>{r['combined_score']:.2f}</b></td>"
             f"<td>{r['cat_score']:.2f}</td><td>{r['dog_score']:.2f}</td>"
@@ -267,13 +276,16 @@ def _benchmark_html(runs: list, meta: dict, original_url: str = "",
              f"locator [cat, dog]")
     original = ""
     if original_url:
+        # Enlarge in-page via the lightbox (browsers block top-level navigation to
+        # a data: URL — #30); the download link keeps the `download` attribute,
+        # which still works for data: URLs.
         original = (
             "<details open><summary><b>Original frame</b> "
             f"({meta['width']}×{meta['height']}) — "
             f"<a href='{original_url}' download='{esc(original_name)}'>download to re-run</a>"
             "</summary>"
-            f"<a href='{original_url}' target='_blank'>"
-            f"<img class='orig' src='{original_url}'></a></details>")
+            f"<img class='orig' src='{original_url}' title='click to enlarge' "
+            f"onclick='zoom(this.src)'></details>")
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<title>Cat detection benchmark</title><style>"
@@ -281,9 +293,17 @@ def _benchmark_html(runs: list, meta: dict, original_url: str = "",
         "table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;"
         "padding:6px 8px;text-align:center;font-size:14px}th{background:#f3f3f3}"
         "td img{max-width:240px;height:auto;border-radius:4px;display:block;cursor:zoom-in}"
-        "img.orig{max-width:100%;border-radius:6px;margin:8px 0}"
+        "img.orig{max-width:100%;border-radius:6px;margin:8px 0;cursor:zoom-in}"
         ".fixed{background:#f7f7f9;border:1px solid #e3e3e8;border-radius:8px;"
-        "padding:10px 14px;margin:10px 0;font-size:14px}</style></head><body>"
+        "padding:10px 14px;margin:10px 0;font-size:14px}"
+        "#lb{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;"
+        "align-items:center;justify-content:center;cursor:zoom-out;z-index:9}"
+        "#lb img{max-width:96vw;max-height:96vh;border-radius:6px}"
+        "</style></head><body>"
+        # A tiny self-contained lightbox: set its <img> src on click, hide on click.
+        "<div id='lb' onclick='this.style.display=\"none\"'><img id='lbimg'></div>"
+        "<script>function zoom(s){var b=document.getElementById('lb');"
+        "document.getElementById('lbimg').src=s;b.style.display='flex';}</script>"
         f"<h2>🐱 Cat detection benchmark — {esc(meta['image'])}</h2>"
         f"<p class='muted'>{esc(meta['ts'])} · {len(runs)} runs</p>"
         f"<div class='fixed'><b>Settings held fixed for every run:</b> {fixed}</div>"
@@ -325,7 +345,7 @@ def _benchmark_xlsx(runs: list, meta: dict) -> bytes:
     head_row = ws.max_row
     for i, r in enumerate(runs):
         row = head_row + 1 + i
-        ws.cell(row, 2, r["model"]); ws.cell(row, 3, r["size"])
+        ws.cell(row, 2, _display_model(r["model"])); ws.cell(row, 3, r["size"])
         ws.cell(row, 4, r["tiling"]); ws.cell(row, 5, r["combined_score"])
         ws.cell(row, 6, r["cat_score"]); ws.cell(row, 7, r["dog_score"])
         ws.cell(row, 8, "yes" if r["detected"] else "no")
