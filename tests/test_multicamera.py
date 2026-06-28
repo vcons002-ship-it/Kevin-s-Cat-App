@@ -68,9 +68,11 @@ class FakeDet:
         self.frame_size = (64, 48)
         self._smooth_desired = kw.get("smooth_feed", False)
         self.released = False
+        self.release_count = 0
         self._cat_last = 0.0
 
     def read_and_detect(self, detect=True, force=False):
+        CALLS[self.source] = CALLS.get(self.source, 0) + 1
         time.sleep(0.003)
         outcome = OUTCOMES.get(self.source, FrameOutcome(False, False))
         if isinstance(outcome, Exception):
@@ -102,9 +104,11 @@ class FakeDet:
 
     def release(self):
         self.released = True
+        self.release_count += 1
 
 
 OUTCOMES = {}     # source -> FrameOutcome | Exception
+CALLS = {}        # source -> number of read_and_detect calls (round-robin assertions)
 
 
 def _run_loop(cfg, monkeypatch, tmp_path, seconds=0.4):
@@ -329,6 +333,77 @@ def test_show_cat_boost_forces_detection_when_scanning_off(monkeypatch, tmp_path
         lp.stop()
 
 
+# ---- round-robin ----------------------------------------------------------
+def _rr_cams():
+    return [_cam("A", "rtsp://a/s", roll=False, track_cats=True),
+            _cam("B", "rtsp://b/s", roll=False, track_cats=True),
+            _cam("C", "rtsp://c/s", roll=False, track_cats=True)]
+
+
+def _idle_outcomes():
+    return {s: FrameOutcome(False, False) for s in ("rtsp://a/s", "rtsp://b/s", "rtsp://c/s")}
+
+
+def test_round_robin_rotates_and_rests(monkeypatch, tmp_path):
+    # 3 cameras, only 1 detecting at a time: every camera still gets its turn
+    # (rotation reaches all), and at any settled moment some cameras are resting.
+    global OUTCOMES, CALLS
+    OUTCOMES, CALLS = _idle_outcomes(), {}
+    cfg = _base_cfg(_rr_cams(), round_robin=True, round_robin_size=1,
+                    round_robin_interval=0.4)
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path, seconds=1.6)
+    try:
+        assert all(CALLS.get(s, 0) > 0 for s in OUTCOMES), CALLS   # all got a turn
+        st = {c["name"]: c for c in lp.cam_status()}
+        assert sum(1 for c in st.values() if c["resting"]) >= 1    # someone is resting
+        assert any(d.release_count > 0 for d in lp._detectors.values())   # rested → released
+    finally:
+        lp.stop()
+
+
+def test_round_robin_off_keeps_all_active(monkeypatch, tmp_path):
+    global OUTCOMES, CALLS
+    OUTCOMES, CALLS = _idle_outcomes(), {}
+    cfg = _base_cfg(_rr_cams(), round_robin=False)
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path, seconds=0.5)
+    try:
+        st = {c["name"]: c for c in lp.cam_status()}
+        assert not any(c["resting"] for c in st.values())   # nobody rests
+        assert all(CALLS.get(s, 0) > 0 for s in OUTCOMES)
+    finally:
+        lp.stop()
+
+
+def test_always_watch_never_rests(monkeypatch, tmp_path):
+    global OUTCOMES, CALLS
+    OUTCOMES, CALLS = _idle_outcomes(), {}
+    cams = _rr_cams()
+    cams[0]["always_watch"] = True       # "A" is exempt from rotation
+    cfg = _base_cfg(cams, round_robin=True, round_robin_size=1, round_robin_interval=0.4)
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path, seconds=1.0)
+    try:
+        st = {c["name"]: c for c in lp.cam_status()}
+        assert st["A"]["always_watch"] is True and st["A"]["resting"] is False
+    finally:
+        lp.stop()
+
+
+def test_viewed_camera_stays_active(monkeypatch, tmp_path):
+    # A camera the GUI is streaming must not rest, even when it's not its rotation turn.
+    global OUTCOMES, CALLS
+    OUTCOMES, CALLS = _idle_outcomes(), {}
+    cfg = _base_cfg(_rr_cams(), round_robin=True, round_robin_size=1,
+                    round_robin_interval=5.0)   # long interval → C would otherwise rest
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path, seconds=0.4)
+    try:
+        lp.note_viewing("C")              # pin C (as the live stream would, each frame)
+        time.sleep(0.6)
+        st = {c["name"]: c for c in lp.cam_status()}
+        assert st["C"]["resting"] is False
+    finally:
+        lp.stop()
+
+
 def test_stop_releases_all_detectors(monkeypatch, tmp_path):
     global OUTCOMES
     OUTCOMES = {"rtsp://a/s": FrameOutcome(False, False),
@@ -390,6 +465,25 @@ def test_cats_boost_endpoint(tmp_path, monkeypatch):
     # Nothing running → the camera isn't watched, so the boost is a no-op.
     assert c.post("/api/cats/boost", json={"camera": "Kitchen"}).get_json()["ok"] is False
     assert c.post("/api/cats/boost", json={}).get_json()["ok"] is False
+
+
+def test_round_robin_config_round_trips(tmp_path, monkeypatch):
+    c, _ = _client(tmp_path, monkeypatch)
+    c.post("/api/config", json={"round_robin": True, "round_robin_size": 3,
+                                "round_robin_interval": 20})
+    cfg = c.get("/api/config").get_json()
+    assert cfg["round_robin"] is True
+    assert cfg["round_robin_size"] == 3 and cfg["round_robin_interval"] == 20
+
+
+def test_camera_locator_and_always_watch_round_trip(tmp_path, monkeypatch):
+    c, _ = _client(tmp_path, monkeypatch)
+    c.post("/api/cameras/saved", json={
+        "name": "K", "url": "rtsp://1/s", "cat_scan_tiling": "4x4",
+        "cat_scan_imgsz": 960, "always_watch": True})
+    cam = c.get("/api/cameras/saved").get_json()[0]
+    assert cam["cat_scan_tiling"] == "4x4" and cam["cat_scan_imgsz"] == 960
+    assert cam["always_watch"] is True
 
 
 def test_cat_scan_interval_default_and_coercion():

@@ -160,3 +160,57 @@ def test_test_upload_rejects_non_media():
 
 def test_test_upload_requires_a_file():
     assert _client().post("/api/test/upload").status_code == 400
+
+
+def test_test_detect_returns_inference_ms_and_respects_tiling():
+    c = _client()
+    up = _upload(c, _CAT).get_json()
+    body = c.post("/api/test/detect", json={"id": up["id"], "settings": {
+        "model": "mobilenet_ssd", "detect_size": 512, "label_floor": 0.4,
+        "tiling": "2x2", "tile_overlap": 0.2}}).get_json()
+    assert isinstance(body["inference_ms"], (int, float)) and body["inference_ms"] >= 0
+    assert any(d["label"] == "cat" for d in body["detections"])
+
+
+# ---- locator path: tiling + larger-input ----------------------------------
+def test_merge_nms_dedupes_overlapping_same_class():
+    from d20app import yolo
+
+    boxes = [("cat", 0.9, (10, 10, 110, 110)), ("cat", 0.8, (14, 12, 112, 108)),
+             ("person", 0.7, (300, 0, 360, 300))]
+    merged = yolo.merge_nms(boxes, 0.3)
+    assert sorted(lab for lab, _, _ in merged) == ["cat", "person"]   # 2 cats → 1
+    cat = next(m for m in merged if m[0] == "cat")
+    assert cat[1] == 0.9        # the stronger of the overlapping pair survives
+
+
+def test_locator_tiling_runs_once_per_tile():
+    det = PersonDetector(source="x", model="mobilenet_ssd",
+                         cat_scan_tiling="2x2", cat_scan_tile_overlap=0.2)
+    shapes = []
+    det._run_net = lambda img, floor, size=None: (shapes.append(img.shape), [])[1]
+    det._detect_locator(np.zeros((100, 120, 3), np.uint8), 0.3)
+    assert len(shapes) == 4        # a 2x2 grid → four single passes
+
+
+def test_locator_tiling_finds_cat_via_detect_image():
+    import cv2
+
+    frame = cv2.imread(_CAT)
+    det = PersonDetector(source="x", model="mobilenet_ssd", label_floor=0.4,
+                         cat_scan_tiling="2x2")
+    _, dets = det.detect_image(frame)
+    assert any(d["label"] == "cat" for d in dets)
+
+
+def test_locator_imgsz_missing_yolo_variant_falls_back():
+    import cv2
+
+    frame = cv2.imread(_CAT)
+    # yolo11m_1280 isn't committed (only the 960 export is) — selecting it must
+    # degrade to the native size, not crash.
+    det = PersonDetector(source="x", model="yolo11m", cat_scan_imgsz=1280,
+                         cat_scan_tiling="off", label_floor=0.4)
+    assert det._locator_net() is None
+    annotated, _ = det.detect_image(frame)
+    assert annotated is not None

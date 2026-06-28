@@ -118,7 +118,14 @@ def _run_test_detection(frame, settings: dict):
         det.brightness = int(_f("brightness", 0))
         det.contrast = _f("contrast", 1.0)
         det.saturation = _f("saturation", 1.0)
-        return det.detect_image(frame)
+        det.cat_scan_tiling = settings.get("tiling") or "off"
+        det.cat_scan_tile_overlap = _f("tile_overlap", 0.2)
+        det.cat_scan_imgsz = int(_f("imgsz", 0))
+        det._locator_tried = False        # re-resolve the larger-input net on setting change
+        det._locator_runner = None
+        t0 = time.perf_counter()
+        annotated, dets = det.detect_image(frame)
+        return annotated, dets, round((time.perf_counter() - t0) * 1000.0, 1)
 
 
 def _mask_cameras(cameras, cfg=None) -> list:
@@ -209,6 +216,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # The 0.03 s poll is the only ceiling (~30 fps); cheap when idle.
             last_ver = -1
             while loop.is_running():
+                loop.note_viewing(name)   # keep this camera awake under round-robin
                 ver = loop.live_version(name)
                 if ver != last_ver:
                     jpeg = loop.live_jpeg(name)
@@ -450,12 +458,12 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         except (TypeError, ValueError):
             idx = 0
         idx = max(0, min(idx, len(frames) - 1))
-        annotated, dets = _run_test_detection(frames[idx], body.get("settings") or {})
+        annotated, dets, ms = _run_test_detection(frames[idx], body.get("settings") or {})
         if annotated is None:
             return jsonify({"error": "Detection failed on that frame."}), 500
         return jsonify({
             "annotated": "data:image/jpeg;base64," + base64.b64encode(annotated).decode("ascii"),
-            "detections": dets, "frame_index": idx,
+            "detections": dets, "frame_index": idx, "inference_ms": ms,
         })
 
     @app.post("/api/cats/boost")

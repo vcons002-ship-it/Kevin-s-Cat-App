@@ -38,12 +38,17 @@ def test_persondetector_yolo_detects_people():
     assert hits >= len(PEOPLE) * 0.8        # strong recall on clear photos
 
 
+# The bundled variants ship their ONNX; the larger-input locator exports
+# (yolo11m_960/_1280) are optional and produced on demand by scripts/export_yolo.py.
+_BUNDLED_VARIANTS = ("yolo11n", "yolo11m")
+
+
 def test_variant_registry_files_present_and_sized():
-    # Every registered variant ships its ONNX and a fixed input size; the
-    # back-compat aliases still point at the default (nano).
+    # Every variant has a fixed input size; the bundled ones ship their ONNX.
     for variant, spec in yolo.MODELS.items():
-        assert os.path.exists(yolo.model_path(variant)), f"{variant} onnx missing"
         assert yolo.input_size(variant) == spec["size"]
+        if variant in _BUNDLED_VARIANTS:
+            assert os.path.exists(yolo.model_path(variant)), f"{variant} onnx missing"
     assert yolo.ONNX_PATH == yolo.model_path("yolo11n")
     assert yolo.INPUT_SIZE == yolo.input_size("yolo11n")
 

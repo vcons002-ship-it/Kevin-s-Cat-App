@@ -47,6 +47,19 @@ scan_fps: 10.0            # frames/sec read from the camera; lower = less CPU (g
 smooth_live_feed: false   # run a dedicated capture thread so the live GUI feed plays at camera rate (decoupled from inference); a little extra CPU/bandwidth
 roi: null                 # [x, y, w, h] region of interest — set this visually in the GUI
 
+# --- Locator resolution (the still-cat scan only; the fast treat path is untouched).
+# A sleeping cat shrunk into a 640 frame can be too small to detect; tiling and/or a
+# larger input give the locator scan more effective resolution. ---
+cat_scan_tiling: "2x2"     # "off" | "2x2" | "3x3" | "4x4" — split into an overlapping grid, detect per tile, merge (more tiles catch smaller cats, more CPU). Default on.
+cat_scan_tile_overlap: 0.2 # fraction each tile overlaps its neighbour
+cat_scan_imgsz: 0          # locator input size: 0 = native. MobileNet resizes freely; YOLO needs a matching exported model (e.g. yolo11m_960) or falls back to native + tiling
+
+# --- Round-robin (cap CPU when watching many cameras: run a few at a time, rotating
+# sets — many cameras at the CPU of a few). Per-camera "always_watch" exempts a camera. ---
+round_robin: false         # rotate detection across the watched cameras instead of all-at-once
+round_robin_size: 2        # how many cameras detect at once (the rest rest, releasing their capture)
+round_robin_interval: 15.0 # seconds each set is watched before rotating
+
 # --- Image adjustments (applied BEFORE the net; tune in the GUI's "Test detection"
 # tool against a real photo). All defaults are no-ops. ---
 gamma: 1.0                # >1 brightens midtones / lifts shadows, <1 darkens; 1.0 = off

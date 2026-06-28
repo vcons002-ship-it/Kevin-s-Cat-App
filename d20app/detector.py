@@ -318,9 +318,20 @@ class PersonDetector:
                  motion_min_blob_px: int = 14, model: str = "mobilenet_ssd",
                  accelerator: str = "cpu", smooth_feed: bool = False,
                  gamma: float = 1.0, brightness: int = 0,
-                 contrast: float = 1.0, saturation: float = 1.0) -> None:
+                 contrast: float = 1.0, saturation: float = 1.0,
+                 cat_scan_tiling: str = "off", cat_scan_tile_overlap: float = 0.2,
+                 cat_scan_imgsz: int = 0) -> None:
         self.source = source
         self.confidence = confidence
+        # Locator-scan resolution knobs (used only by the still-cat forced scan, not
+        # the fast treat path). See :meth:`_detect_locator`.
+        self.cat_scan_tiling = cat_scan_tiling or "off"
+        self.cat_scan_tile_overlap = float(cat_scan_tile_overlap)
+        self.cat_scan_imgsz = int(cat_scan_imgsz or 0)
+        self._locator_runner = None     # lazily-loaded larger-input YOLO net (Option A)
+        self._locator_size = None
+        self._locator_model = None
+        self._locator_tried = False
         # Image adjustments applied to each frame before the net (and the live feed
         # in non-smooth mode) sees it. Defaults are no-ops. See
         # :func:`apply_image_adjustments`.
@@ -461,24 +472,25 @@ class PersonDetector:
             contrast=self.contrast, saturation=self.saturation)
 
     # -- inference -----------------------------------------------------------
-    def _detect_boxes(self, frame, floor: float) -> list:
-        """Return ``[(label, score, (x1, y1, x2, y2))]`` for one BGR frame.
+    def _run_net(self, img, floor: float, size: int | None = None) -> list:
+        """One forward pass on an already-cropped/tiled BGR ``img``.
 
-        Coordinates are pixels within the (ROI-cropped) frame the net analysed.
-        Dispatches to the YOLO backend or the bundled MobileNet-SSD per ``model``.
+        Returns ``[(label, score, (x1, y1, x2, y2))]`` in ``img`` pixel coords.
+        Dispatches to YOLO or MobileNet by ``self.model`` (which ``_ensure_net`` may
+        flip to MobileNet if the YOLO model can't load). ``size`` overrides the
+        MobileNet input size (YOLO's is fixed by its model).
         """
         import cv2
 
-        cropped = self._crop(frame)
         net = self._ensure_net()
         if self.model.startswith("yolo"):
             from . import yolo
-            return yolo.detect_boxes(net, cropped, floor, size=self._yolo_size)
+            return yolo.detect_boxes(net, img, floor, size=self._yolo_size)
 
-        h, w = cropped.shape[:2]
-        s = self.detect_size
+        h, w = img.shape[:2]
+        s = int(size or self.detect_size)
         blob = cv2.dnn.blobFromImage(
-            cv2.resize(cropped, (s, s)),
+            cv2.resize(img, (s, s)),
             scalefactor=0.007843,        # 1/127.5
             size=(s, s),
             mean=127.5,
@@ -496,6 +508,80 @@ class PersonDetector:
                 y2 = int(det[0, 0, i, 6] * h)
                 boxes.append((CLASSES[cid], score, (x1, y1, x2, y2)))
         return boxes
+
+    def _detect_boxes(self, frame, floor: float) -> list:
+        """Single full-frame detection on the ROI crop — the fast treat path."""
+        return self._run_net(self._crop(frame), floor)
+
+    # -- locator path: higher effective resolution for the still-cat scan -----
+    _TILE_GRID = {"off": 1, "2x2": 2, "3x3": 3, "4x4": 4}
+
+    def _tiling_grid(self) -> int:
+        return self._TILE_GRID.get(str(self.cat_scan_tiling or "off"), 1)
+
+    def _locator_net(self):
+        """A larger-input YOLO runner for the locator scan, or ``None`` to use the
+        camera's normal net. Loaded once; missing/failed export → ``None`` (the scan
+        then leans on tiling at the native size). MobileNet sizing is handled in
+        :meth:`_run_net`, so this only applies to YOLO."""
+        if self.cat_scan_imgsz <= 0 or not self.model.startswith("yolo"):
+            return None
+        variant = f"{self.model}_{self.cat_scan_imgsz}"
+        from . import yolo
+        if variant not in yolo.MODELS:
+            return None
+        if not self._locator_tried:
+            self._locator_tried = True
+            try:
+                self._locator_runner = yolo.load_net(variant, self.accelerator)
+                self._locator_size = yolo.input_size(variant)
+                self._locator_model = variant
+            except Exception as exc:        # noqa: BLE001 — degrade to tiling, don't crash
+                _log.warning("locator model %s unavailable (%s) — using %s + tiling",
+                             variant, exc, self.model)
+        return self._locator_runner
+
+    def _detect_locator(self, frame, floor: float) -> list:
+        """Higher-resolution detection for the periodic still-cat scan.
+
+        Tiling (Option B) splits the ROI crop into an overlapping grid so a small
+        cat fills more of the net's input; an optional larger YOLO input (Option A)
+        stacks on top. Both default to off → identical to :meth:`_detect_boxes`.
+        """
+        from . import yolo
+
+        cropped = self._crop(frame)
+        runner = self._locator_net()        # larger YOLO net, or None
+        loc_size = self._locator_size
+
+        def single(img):
+            if runner is not None:
+                return yolo.detect_boxes(runner, img, floor, size=loc_size)
+            # Camera's own model. For MobileNet, bump the input size if requested.
+            size = self.cat_scan_imgsz if (
+                self.cat_scan_imgsz and not self.model.startswith("yolo")) else None
+            return self._run_net(img, floor, size=size)
+
+        grid = self._tiling_grid()
+        if grid <= 1:
+            return single(cropped)
+
+        h, w = cropped.shape[:2]
+        bw, bh = w / grid, h / grid
+        ow, oh = bw * self.cat_scan_tile_overlap, bh * self.cat_scan_tile_overlap
+        collected = []
+        for gy in range(grid):
+            for gx in range(grid):
+                x0 = int(max(0, gx * bw - ow))
+                y0 = int(max(0, gy * bh - oh))
+                x1 = int(min(w, (gx + 1) * bw + ow))
+                y1 = int(min(h, (gy + 1) * bh + oh))
+                tile = cropped[y0:y1, x0:x1]
+                if tile.size == 0:
+                    continue
+                for label, score, (a, b, c, d) in single(tile):
+                    collected.append((label, score, (a + x0, b + y0, c + x0, d + y0)))
+        return yolo.merge_nms(collected, floor)
 
     @staticmethod
     def _best(boxes, label: str) -> float:
@@ -563,7 +649,11 @@ class PersonDetector:
         import cv2
 
         adjusted = self._adjust(frame)
-        boxes = self._detect_boxes(adjusted, floor=min(self.label_floor, self.confidence))
+        floor = min(self.label_floor, self.confidence)
+        # Use the locator (tiled / larger-input) path when either is enabled, so the
+        # tester measures exactly what the still-cat scan would do.
+        use_locator = self._tiling_grid() > 1 or self.cat_scan_imgsz > 0
+        boxes = self._detect_locator(adjusted, floor) if use_locator else self._detect_boxes(adjusted, floor)
         img = self._crop(adjusted).copy()
         self._draw_boxes(img, boxes)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -817,7 +907,10 @@ class PersonDetector:
         if not force and (not detect or not moved):
             return FrameOutcome(motion=False, person=False)
 
-        boxes = self._detect_boxes(frame, floor=min(self.label_floor, self.confidence))
+        floor = min(self.label_floor, self.confidence)
+        # A forced (still-cat) scan uses the higher-resolution locator path; the
+        # motion/treat path stays fast at the native size.
+        boxes = self._detect_locator(frame, floor) if force else self._detect_boxes(frame, floor)
         self._last_frame = cropped             # what the net saw (box coords match)
         now = time.monotonic()
         cat_seen = any(lab == "cat" and score >= self.label_floor
