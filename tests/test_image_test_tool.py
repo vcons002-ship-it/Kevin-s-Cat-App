@@ -216,6 +216,35 @@ def test_benchmark_caps_matrix_size():
     assert c.post("/api/test/benchmark", json=big).status_code == 400
 
 
+def test_benchmark_html_embeds_full_res_original_and_zoomable_thumbs():
+    # #25: the report carries the unannotated original frame (download to re-run)
+    # and each run thumbnail is wrapped in a click-to-enlarge link.
+    c = _client()
+    body = _benchmark(c, name="kitchen-cam.jpg").get_json()
+    html = c.get(body["html_url"]).get_data(as_text=True)
+    assert "Original frame" in html and "download='kitchen-cam.jpg'" in html
+    # thumbnails are click-to-enlarge (anchor wrapping the img)
+    assert "target='_blank'" in html and "<img" in html
+
+
+def test_benchmark_reports_have_human_readable_filenames():
+    # #27: Content-Disposition uses a slug from the uploaded image name, not the uuid.
+    c = _client()
+    body = _benchmark(c, name="Living Room Cam.jpg").get_json()
+    cd = c.get(body["html_url"]).headers.get("Content-Disposition", "")
+    assert "benchmark-living-room-cam-" in cd and cd.endswith('.html"')
+    xl = c.get(body["xlsx_url"])
+    assert "benchmark-living-room-cam-" in xl.headers.get("Content-Disposition", "")
+
+
+def test_benchmark_model_list_includes_ssd_size_variants():
+    # #28: the default sweep list must not drift from the dropdown — it carries the
+    # MobileNet size variants alongside any present YOLO models.
+    c = _client()
+    models = c.get("/api/test/benchmark/models").get_json()["models"]
+    assert {"mobilenet_ssd", "mobilenet_ssd@512", "mobilenet_ssd@768"} <= set(models)
+
+
 def test_test_detect_returns_inference_ms_and_respects_tiling():
     c = _client()
     up = _upload(c, _CAT).get_json()

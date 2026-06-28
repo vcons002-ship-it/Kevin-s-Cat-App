@@ -62,7 +62,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **180 automated tests**, including a detection-accuracy regression guard over
+- **183 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
@@ -117,6 +117,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [x] **"Benchmark this image"** — one-click sweep of models × tiling on an uploaded
       frame, emitting a shareable **self-contained HTML** report (+ optional XLSX) with
       best cat / dog / combined score, found?, and inference time per run (0.18.0, #21).
+      Report polish (0.18.1): legible click-to-enlarge thumbnails, the **full-res
+      original frame embedded** for reproducibility, human-readable download filenames,
+      and a clearly-disabled (not dead) XLSX button when `openpyxl` is absent
+      (#25/#26/#27/#28).
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

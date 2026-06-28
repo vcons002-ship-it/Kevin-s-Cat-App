@@ -11,6 +11,32 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.18.1] — 2026-06-28
+
+### Fixed
+- **Benchmark thumbnails are legible now** (#25). The annotated frames are encoded
+  at **680px** (was 240px, which threw the box/label detail away *before* encoding),
+  displayed small in the table but **click-to-enlarge** — tidy grid, full detail on
+  demand, still a single emailable file (~0.5–1 MB for a 16-run sweep).
+- **The benchmark XLSX button no longer sits there dead** (#26). When `openpyxl`
+  isn't installed the download control is **visibly disabled with a note explaining
+  why and how to fix it** ("XLSX export needs the 'openpyxl' package — pip install
+  openpyxl"), instead of a silent no-op link. (`openpyxl` stays optional by design.)
+- **Benchmark report downloads have human-readable filenames** (#27). HTML/XLSX are
+  served with a `Content-Disposition` slug like `benchmark-living-room-cam-20260628-1432`
+  built from the uploaded image name + timestamp, not the opaque report UUID.
+- **The default sweep model list no longer drifts from the dropdown** (#28).
+  `_benchmark_models()` now returns the present YOLO variants **plus the MobileNet
+  size variants** (`mobilenet_ssd`, `@512`, `@768`), so the "include models" checkboxes
+  match what the manual model picker offers.
+
+### Added
+- **The original (unannotated) frame travels with the report** (#25). The source
+  frame is embedded once at full native resolution with a **download link**, so the
+  report is a self-contained experiment record — fixed settings + exact input +
+  per-run results — and anyone can extract that frame and re-run the identical
+  benchmark after a code/model change to compare.
+
 ## [0.18.0] — 2026-06-28
 
 ### Added

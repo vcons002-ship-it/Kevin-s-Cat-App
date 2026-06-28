@@ -212,6 +212,15 @@ XLSX** (needs `openpyxl`; offered by setup). Each run lists best **cat / dog /
 combined** score, whether it cleared the cat threshold, and **inference time**. Trim
 the matrix with the checkboxes — a 4×4 × `yolo11m_960` sweep is heavy on CPU.
 
+The report is built to **travel and reproduce**: each annotated thumbnail is encoded
+large enough to read the boxes and is **click-to-enlarge**, the **unannotated original
+frame is embedded at full resolution** with a download link (grab it and re-run the
+identical sweep after a code/model change to compare), and downloads get
+**human-readable filenames** like `benchmark-living-room-cam-20260628-1432.html`. If
+`openpyxl` isn't installed the XLSX button is **disabled with a note** telling you how
+to enable it, rather than silently doing nothing — the HTML report needs no extra
+packages.
+
 ### Finding a still cat that's too small (resolution)
 
 A sleeping cat shrunk into a wide 640 frame can be **too small for the net to detect
