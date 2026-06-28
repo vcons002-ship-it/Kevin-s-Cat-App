@@ -70,8 +70,9 @@ def test_detect_image_respects_confidence_floor():
     import cv2
 
     frame = cv2.imread(_CAT)
+    # Cat now has its own threshold, so raise it too (a real cat scores ~0.96).
     high = PersonDetector(source="x", model="mobilenet_ssd", detect_size=512,
-                          confidence=0.99, label_floor=0.99)
+                          confidence=0.99, label_floor=0.99, cat_confidence=0.99)
     _, dets = high.detect_image(frame)
     assert dets == []      # nothing clears a 0.99 floor
 
@@ -201,6 +202,48 @@ def test_locator_tiling_finds_cat_via_detect_image():
                          cat_scan_tiling="2x2")
     _, dets = det.detect_image(frame)
     assert any(d["label"] == "cat" for d in dets)
+
+
+def test_cat_confidence_gates_independently_of_label_floor():
+    import cv2
+
+    frame = cv2.imread(_CAT)
+    # A real cat scores ~0.96. Cat is gated by cat_confidence, not label_floor.
+    seen = PersonDetector(source="x", model="mobilenet_ssd", detect_size=512,
+                          cat_confidence=0.5, label_floor=0.9)
+    assert any(d["label"] == "cat" for d in seen.detect_image(frame)[1])
+    hidden = PersonDetector(source="x", model="mobilenet_ssd", detect_size=512,
+                            cat_confidence=0.97, label_floor=0.2)
+    assert not any(d["label"] == "cat" for d in hidden.detect_image(frame)[1])
+
+
+def test_locator_classes_count_a_dog_as_the_cat():
+    import numpy as np
+
+    det = PersonDetector(source="x", model="mobilenet_ssd",
+                         cat_confidence=0.4, locator_classes=("cat", "dog"))
+    det._run_net = lambda img, floor, size=None: [("dog", 0.8, (5, 5, 50, 50))]
+    assert det._is_locator_hit("dog", 0.8) is True
+    _, dets = det.detect_image(np.zeros((80, 80, 3), np.uint8))
+    assert [d["label"] for d in dets] == ["dog"]
+    # Default cat-only doesn't count a dog.
+    det2 = PersonDetector(source="x", model="mobilenet_ssd", cat_confidence=0.4)
+    assert det2._is_locator_hit("dog", 0.9) is False
+
+
+def test_mobilenet_ssd_size_suffix_parsed():
+    assert PersonDetector(source="x", model="mobilenet_ssd@512")._ssd_size() == 512
+    assert PersonDetector(source="x", model="mobilenet_ssd", detect_size=300)._ssd_size() == 300
+
+
+def test_test_detect_honours_cat_confidence_and_dog():
+    c = _client()
+    up = _upload(c, _CAT).get_json()
+    # A high cat_confidence drops the cat from the tester's detection list.
+    body = c.post("/api/test/detect", json={"id": up["id"], "settings": {
+        "model": "mobilenet_ssd", "detect_size": 512,
+        "cat_confidence": 0.99, "label_floor": 0.2}}).get_json()
+    assert not any(d["label"] == "cat" for d in body["detections"])
 
 
 def test_locator_imgsz_missing_yolo_variant_falls_back():

@@ -112,6 +112,9 @@ def _run_test_detection(frame, settings: dict):
         det.confidence = _f("person_confidence", 0.5)
         det.detect_size = int(_f("detect_size", 300)) or 300
         det.label_floor = _f("label_floor", 0.55)
+        det.cat_confidence = _f("cat_confidence", 0.5)
+        lc = settings.get("locator_classes")
+        det.locator_classes = tuple(lc) if isinstance(lc, (list, tuple)) and lc else ("cat",)
         roi = settings.get("roi")
         det.roi = list(roi) if (isinstance(roi, (list, tuple)) and len(roi) == 4) else None
         det.gamma = _f("gamma", 1.0)

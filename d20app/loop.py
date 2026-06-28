@@ -91,6 +91,19 @@ def _cat_flash_ttl(cfg) -> float:
     return iv + 2.0 if iv > 0 else 2.0
 
 
+def _locator_hit(detector, outcome):
+    """``(label, score, box)`` for the strongest locator-class detection this frame
+    (the cat — possibly a "dog" standing in for it), or ``None``. Picks the best box
+    across ``detector.locator_classes``."""
+    best = None
+    for cls in detector.locator_classes:
+        if cls in outcome.labels:
+            bb = detector.best_box(cls)
+            if bb and (best is None or bb[0] > best[1]):
+                best = (cls, bb[0], bb[1])     # (label, score, box)
+    return best
+
+
 def _cat_scan_due(cfg, track_cats: bool, last_scan: float, now: float) -> bool:
     """Whether a cat-tracking camera should force a still-cat scan this iteration.
 
@@ -334,6 +347,8 @@ class DetectionLoop:
                 cat_scan_tiling=spec["cat_scan_tiling"],
                 cat_scan_tile_overlap=spec["cat_scan_tile_overlap"],
                 cat_scan_imgsz=spec["cat_scan_imgsz"],
+                cat_confidence=spec["cat_confidence"],
+                locator_classes=spec["locator_classes"],
             )
             cam_status[name] = {"connected": False, "last_error": "",
                                 "roll": bool(spec["roll"]),
@@ -527,18 +542,17 @@ class DetectionLoop:
                 # streak, same as any idle frame.
                 if force_scan and not outcome.motion:
                     streak = 0
-                    cat = (detector.best_box("cat")
-                           if (track_cats and "cat" in outcome.labels) else None)
+                    cat = _locator_hit(detector, outcome) if track_cats else None
                     if cat is not None:
                         if not cat_seen_still:
-                            score, box = cat
+                            label, score, box = cat
                             snap = self.snapshots.save(detector.annotated_jpeg())
                             sighting = self.cats.record(
-                                name, box, detector.frame_size, score, image=snap)
+                                name, box, detector.frame_size, score, image=snap, label=label)
                             where = f" ({sighting['region']})" if sighting["region"] else ""
                             self.activity.add(
                                 "motion",
-                                f"🐱 Still cat seen{where} on {cam_label} — tracked, no roll.",
+                                f"🐱 Still {label} seen{where} on {cam_label} — tracked, no roll.",
                                 image=snap)
                         cat_seen_still = True
                     else:
@@ -560,16 +574,15 @@ class DetectionLoop:
                     streak = 0
                     if motion_gate.allow():
                         snap = self.snapshots.save(detector.annotated_jpeg())
-                        cat = (detector.best_box("cat")
-                               if (track_cats and "cat" in outcome.labels) else None)
+                        cat = _locator_hit(detector, outcome) if track_cats else None
                         if cat is not None:
-                            score, box = cat
+                            label, score, box = cat
                             sighting = self.cats.record(
-                                name, box, detector.frame_size, score, image=snap)
+                                name, box, detector.frame_size, score, image=snap, label=label)
                             where = f" ({sighting['region']})" if sighting["region"] else ""
                             self.activity.add(
                                 "motion",
-                                f"🐱 Cat seen{where} on {cam_label} — tracked, no roll.",
+                                f"🐱 {label.capitalize()} seen{where} on {cam_label} — tracked, no roll.",
                                 image=snap)
                         else:
                             what = outcome.labels[0] if outcome.labels else "something"

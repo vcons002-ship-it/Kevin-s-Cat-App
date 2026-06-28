@@ -61,6 +61,8 @@ class Config:
     smooth_live_feed: bool = False   # dedicated capture thread so the live feed runs at camera rate (decoupled from inference); costs a little extra CPU/bandwidth
     roi: list | None = None          # optional [x, y, w, h] crop of the frame (set in the GUI)
     label_floor: float = 0.55        # min confidence to NAME a non-person mover in the log/snapshot (higher = fewer stray "pottedplant"/"sofa" labels; no effect on treats)
+    cat_confidence: float = 0.5      # min confidence for a locator-class detection (the cat) to count — independent of person_confidence and of label_floor. Gates the track_cats/Show-cat path only; the treat/roll path is untouched.
+    locator_classes: list = field(default_factory=lambda: ["cat"])   # COCO classes that count as "the cat" for the locator. Default cat-only. A no-dog household can use ["cat", "dog"] since the model often (confidently) mislabels a cat as a dog and more resolution raises "dog", not "cat".
 
     # --- Image adjustments (applied to the frame BEFORE the net runs; can rescue a
     # too-dark / washed-out feed). Defaults are all no-ops. Tune them in the GUI's
@@ -135,6 +137,7 @@ _CAMERA_FROM_CFG = {
     "smooth_feed": "smooth_live_feed", "roi": "roi",
     "gamma": "gamma", "brightness": "brightness",
     "contrast": "contrast", "saturation": "saturation",
+    "cat_confidence": "cat_confidence", "locator_classes": "locator_classes",
     "cat_scan_tiling": "cat_scan_tiling",
     "cat_scan_tile_overlap": "cat_scan_tile_overlap",
     "cat_scan_imgsz": "cat_scan_imgsz",

@@ -70,6 +70,7 @@ class FakeDet:
         self.released = False
         self.release_count = 0
         self._cat_last = 0.0
+        self.locator_classes = tuple(kw.get("locator_classes") or ("cat",))
 
     def read_and_detect(self, detect=True, force=False):
         CALLS[self.source] = CALLS.get(self.source, 0) + 1
@@ -79,7 +80,8 @@ class FakeDet:
             raise outcome
         # A no-motion outcome is only "seen" when the net actually runs (real
         # motion, or a forced still-cat scan) — mirror the real detector.
-        if (outcome.motion or force) and "cat" in (outcome.labels or ()):
+        if (outcome.motion or force) and any(
+                c in (outcome.labels or ()) for c in self.locator_classes):
             self._cat_last = time.monotonic()
         return outcome
 
@@ -190,6 +192,39 @@ def test_cat_recorded_only_on_tracking_camera(monkeypatch, tmp_path):
         assert lp.cat_present() is True     # any cat-tracking camera sees a cat
     finally:
         lp.stop()
+
+
+def test_locator_records_dog_when_enabled(monkeypatch, tmp_path):
+    # A no-dog household opts into ["cat","dog"] → a dog is recorded as a sighting
+    # with its actual label.
+    global OUTCOMES
+    OUTCOMES = {"rtsp://d/s": FrameOutcome(True, False, labels=("dog",))}
+    cfg = _base_cfg([_cam("DogCam", "rtsp://d/s", roll=False, track_cats=True,
+                          locator_classes=["cat", "dog"])])
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path)
+    try:
+        last = lp.cats.last()
+        assert last is not None and last["label"] == "dog"
+        assert lp.cat_present() is True
+    finally:
+        lp.stop()
+
+
+def test_dog_not_recorded_by_default(monkeypatch, tmp_path):
+    global OUTCOMES
+    OUTCOMES = {"rtsp://d/s": FrameOutcome(True, False, labels=("dog",))}
+    cfg = _base_cfg([_cam("DogCam", "rtsp://d/s", roll=False, track_cats=True)])
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path)
+    try:
+        assert lp.cats.last() is None      # default locator_classes = cat-only
+    finally:
+        lp.stop()
+
+
+def test_cats_record_stores_label(tmp_path):
+    ct = CatTracker(path=str(tmp_path / "c.log"))
+    assert ct.record("Cam", (1, 2, 3, 4), (64, 48), 0.8, label="dog")["label"] == "dog"
+    assert ct.record("Cam", (1, 2, 3, 4), (64, 48), 0.8)["label"] == "cat"   # default
 
 
 def test_cat_not_recorded_when_tracking_disabled(monkeypatch, tmp_path):
@@ -484,6 +519,15 @@ def test_camera_locator_and_always_watch_round_trip(tmp_path, monkeypatch):
     cam = c.get("/api/cameras/saved").get_json()[0]
     assert cam["cat_scan_tiling"] == "4x4" and cam["cat_scan_imgsz"] == 960
     assert cam["always_watch"] is True
+
+
+def test_cat_confidence_and_locator_classes_round_trip(tmp_path, monkeypatch):
+    assert Config().cat_confidence == 0.5 and Config().locator_classes == ["cat"]
+    c, _ = _client(tmp_path, monkeypatch)
+    c.post("/api/cameras/saved", json={"name": "K", "url": "rtsp://1/s",
+                                       "cat_confidence": 0.35, "locator_classes": ["cat", "dog"]})
+    cam = c.get("/api/cameras/saved").get_json()[0]
+    assert cam["cat_confidence"] == 0.35 and cam["locator_classes"] == ["cat", "dog"]
 
 
 def test_cat_scan_interval_default_and_coercion():
