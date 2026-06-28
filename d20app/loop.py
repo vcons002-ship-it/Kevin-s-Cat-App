@@ -292,6 +292,10 @@ class DetectionLoop:
                 model=spec["model"],
                 accelerator=spec["accelerator"],
                 smooth_feed=spec["smooth_feed"],
+                gamma=spec["gamma"],
+                brightness=spec["brightness"],
+                contrast=spec["contrast"],
+                saturation=spec["saturation"],
             )
             cam_status[name] = {"connected": False, "last_error": "",
                                 "roll": bool(spec["roll"]),

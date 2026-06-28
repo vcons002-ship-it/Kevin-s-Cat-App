@@ -178,6 +178,26 @@ motion can trigger a treat.
 The camera/speaker/rules **setup lives below** the cat cam, live feed, and activity
 log — it's saved to `config.yaml`, so you set it once and rarely touch it again.
 
+### Test detection & image tuning
+
+The **🔬 Test detection** card lets you **upload a photo or a short video** and see
+exactly what the detector finds — boxes drawn on the image and a list of each
+person/cat with its score. A video is sampled into an evenly-spaced **filmstrip**;
+click any frame to test it.
+
+The card surfaces the settings that actually change whether things are identified
+correctly, as live sliders that **re-run detection as you drag**:
+
+- **Model**, **net input size**, **person confidence**, **notify floor** — what
+  counts as a detection.
+- **Gamma, brightness, contrast, saturation** — image adjustments applied **before
+  the net runs**. These are the lever to rescue a **too-dark or washed-out** feed:
+  lift the gamma until the cat pops out of the shadows, then check the box still
+  lands. They're real per-camera settings, so once it looks right, **Save** them to
+  that camera (or to the global defaults new cameras start from) and the live
+  detector uses them too. (Defaults are all no-ops, so nothing changes until you
+  tune it.)
+
 ### Snapshots & taming false positives
 
 Every detection event in the Activity log carries an **annotated snapshot** — a

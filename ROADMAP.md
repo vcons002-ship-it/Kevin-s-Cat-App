@@ -62,7 +62,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **143 automated tests**, including a detection-accuracy regression guard over
+- **157 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
@@ -72,8 +72,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   failure isolation), cat-sighting tracking (region labels, store persistence,
   `/api/cats`), the still/sleeping-cat scan (forced no-motion detection,
   rising-edge de-dup, always-on/off, per-room present list, no-roll-on-still-scan
-  guard), local USB camera + local PC speaker routing, and
-  saved-camera/cooldown-pause/keep-warm coverage.
+  guard), the "Test detection" tool (image adjustment maths, stateless
+  `detect_image`, video frame sampling, upload/detect endpoints), local USB camera
+  + local PC speaker routing, and saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
 
@@ -89,6 +90,12 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [ ] **GPU-batched inference** — on the iGPU/OpenVINO path, batch same-model
       cameras' frames into one `forward()` (needs a dynamic-batch ONNX re-export);
       GPU-only win. (Recorded from the 0.13.0 plan.)
+- [x] **Test detection on a photo/video + image adjustments** — upload a still or
+      a sampled-frame video clip and run the detector on it in the GUI, with the
+      impactful settings (model, input size, confidence, notify floor, and **gamma
+      / brightness / contrast / saturation**) as live sliders; save what works to a
+      camera or the global defaults (0.15.0). Adjustments apply before the net, so
+      they can rescue a dark/washed-out feed.
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

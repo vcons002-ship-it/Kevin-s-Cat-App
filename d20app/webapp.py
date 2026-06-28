@@ -20,8 +20,12 @@ Serves the config page plus JSON endpoints:
 
 from __future__ import annotations
 
+import base64
 import os
+import threading
 import time
+import uuid
+from collections import OrderedDict
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.utils import secure_filename
@@ -29,10 +33,92 @@ from werkzeug.utils import secure_filename
 from . import __version__
 from . import config as config_mod
 from . import discovery
-from .detector import grab_frame_jpeg
+from .detector import PersonDetector, grab_frame_jpeg, sample_video_frames
 from .loop import DetectionLoop, _camera_source
 
 ALLOWED_SOUND_EXT = {".wav", ".mp3", ".ogg", ".m4a", ".aac"}
+
+# --- "Test detection" tool: upload a photo/video, run the net with adjustable
+# settings, draw boxes. Frames are kept briefly in memory keyed by a session id so
+# the GUI can re-run on each slider tweak without re-uploading. ---------------
+_TEST_SESSIONS: "OrderedDict[str, list]" = OrderedDict()   # id -> [BGR frame, ...]
+_TEST_SESSIONS_LOCK = threading.Lock()
+_TEST_MAX_SESSIONS = 4
+_TEST_VIDEO_FRAMES = 8
+_test_detectors: dict = {}              # (model, accelerator) -> reusable PersonDetector
+_test_detect_lock = threading.Lock()    # serialise test detection + detector reuse
+_TEST_MAX_UPLOAD = 256 * 1024 * 1024    # 256 MB cap on a test upload
+
+
+def _thumb_data_url(frame, width: int = 200) -> str:
+    import cv2
+
+    h, w = frame.shape[:2]
+    if w > width:
+        frame = cv2.resize(frame, (width, max(1, int(h * width / w))))
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    if not ok:
+        return ""
+    return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
+
+
+def _decode_test_upload(data: bytes, filename: str) -> list:
+    """Return BGR frames from uploaded image *or* video bytes ([] if unreadable)."""
+    import cv2
+    import numpy as np
+
+    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if img is not None:
+        return [img]
+    # Not an image — try it as a video (cv2 needs a real path).
+    import tempfile
+
+    suffix = os.path.splitext(filename or "")[1] or ".mp4"
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    try:
+        tmp.write(data)
+        tmp.flush()
+        tmp.close()
+        return sample_video_frames(tmp.name, _TEST_VIDEO_FRAMES)
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+def _run_test_detection(frame, settings: dict):
+    """Run :meth:`PersonDetector.detect_image` with override settings.
+
+    Reuses one detector per (model, accelerator) so the net isn't reloaded on every
+    slider tweak; the cheap per-call knobs (confidence/size/floor/ROI/adjustments)
+    are set per request under a lock.
+    """
+    model = settings.get("model") or "yolo11n"
+    accel = settings.get("accelerator") or "cpu"
+
+    def _f(key, default):
+        try:
+            return float(settings.get(key, default))
+        except (TypeError, ValueError):
+            return float(default)
+
+    with _test_detect_lock:
+        key = (model, accel)
+        det = _test_detectors.get(key)
+        if det is None:
+            det = PersonDetector(source="__test__", model=model, accelerator=accel)
+            _test_detectors[key] = det
+        det.confidence = _f("person_confidence", 0.5)
+        det.detect_size = int(_f("detect_size", 300)) or 300
+        det.label_floor = _f("label_floor", 0.55)
+        roi = settings.get("roi")
+        det.roi = list(roi) if (isinstance(roi, (list, tuple)) and len(roi) == 4) else None
+        det.gamma = _f("gamma", 1.0)
+        det.brightness = int(_f("brightness", 0))
+        det.contrast = _f("contrast", 1.0)
+        det.saturation = _f("saturation", 1.0)
+        return det.detect_image(frame)
 
 
 def _mask_cameras(cameras, cfg=None) -> list:
@@ -64,6 +150,7 @@ def _public_config(cfg) -> dict:
 def create_app(loop: DetectionLoop | None = None) -> Flask:
     app = Flask(__name__)
     app.config["loop"] = loop or DetectionLoop()
+    app.config["MAX_CONTENT_LENGTH"] = _TEST_MAX_UPLOAD   # cap test-video uploads
 
     # -- page ---------------------------------------------------------------
     @app.get("/")
@@ -327,6 +414,49 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     def api_cats_clear():
         app.config["loop"].cats.clear()
         return jsonify({"ok": True})
+
+    # -- "Test detection" tool (upload a photo/video, tune settings, draw boxes) --
+    @app.post("/api/test/upload")
+    def api_test_upload():
+        if "file" not in request.files:
+            return jsonify({"error": "no file uploaded"}), 400
+        data = request.files["file"].read()
+        if not data:
+            return jsonify({"error": "empty file"}), 400
+        frames = _decode_test_upload(data, request.files["file"].filename or "")
+        if not frames:
+            return jsonify({"error": "Couldn't read that as an image or video."}), 400
+        sid = uuid.uuid4().hex
+        with _TEST_SESSIONS_LOCK:
+            _TEST_SESSIONS[sid] = frames
+            while len(_TEST_SESSIONS) > _TEST_MAX_SESSIONS:
+                _TEST_SESSIONS.popitem(last=False)     # drop the oldest session
+        h, w = frames[0].shape[:2]
+        return jsonify({
+            "id": sid, "count": len(frames), "width": int(w), "height": int(h),
+            "kind": "video" if len(frames) > 1 else "image",
+            "thumbs": [_thumb_data_url(fr) for fr in frames],
+        })
+
+    @app.post("/api/test/detect")
+    def api_test_detect():
+        body = request.get_json(silent=True) or {}
+        with _TEST_SESSIONS_LOCK:
+            frames = _TEST_SESSIONS.get(body.get("id"))
+        if not frames:
+            return jsonify({"error": "Upload expired — pick the file again."}), 404
+        try:
+            idx = int(body.get("frame_index", 0))
+        except (TypeError, ValueError):
+            idx = 0
+        idx = max(0, min(idx, len(frames) - 1))
+        annotated, dets = _run_test_detection(frames[idx], body.get("settings") or {})
+        if annotated is None:
+            return jsonify({"error": "Detection failed on that frame."}), 500
+        return jsonify({
+            "annotated": "data:image/jpeg;base64," + base64.b64encode(annotated).decode("ascii"),
+            "detections": dets, "frame_index": idx,
+        })
 
     @app.post("/api/cats/boost")
     def api_cats_boost():

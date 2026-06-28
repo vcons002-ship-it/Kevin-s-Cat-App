@@ -149,6 +149,77 @@ def grab_frame_jpeg(source: str, skip: int = 4):
     return buf.tobytes() if ok else None
 
 
+def apply_image_adjustments(frame, gamma: float = 1.0, brightness: int = 0,
+                            contrast: float = 1.0, saturation: float = 1.0):
+    """Return ``frame`` with gamma / brightness / contrast / saturation applied.
+
+    All defaults are no-ops, and a no-op skips the work and returns the input
+    unchanged (no copy). Applied to the frame *before* the net runs, so it can lift
+    a too-dark or washed-out feed into the detector's comfort zone. Order: gamma
+    (lifts shadows) → brightness/contrast (linear) → saturation (HSV).
+    """
+    import cv2
+    import numpy as np
+
+    out = frame
+    if gamma and gamma > 0 and abs(gamma - 1.0) > 1e-3:
+        inv = 1.0 / float(gamma)
+        lut = np.array([((i / 255.0) ** inv) * 255 for i in range(256)],
+                       dtype=np.uint8)
+        out = cv2.LUT(out, lut)
+    if abs(float(contrast) - 1.0) > 1e-3 or int(brightness) != 0:
+        out = cv2.convertScaleAbs(out, alpha=float(contrast), beta=float(brightness))
+    if saturation is not None and saturation >= 0 and abs(float(saturation) - 1.0) > 1e-3:
+        hsv = cv2.cvtColor(out, cv2.COLOR_BGR2HSV).astype("float32")
+        hsv[..., 1] = np.clip(hsv[..., 1] * float(saturation), 0, 255)
+        out = cv2.cvtColor(hsv.astype("uint8"), cv2.COLOR_HSV2BGR)
+    return out
+
+
+def sample_video_frames(path: str, n: int = 8) -> list:
+    """Decode ``path`` and return up to ``n`` evenly-spaced BGR frames.
+
+    For the GUI's "test a video" tool: gives a filmstrip to run detection on
+    without processing every frame. Falls back to sequential sampling when the
+    container doesn't report a frame count. Returns ``[]`` if it can't be read.
+    """
+    import cv2
+
+    _quiet_cv2_logs(cv2)
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        cap.release()
+        return []
+    n = max(1, int(n))
+    frames = []
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    try:
+        if total > 1:
+            count = min(n, total)
+            idxs = [int(round(i * (total - 1) / max(1, count - 1)))
+                    for i in range(count)] if count > 1 else [0]
+            for idx in idxs:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ok, fr = cap.read()
+                if ok and fr is not None:
+                    frames.append(fr)
+        if not frames:
+            # No reliable frame count (some streams/codecs): read sequentially and
+            # keep a bounded, evenly-thinned sample.
+            grabbed = []
+            for _ in range(n * 30):
+                ok, fr = cap.read()
+                if not ok or fr is None:
+                    break
+                grabbed.append(fr)
+            if grabbed:
+                step = max(1, len(grabbed) // n)
+                frames = grabbed[::step][:n]
+    finally:
+        cap.release()
+    return frames
+
+
 def mask_credentials(url: str) -> str:
     """Hide the password in an ``rtsp://user:pass@host`` URL for safe logging."""
     if "://" not in url or "@" not in url:
@@ -245,9 +316,18 @@ class PersonDetector:
                  detect_size: int = 300, label_floor: float = _LABEL_FLOOR,
                  motion_min_area_frac: float = 0.003, motion_diff_threshold: int = 25,
                  motion_min_blob_px: int = 14, model: str = "mobilenet_ssd",
-                 accelerator: str = "cpu", smooth_feed: bool = False) -> None:
+                 accelerator: str = "cpu", smooth_feed: bool = False,
+                 gamma: float = 1.0, brightness: int = 0,
+                 contrast: float = 1.0, saturation: float = 1.0) -> None:
         self.source = source
         self.confidence = confidence
+        # Image adjustments applied to each frame before the net (and the live feed
+        # in non-smooth mode) sees it. Defaults are no-ops. See
+        # :func:`apply_image_adjustments`.
+        self.gamma = float(gamma)
+        self.brightness = int(brightness)
+        self.contrast = float(contrast)
+        self.saturation = float(saturation)
         # Which detection model to run: "mobilenet_ssd" (fast, bundled default),
         # "yolo11n" (better in low light / odd poses, ~1.4x CPU), or "yolo11m"
         # (bigger/slower medium model). Falls back to MobileNet if the YOLO model
@@ -374,6 +454,12 @@ class PersonDetector:
         x, y, w, h = self.roi
         return frame[y:y + h, x:x + w]
 
+    def _adjust(self, frame):
+        """Apply this detector's image adjustments (no-op returns the input)."""
+        return apply_image_adjustments(
+            frame, gamma=self.gamma, brightness=self.brightness,
+            contrast=self.contrast, saturation=self.saturation)
+
     # -- inference -----------------------------------------------------------
     def _detect_boxes(self, frame, floor: float) -> list:
         """Return ``[(label, score, (x1, y1, x2, y2))]`` for one BGR frame.
@@ -435,17 +521,16 @@ class PersonDetector:
     # Colours (BGR) for drawing boxes: person = green, cat = orange, other = grey.
     _BOX_COLORS = {"person": (80, 220, 80), "cat": (40, 170, 240)}
 
-    def annotated_jpeg(self) -> bytes | None:
-        """JPEG of the last analysed frame with labelled detection boxes drawn."""
+    def _draw_boxes(self, img, boxes) -> None:
+        """Draw labelled detection boxes onto ``img`` in place.
+
+        Only boxes that actually count are drawn — a person at the trigger
+        threshold, other classes at the label floor — so a corrupt frame's
+        low-confidence guesses don't litter the image.
+        """
         import cv2
 
-        if self._last_frame is None:
-            return None
-        img = self._last_frame.copy()
-        for label, score, (x1, y1, x2, y2) in self._last_boxes:
-            # Only draw boxes that actually count — a person at the trigger
-            # threshold, other classes at the label floor — so a corrupt frame's
-            # low-confidence guesses don't litter the snapshot.
+        for label, score, (x1, y1, x2, y2) in boxes:
             floor = self.confidence if label == "person" else self.label_floor
             if score < floor:
                 continue
@@ -454,8 +539,42 @@ class PersonDetector:
             tag = f"{label} {score:.2f}"
             ty = max(y1 - 6, 12)
             cv2.putText(img, tag, (x1, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+    def annotated_jpeg(self) -> bytes | None:
+        """JPEG of the last analysed frame with labelled detection boxes drawn."""
+        import cv2
+
+        if self._last_frame is None:
+            return None
+        img = self._last_frame.copy()
+        self._draw_boxes(img, self._last_boxes)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return buf.tobytes() if ok else None
+
+    def detect_image(self, frame):
+        """Run detection on one BGR frame (no camera, no motion gate).
+
+        Applies this detector's image adjustments + ROI exactly as the live path
+        does, then returns ``(annotated_jpeg_bytes, detections)`` where each
+        detection is ``{"label", "score", "box": [x1,y1,x2,y2]}`` for boxes that
+        clear their floor (person → ``confidence``, others → ``label_floor``).
+        Powers the GUI's "Test detection" tool.
+        """
+        import cv2
+
+        adjusted = self._adjust(frame)
+        boxes = self._detect_boxes(adjusted, floor=min(self.label_floor, self.confidence))
+        img = self._crop(adjusted).copy()
+        self._draw_boxes(img, boxes)
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        dets = [
+            {"label": label, "score": round(float(score), 3),
+             "box": [int(v) for v in box]}
+            for label, score, box in boxes
+            if score >= (self.confidence if label == "person" else self.label_floor)
+        ]
+        dets.sort(key=lambda d: -d["score"])
+        return (buf.tobytes() if ok else None), dets
 
     # How long detection boxes stay drawn on the live feed after their last
     # refresh — long enough to ride out the gap between analysed frames, short
@@ -680,6 +799,13 @@ class PersonDetector:
                     )
                 return FrameOutcome(motion=False, person=False)
             self._read_fails = 0
+
+        # Image adjustments are applied to the frame the net analyses; in the
+        # synchronous path the live feed shows the adjusted frame too (publish after
+        # adjusting). In smooth mode the grab thread publishes the raw frame, so the
+        # feed there stays unadjusted while the net still sees the adjusted pixels.
+        frame = self._adjust(frame)
+        if not self.smooth_feed:
             # Publish every read frame for the live feed, even when the net is
             # skipped (no motion / cooldown pause), so the feed stays warm.
             self._publish_frame(frame)

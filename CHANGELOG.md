@@ -11,6 +11,30 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.15.0] — 2026-06-28
+
+### Added
+- **"Test detection" tool.** Upload a **photo or a short video** and run the
+  detector on it right in the GUI, with boxes drawn and a list of what it found
+  (person/cat + score). A video is sampled into an evenly-spaced **filmstrip** you
+  step through. The settings that actually affect whether it identifies things —
+  **model, net input size, person confidence, notify floor, and the new image
+  adjustments** — are surfaced as live sliders; tweak and it re-runs on the spot.
+  Save the result to a specific **camera** or to the **global defaults**.
+  Endpoints: `POST /api/test/upload`, `POST /api/test/detect`.
+- **Image adjustments (gamma / brightness / contrast / saturation).** Applied to
+  each frame **before the net runs**, so they can rescue a too-dark or washed-out
+  feed into the detector's comfort zone. They're **real per-camera detection
+  settings** (defaults are all no-ops) — tune them in the test tool, then save to
+  the camera. In the synchronous path the live feed shows the adjusted frame.
+
+### Notes
+- New config fields `gamma` / `brightness` / `contrast` / `saturation` (global +
+  per-camera). 157 tests (was 143): adjustment maths, `detect_image`, video
+  sampling, the new config fields, and the upload/detect endpoints.
+- In **smooth-feed** mode the grab thread still publishes the *raw* frame, so the
+  live view there stays unadjusted while the net sees the adjusted pixels.
+
 ## [0.14.1] — 2026-06-28
 
 ### Added
