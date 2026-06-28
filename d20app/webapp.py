@@ -319,6 +319,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             "last": loop.cats.last(),
             "today": loop.cats.today_count(),
             "present": loop.cat_present(),     # cat on camera right now → flash the button
+            "cameras": loop.cats_present_cameras(),   # cameras seeing a cat now → Show-cat rotation
             "recent": loop.cats.recent(limit=limit),
         })
 

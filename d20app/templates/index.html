@@ -31,15 +31,30 @@
       </button>
       <div id="cat-last" class="cat-last"><p class="muted">No cats seen yet.</p></div>
       <div class="cats-foot">
+        <label class="inline" title="A sleeping cat doesn't move, so it never trips the motion filter. Periodically run the net anyway to catch a still cat. More often = a still cat shows up sooner, but uses more CPU.">
+          Check for a still cat:
+          <select id="cat_scan_interval">
+            <option value="0">Always (most CPU)</option>
+            <option value="5">Every 5s</option>
+            <option value="15">Every 15s</option>
+            <option value="30">Every 30s</option>
+            <option value="60">Every 1 min</option>
+            <option value="120">Every 2 min</option>
+            <option value="300">Every 5 min</option>
+            <option value="-1">Off (motion only)</option>
+          </select>
+        </label>
         <button id="cats-clear" class="ghost" type="button">Clear log</button>
       </div>
       <p class="help">
         Cats never trigger a treat — only people roll — but every sighting is
         tracked here: <strong>when</strong>, on <strong>which camera</strong>, and
         roughly <strong>where</strong> in the frame. The button <strong>flashes
-        when a cat is on camera right now</strong>; tap it to pull up the live feed
-        of the camera that saw it (one camera today; the right camera once multiple
-        are supported).
+        when a cat is on camera right now</strong> — moving <em>or</em> still — and
+        tapping it pulls up the live feed of the camera that saw it. When
+        <strong>more than one room has a cat</strong>, the feed rotates between
+        them. A sleeping cat makes no motion, so the app re-checks for a still cat
+        on the schedule above (<em>Always</em> runs the net every frame).
       </p>
     </section>
 

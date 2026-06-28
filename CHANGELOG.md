@@ -11,6 +11,28 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.14.0] — 2026-06-28
+
+### Added
+- **Still / sleeping-cat detection.** A motionless cat never trips the motion
+  pre-filter, so it used to go unseen. A cat-tracking camera now **periodically
+  runs the net even with no motion** to catch a still cat — the "Show me the cat!"
+  button flashes whether the cat is moving *or* sleeping. The cadence is a GUI
+  setting (**Cat cam → "Check for a still cat"**): _Always_ (net every frame, most
+  CPU), every 5 s / 15 s / 30 s (default) / 1 / 2 / 5 min, or _Off_ (motion only).
+  A still cat is logged once per visit (rising edge), not once per scan.
+- **Multi-room Show-cat rotation.** When **more than one camera** has a cat right
+  now, tapping "Show me the cat!" rotates the live feed between those rooms; the
+  button reads "Cats in N rooms — show me!". Picking a camera manually stops the
+  rotation. `GET /api/cats` now returns a `cameras` list of rooms seeing a cat.
+
+### Notes
+- A forced still-cat scan **never rolls** — rolling stays gated on real motion, so
+  a motionless person found by a scan can't trigger a treat.
+- New `cat_scan_interval` config field (default `30.0`). 141 tests (was 133):
+  periodic still-cat scan, rising-edge de-dup, always-on/off, the per-room present
+  list, and the no-roll-on-still-scan guard.
+
 ## [0.13.0] — 2026-06-27
 
 ### Added

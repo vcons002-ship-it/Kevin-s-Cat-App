@@ -110,7 +110,9 @@ footer { margin-top: 20px; }
 .cats-card { text-align: center; }
 .cats-card h2 { font-size: 1.5rem; }
 .cats-card .help { text-align: left; }
-.cats-foot { display: flex; justify-content: center; margin-top: 4px; }
+.cats-foot { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 4px; }
+.inline { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; }
+.inline select { width: auto; }
 
 .show-cat {
   display: inline-flex; align-items: center; justify-content: center; gap: 14px;

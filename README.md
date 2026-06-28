@@ -157,13 +157,20 @@ camera's actual output rate and your network.
 
 Cats never earn a treat — only people roll — but they're no longer just ignored.
 The **🐱 Cat cam** card sits at the top of the page: a big **Show me the cat!**
-button that **flashes green while a cat is on camera right now**, plus the latest
-sighting — **when** it was seen, on **which camera**, and roughly **where** in the
-frame (e.g. *bottom-left*), with an annotated snapshot. Tapping the button pulls up
-the live feed of **the camera that saw it** (it switches the feed to that camera
-when you're watching several). Only cameras with the 🐱 *Tracks cats* role record
-sightings. Sightings share the same throttle and snapshots as the activity log, so a
-pacing cat won't spam anything.
+button that **flashes green while a cat is on camera right now — moving _or_
+sleeping**, plus the latest sighting — **when** it was seen, on **which camera**,
+and roughly **where** in the frame (e.g. *bottom-left*), with an annotated snapshot.
+Tapping the button pulls up the live feed of **the camera that saw it**; when
+**more than one room has a cat**, the feed **rotates** between them (pick a camera
+manually to stop). Only cameras with the 🐱 *Tracks cats* role record sightings.
+
+**Still / sleeping cats.** A motionless cat makes no motion, so it never trips the
+detector's cheap motion gate. To catch a napping cat, a cat-tracking camera
+**periodically runs the net even with no motion** — set the cadence under the Cat
+cam card (*Check for a still cat*: **Always** = every frame/most CPU, every
+**5 s–5 min**, or **Off** = motion only; **30 s** default). A still cat is logged
+once per visit, not once per scan, and a forced scan **never rolls** — only real
+motion can trigger a treat.
 
 The camera/speaker/rules **setup lives below** the cat cam, live feed, and activity
 log — it's saved to `config.yaml`, so you set it once and rarely touch it again.

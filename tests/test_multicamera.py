@@ -68,13 +68,21 @@ class FakeDet:
         self.frame_size = (64, 48)
         self._smooth_desired = kw.get("smooth_feed", False)
         self.released = False
+        self._cat_last = 0.0
 
-    def read_and_detect(self, detect=True):
+    def read_and_detect(self, detect=True, force=False):
         time.sleep(0.003)
         outcome = OUTCOMES.get(self.source, FrameOutcome(False, False))
         if isinstance(outcome, Exception):
             raise outcome
+        # A no-motion outcome is only "seen" when the net actually runs (real
+        # motion, or a forced still-cat scan) — mirror the real detector.
+        if (outcome.motion or force) and "cat" in (outcome.labels or ()):
+            self._cat_last = time.monotonic()
         return outcome
+
+    def cat_last_seen(self):
+        return self._cat_last
 
     def best_box(self, label):
         return (0.9, (1, 1, 9, 9))
@@ -228,6 +236,79 @@ def test_cat_camera_keeps_detecting_during_a_roll_cooldown(monkeypatch, tmp_path
         lp.stop()
 
 
+def test_still_cat_scan_records_and_flags(monkeypatch, tmp_path):
+    # A sleeping cat makes NO motion (motion=False) but is still a cat. The periodic
+    # forced scan must catch it: record a sighting and flag it present (button flash).
+    global OUTCOMES
+    OUTCOMES = {"rtsp://nap/s": FrameOutcome(False, False, labels=("cat",))}
+    cfg = _base_cfg([_cam("Nap", "rtsp://nap/s", roll=False, track_cats=True)],
+                    cat_scan_interval=30)
+    lp, treats = _run_loop(cfg, monkeypatch, tmp_path)
+    try:
+        last = lp.cats.last()
+        assert last is not None and last["camera"] == "Nap"   # still cat recorded
+        assert lp.cat_present() is True                        # flashes the button
+        assert sum(treats) == 0                                # a still scan never rolls
+    finally:
+        lp.stop()
+
+
+def test_still_cat_not_scanned_when_disabled(monkeypatch, tmp_path):
+    # cat_scan_interval < 0 = off: a motionless cat is never looked for.
+    global OUTCOMES
+    OUTCOMES = {"rtsp://nap/s": FrameOutcome(False, False, labels=("cat",))}
+    cfg = _base_cfg([_cam("Nap", "rtsp://nap/s", roll=False, track_cats=True)],
+                    cat_scan_interval=-1)
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path)
+    try:
+        assert lp.cats.last() is None and lp.cat_present() is False
+    finally:
+        lp.stop()
+
+
+def test_always_on_scan_dedupes_still_cat(monkeypatch, tmp_path):
+    # cat_scan_interval == 0 = always-on: many scans of the same motionless cat must
+    # record ONE sighting (rising edge), not one per scan.
+    global OUTCOMES
+    OUTCOMES = {"rtsp://nap/s": FrameOutcome(False, False, labels=("cat",))}
+    cfg = _base_cfg([_cam("Nap", "rtsp://nap/s", roll=False, track_cats=True)],
+                    cat_scan_interval=0)
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path, seconds=0.5)
+    try:
+        assert len(lp.cats.recent()) == 1
+    finally:
+        lp.stop()
+
+
+def test_present_cameras_lists_each_room_with_a_cat(monkeypatch, tmp_path):
+    # Two rooms each with a (still) cat → both appear in the rotation list.
+    global OUTCOMES
+    OUTCOMES = {"rtsp://a/s": FrameOutcome(False, False, labels=("cat",)),
+                "rtsp://b/s": FrameOutcome(False, False, labels=("cat",))}
+    cfg = _base_cfg([_cam("RoomA", "rtsp://a/s", roll=False, track_cats=True),
+                     _cam("RoomB", "rtsp://b/s", roll=False, track_cats=True)],
+                    cat_scan_interval=0)
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path)
+    try:
+        assert sorted(lp.cats_present_cameras()) == ["RoomA", "RoomB"]
+    finally:
+        lp.stop()
+
+
+def test_still_person_on_scan_does_not_roll(monkeypatch, tmp_path):
+    # A forced still-cat scan that happens to see a motionless person must NOT roll —
+    # rolling stays gated on real motion.
+    global OUTCOMES
+    OUTCOMES = {"rtsp://p/s": FrameOutcome(False, True)}    # person, no motion
+    cfg = _base_cfg([_cam("Both", "rtsp://p/s", roll=True, track_cats=True)],
+                    cat_scan_interval=0)
+    lp, treats = _run_loop(cfg, monkeypatch, tmp_path)
+    try:
+        assert sum(treats) == 0 and lp.status.rolls == 0
+    finally:
+        lp.stop()
+
+
 def test_stop_releases_all_detectors(monkeypatch, tmp_path):
     global OUTCOMES
     OUTCOMES = {"rtsp://a/s": FrameOutcome(False, False),
@@ -275,3 +356,17 @@ def test_active_cameras_validates_and_persists(tmp_path, monkeypatch):
 def test_status_exposes_per_camera_list(tmp_path, monkeypatch):
     c, _ = _client(tmp_path, monkeypatch)
     assert c.get("/api/status").get_json()["cameras"] == []   # not running
+
+
+def test_cats_endpoint_exposes_present_cameras(tmp_path, monkeypatch):
+    c, _ = _client(tmp_path, monkeypatch)
+    body = c.get("/api/cats").get_json()
+    assert body["cameras"] == []        # nothing running → no cat-cams present
+    assert "present" in body
+
+
+def test_cat_scan_interval_default_and_coercion():
+    assert Config().cat_scan_interval == 30.0
+    # arrives as a string from the form → coerced to float (0 = always, -1 = off)
+    assert config_mod._coerce("0", 30.0) == 0.0
+    assert config_mod._coerce("-1", 30.0) == -1.0

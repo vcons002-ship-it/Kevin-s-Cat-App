@@ -48,7 +48,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   with person/cat boxes drawn as they're recognised (reuses the loop's capture).
 - **Cat tracking & "Show cat"** — cats don't roll, but every sighting is logged
   (when, which camera, where in the frame) with a snapshot; a button pulls up the
-  live feed of the camera that saw it.
+  live feed of the camera that saw it. **Still/sleeping cats** are caught by a
+  periodic forced scan (a motionless cat makes no motion to trip the net), on a
+  GUI-set cadence (always → off); when several rooms have a cat, the feed
+  **rotates** between them.
 - **Annotated snapshots** on every detection — boxes around the person/cat,
   shown as clickable thumbnails — the fastest way to debug false positives.
 - **"Camera connected (W×H)"** heartbeat so a running-but-idle loop isn't silent.
@@ -59,7 +62,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **133 automated tests**, including a detection-accuracy regression guard over
+- **141 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
@@ -67,7 +70,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   surfacing, watchdog respawn, camera-death detection), multi-camera (per-camera
   specs/roles, role-gated rolling/tracking, one shared cooldown across cameras,
   failure isolation), cat-sighting tracking (region labels, store persistence,
-  `/api/cats`), local USB camera + local PC speaker routing, and
+  `/api/cats`), the still/sleeping-cat scan (forced no-motion detection,
+  rising-edge de-dup, always-on/off, per-room present list, no-roll-on-still-scan
+  guard), local USB camera + local PC speaker routing, and
   saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
