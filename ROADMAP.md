@@ -62,7 +62,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **176 automated tests**, including a detection-accuracy regression guard over
+- **180 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
@@ -75,8 +75,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   guard), the "Test detection" tool (image adjustment maths, stateless
   `detect_image`, video frame sampling, upload/detect endpoints), the
   higher-resolution locator scan (tiling + NMS merge, larger-input fallback), the
-  round-robin scheduler (rotation, rest/release, always-watch, viewed-pin), local USB
-  camera + local PC speaker routing, and saved-camera/cooldown-pause/keep-warm coverage.
+  round-robin scheduler (rotation, rest/release, always-watch, viewed-pin), per-class
+  cat confidence + locator classes (cat/dog), the benchmark sweep (matrix,
+  self-contained HTML, XLSX present/absent), local USB camera + local PC speaker
+  routing, and saved-camera/cooldown-pause/keep-warm coverage.
 
 ---
 
@@ -112,6 +114,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [x] **Resolution in the model dropdown** — removed the YOLO-no-op "Net input size"
       control; MobileNet sizes are named variants (`mobilenet_ssd@512`), YOLO size is
       its export (0.17.0, #20).
+- [x] **"Benchmark this image"** — one-click sweep of models × tiling on an uploaded
+      frame, emitting a shareable **self-contained HTML** report (+ optional XLSX) with
+      best cat / dog / combined score, found?, and inference time per run (0.18.0, #21).
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

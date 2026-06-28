@@ -163,6 +163,59 @@ def test_test_upload_requires_a_file():
     assert _client().post("/api/test/upload").status_code == 400
 
 
+# ---- benchmark (#21) -------------------------------------------------------
+def _benchmark(c, **kw):
+    up = _upload(c, _CAT).get_json()
+    payload = {"id": up["id"], "models": ["mobilenet_ssd"], "tilings": ["off", "2x2"]}
+    payload.update(kw)
+    return c.post("/api/test/benchmark", json=payload)
+
+
+def test_benchmark_sweeps_and_builds_reports():
+    c = _client()
+    body = _benchmark(c).get_json()
+    runs = body["runs"]
+    assert len(runs) == 2                       # 1 model × 2 tilings
+    assert {r["tiling"] for r in runs} == {"off", "2x2"}
+    r = runs[0]
+    assert "combined_score" in r and "inference_ms" in r and r["thumb"].startswith("data:image")
+    assert any(x["cat_score"] > 0.5 for x in runs)   # the cat is found
+    # runs are sorted best-first
+    assert [x["combined_score"] for x in runs] == sorted(
+        (x["combined_score"] for x in runs), reverse=True)
+    # self-contained HTML — inline images, no external asset refs
+    html = c.get(body["html_url"]).get_data(as_text=True)
+    assert "data:image/jpeg;base64," in html and "<table" in html
+    assert "src=\"http" not in html and "src='http" not in html
+
+
+def test_benchmark_xlsx_downloads_when_openpyxl_present():
+    c = _client()
+    body = _benchmark(c).get_json()
+    assert body["xlsx_url"] and body["xlsx_error"] is None
+    xl = c.get(body["xlsx_url"])
+    assert xl.status_code == 200 and xl.data[:2] == b"PK"   # xlsx is a zip
+
+
+def test_benchmark_xlsx_degrades_without_openpyxl(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "openpyxl", None)   # make `import openpyxl` fail
+    c = _client()
+    body = _benchmark(c).get_json()
+    assert body["xlsx_url"] is None
+    assert "openpyxl" in (body["xlsx_error"] or "")
+    # HTML report is still produced.
+    assert c.get(body["html_url"]).status_code == 200
+
+
+def test_benchmark_caps_matrix_size():
+    c = _client()
+    up = _upload(c, _CAT).get_json()
+    big = {"id": up["id"], "models": ["mobilenet_ssd"] * 7, "tilings": ["off", "2x2", "3x3", "4x4"]}
+    assert c.post("/api/test/benchmark", json=big).status_code == 400
+
+
 def test_test_detect_returns_inference_ms_and_respects_tiling():
     c = _client()
     up = _upload(c, _CAT).get_json()

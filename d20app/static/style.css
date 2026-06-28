@@ -130,6 +130,14 @@ footer { margin-top: 20px; }
 .test-actions .grow { flex: 1; }
 .rr-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; margin: 10px 0 2px; padding: 8px 10px; background: #1a2138; border-radius: 8px; }
 .rr-bar input[type="number"] { width: 4.5em; }
+.bench { border-top: 1px solid #2a3350; margin-top: 14px; padding-top: 12px; }
+.bench-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 6px 0; }
+.bench-checks .checkbox { margin-top: 0; }
+#bench-results { margin-top: 10px; }
+.bench-tbl { border-collapse: collapse; width: 100%; font-size: 0.85em; }
+.bench-tbl th, .bench-tbl td { border: 1px solid #2a3350; padding: 4px 6px; text-align: center; }
+.bench-tbl th { background: #1a2138; }
+.bench-thumb { height: 46px; border-radius: 4px; display: block; }
 .inline { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; }
 .inline select { width: auto; }
 

@@ -172,6 +172,26 @@
         <button id="test-save" class="primary" type="button">Save settings</button>
       </div>
       <p id="test-note" class="muted"></p>
+
+      <!-- Benchmark: sweep models × tiling on this image, emit a shareable report -->
+      <div class="bench">
+        <div class="row">
+          <button id="bench-run" class="ghost" type="button">📊 Benchmark this image</button>
+          <span id="bench-note" class="muted"></span>
+        </div>
+        <details id="bench-opts">
+          <summary class="muted">sweep options (models × tiling)</summary>
+          <div class="bench-checks"><strong>Models</strong> <span id="bench-models"></span></div>
+          <div class="bench-checks"><strong>Tiling</strong> <span id="bench-tilings"></span></div>
+        </details>
+        <div id="bench-results" class="hidden">
+          <div class="row">
+            <a id="bench-html" class="ghost" target="_blank" rel="noopener">⬇ HTML report</a>
+            <a id="bench-xlsx" class="ghost" download>⬇ XLSX</a>
+          </div>
+          <div id="bench-table"></div>
+        </div>
+      </div>
       <p class="help">
         Run the detector on a still or a short clip and tune the knobs until it
         identifies things correctly. <strong>Gamma / brightness / contrast /

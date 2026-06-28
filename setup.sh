@@ -89,6 +89,13 @@ if confirm "Install Intel OpenVINO GPU acceleration (optional, Intel iGPU only)?
     || echo "    (openvino install failed — the OpenVINO accelerator options will fall back to CPU)"
 fi
 
+# Optional: export the "Benchmark this image" results to XLSX (the HTML report
+# works without it). Small, pure-Python.
+if confirm "Install XLSX export for the benchmark tool (optional)?"; then
+  ./venv/bin/python -m pip install 'openpyxl>=3.0' \
+    || echo "    (openpyxl install failed — benchmark XLSX export will be unavailable; HTML still works)"
+fi
+
 echo "==> Generating the default treat chime"
 ./venv/bin/python d20app/sounds/generate_chime.py
 

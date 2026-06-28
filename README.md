@@ -205,6 +205,13 @@ correctly, as live sliders that **re-run detection as you drag**:
 - **Tiling, tile overlap, accelerator** — plus an **inference-time** readout, so you
   can A/B detection configs on real frames and read off the cost.
 
+**Benchmark this image.** One click sweeps **models × tiling** on the uploaded frame
+and produces a **shareable report** — a **self-contained HTML** file (annotated
+thumbnails inlined, opens/emails anywhere off the LAN-only NAS) and an **optional
+XLSX** (needs `openpyxl`; offered by setup). Each run lists best **cat / dog /
+combined** score, whether it cleared the cat threshold, and **inference time**. Trim
+the matrix with the checkboxes — a 4×4 × `yolo11m_960` sweep is heavy on CPU.
+
 ### Finding a still cat that's too small (resolution)
 
 A sleeping cat shrunk into a wide 640 frame can be **too small for the net to detect

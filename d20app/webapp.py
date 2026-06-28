@@ -26,6 +26,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from html import escape as esc
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.utils import secure_filename
@@ -129,6 +130,177 @@ def _run_test_detection(frame, settings: dict):
         t0 = time.perf_counter()
         annotated, dets = det.detect_image(frame)
         return annotated, dets, round((time.perf_counter() - t0) * 1000.0, 1)
+
+
+# --- "Benchmark this image": sweep models × tiling on one frame, emit a shareable
+# self-contained HTML report + an optional XLSX (needs openpyxl). ---------------
+_BENCHMARKS: "OrderedDict[str, dict]" = OrderedDict()     # id -> {html, xlsx, xlsx_error}
+_BENCH_LOCK = threading.Lock()
+_BENCH_MAX_REPORTS = 8
+_BENCH_TILINGS = ["off", "2x2", "3x3", "4x4"]
+_BENCH_MAX_RUNS = 24            # cap the matrix so one request can't run forever
+
+
+def _benchmark_models():
+    """Model names worth offering in a sweep: the YOLO variants whose ONNX is
+    present, plus MobileNet. (A 960 export only appears if it was produced.)"""
+    from . import yolo
+
+    out = [v for v in ("yolo11n", "yolo11m", "yolo11m_960")
+           if v in yolo.MODELS and os.path.exists(yolo.model_path(v))]
+    out.append("mobilenet_ssd")
+    return out
+
+
+def _model_native_size(model: str) -> int:
+    from . import yolo
+
+    if model in yolo.MODELS:
+        return yolo.input_size(model)
+    if "@" in model:
+        try:
+            return int(model.split("@", 1)[1])
+        except ValueError:
+            pass
+    return 300
+
+
+def _bench_thumb(jpeg: bytes, width: int = 240):
+    """(data-url, raw-jpeg-bytes) thumbnail of an annotated frame for the reports."""
+    import cv2
+    import numpy as np
+
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return "", b""
+    h, w = img.shape[:2]
+    if w > width:
+        img = cv2.resize(img, (width, max(1, int(h * width / w))))
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 72])
+    raw = buf.tobytes() if ok else b""
+    return ("data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")), raw
+
+
+def _run_benchmark(frame, models: list, tilings: list, cat_threshold: float,
+                   accelerator: str) -> list:
+    """Sweep ``models × tilings`` on one frame. Each run reuses ``_run_test_detection``
+    (no parallel detection path) with a very low floor + cat/dog locator so the
+    **raw** best cat/dog score is captured; ``detected`` marks it against
+    ``cat_threshold``. Sorted by combined (cat-or-dog) score, best first."""
+    runs = []
+    for model in models:
+        for tiling in tilings:
+            settings = {
+                "model": model, "tiling": tiling, "tile_overlap": 0.2,
+                "accelerator": accelerator, "person_confidence": 0.5,
+                "cat_confidence": 0.01, "label_floor": 0.01,
+                "locator_classes": ["cat", "dog"],
+            }
+            annotated, dets, ms = _run_test_detection(frame, settings)
+            best_cat = max((d["score"] for d in dets if d["label"] == "cat"), default=0.0)
+            best_dog = max((d["score"] for d in dets if d["label"] == "dog"), default=0.0)
+            combined = max(best_cat, best_dog)
+            thumb, raw = _bench_thumb(annotated)
+            runs.append({
+                "model": model, "size": _model_native_size(model), "tiling": tiling,
+                "tile_overlap": 0.2, "accelerator": accelerator,
+                "cat_score": round(best_cat, 3), "dog_score": round(best_dog, 3),
+                "combined_score": round(combined, 3),
+                "detected": bool(combined >= cat_threshold),
+                "boxes": sum(1 for d in dets if d["label"] in ("cat", "dog")),
+                "inference_ms": ms, "thumb": thumb, "_raw": raw,
+            })
+    runs.sort(key=lambda r: -r["combined_score"])
+    return runs
+
+
+def _score_color(score: float) -> str:
+    """Red→amber→green for a 0..1 score (report cell background)."""
+    s = max(0.0, min(1.0, float(score)))
+    r, g = (220, int(60 + 160 * s)) if s < 0.5 else (int(220 - 320 * (s - 0.5)), 200)
+    return f"rgb({r},{g},70)"
+
+
+def _benchmark_html(runs: list, meta: dict) -> str:
+    """A self-contained HTML report — every thumbnail inlined, no external assets,
+    so it renders for a remote viewer and emails cleanly."""
+    rows = []
+    for r in runs:
+        hit = "✓" if r["detected"] else "·"
+        rows.append(
+            f"<tr><td><img src='{r['thumb']}'></td>"
+            f"<td>{esc(r['model'])}</td><td>{r['size']}</td><td>{esc(r['tiling'])}</td>"
+            f"<td style='background:{_score_color(r['combined_score'])}'>"
+            f"<b>{r['combined_score']:.2f}</b></td>"
+            f"<td>{r['cat_score']:.2f}</td><td>{r['dog_score']:.2f}</td>"
+            f"<td>{hit}</td><td>{r['inference_ms']:.0f} ms</td></tr>")
+    fixed = (f"cat threshold <b>{meta['cat_threshold']:.2f}</b> · accelerator "
+             f"<b>{esc(meta['accelerator'])}</b> · tile overlap 0.2 · person 0.50 · "
+             f"locator [cat, dog]")
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>Cat detection benchmark</title><style>"
+        "body{font-family:system-ui,Arial,sans-serif;margin:24px;color:#111}"
+        "table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;"
+        "padding:6px 8px;text-align:center;font-size:14px}th{background:#f3f3f3}"
+        "img{height:90px;border-radius:4px;display:block}"
+        ".fixed{background:#f7f7f9;border:1px solid #e3e3e8;border-radius:8px;"
+        "padding:10px 14px;margin:10px 0;font-size:14px}</style></head><body>"
+        f"<h2>🐱 Cat detection benchmark — {esc(meta['image'])}</h2>"
+        f"<p class='muted'>{esc(meta['ts'])} · {len(runs)} runs</p>"
+        f"<div class='fixed'><b>Settings held fixed for every run:</b> {fixed}</div>"
+        "<table><tr><th>frame</th><th>model</th><th>size</th><th>tiling</th>"
+        "<th>cat-or-dog</th><th>cat</th><th>dog</th><th>found?</th><th>time</th></tr>"
+        + "".join(rows) + "</table>"
+        "<p style='color:#777;font-size:13px'>“cat-or-dog” is the combined locator "
+        "score (the number that predicts locator reliability with cat+dog); “found?” "
+        "marks it against the cat threshold above. Time is the total for the run "
+        "(summed across tiles).</p></body></html>")
+
+
+def _benchmark_xlsx(runs: list, meta: dict) -> bytes:
+    """XLSX with embedded thumbnails. Raises if openpyxl isn't installed."""
+    try:
+        import openpyxl
+        from openpyxl.drawing.image import Image as XLImage
+        from openpyxl.styles import Font
+    except Exception as exc:        # noqa: BLE001 — optional dependency
+        raise RuntimeError(
+            "XLSX export needs the 'openpyxl' package — re-run setup (say yes to "
+            "spreadsheet export) or: pip install openpyxl") from exc
+    import io
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "benchmark"
+    ws["A1"] = f"Cat detection benchmark — {meta['image']} ({meta['ts']})"
+    ws["A1"].font = Font(bold=True)
+    ws["A2"] = (f"Fixed: cat threshold {meta['cat_threshold']:.2f} · accelerator "
+                f"{meta['accelerator']} · tile overlap 0.2 · person 0.50 · locator [cat, dog]")
+    headers = ["frame", "model", "size", "tiling", "cat-or-dog", "cat", "dog",
+               "found?", "time (ms)"]
+    ws.append([])
+    ws.append(headers)
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    head_row = ws.max_row
+    for i, r in enumerate(runs):
+        row = head_row + 1 + i
+        ws.cell(row, 2, r["model"]); ws.cell(row, 3, r["size"])
+        ws.cell(row, 4, r["tiling"]); ws.cell(row, 5, r["combined_score"])
+        ws.cell(row, 6, r["cat_score"]); ws.cell(row, 7, r["dog_score"])
+        ws.cell(row, 8, "yes" if r["detected"] else "no")
+        ws.cell(row, 9, r["inference_ms"])
+        ws.row_dimensions[row].height = 70
+        if r.get("_raw"):
+            img = XLImage(io.BytesIO(r["_raw"]))
+            img.width, img.height = 120, 90
+            ws.add_image(img, f"A{row}")
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["B"].width = 16
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def _mask_cameras(cameras, cfg=None) -> list:
@@ -468,6 +640,75 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             "annotated": "data:image/jpeg;base64," + base64.b64encode(annotated).decode("ascii"),
             "detections": dets, "frame_index": idx, "inference_ms": ms,
         })
+
+    @app.get("/api/test/benchmark/models")
+    def api_benchmark_models():
+        return jsonify({"models": _benchmark_models(), "tilings": _BENCH_TILINGS})
+
+    @app.post("/api/test/benchmark")
+    def api_test_benchmark():
+        body = request.get_json(silent=True) or {}
+        with _TEST_SESSIONS_LOCK:
+            frames = _TEST_SESSIONS.get(body.get("id"))
+        if not frames:
+            return jsonify({"error": "Upload expired — pick the file again."}), 404
+        try:
+            idx = max(0, min(int(body.get("frame_index", 0)), len(frames) - 1))
+        except (TypeError, ValueError):
+            idx = 0
+        models = [m for m in (body.get("models") or _benchmark_models()) if m]
+        tilings = [t for t in (body.get("tilings") or _BENCH_TILINGS) if t]
+        if not models or not tilings:
+            return jsonify({"error": "Pick at least one model and tiling."}), 400
+        if len(models) * len(tilings) > _BENCH_MAX_RUNS:
+            return jsonify({"error": f"Too many runs ({len(models) * len(tilings)}); "
+                            f"trim to ≤ {_BENCH_MAX_RUNS}."}), 400
+        try:
+            cat_threshold = float(body.get("cat_threshold",
+                                           config_mod.load().cat_confidence))
+        except (TypeError, ValueError):
+            cat_threshold = 0.5
+        accelerator = body.get("accelerator") or "cpu"
+        runs = _run_benchmark(frames[idx], models, tilings, cat_threshold, accelerator)
+        h, w = frames[idx].shape[:2]
+        meta = {"cat_threshold": cat_threshold, "accelerator": accelerator,
+                "image": body.get("name") or "uploaded image",
+                "ts": time.strftime("%Y-%m-%d %H:%M"), "width": int(w), "height": int(h)}
+        html = _benchmark_html(runs, meta)
+        try:
+            xlsx = _benchmark_xlsx(runs, meta)
+            xlsx_error = None
+        except Exception as exc:        # noqa: BLE001 — optional dep / report failure
+            xlsx, xlsx_error = None, str(exc)
+        rid = uuid.uuid4().hex
+        with _BENCH_LOCK:
+            _BENCHMARKS[rid] = {"html": html, "xlsx": xlsx}
+            while len(_BENCHMARKS) > _BENCH_MAX_REPORTS:
+                _BENCHMARKS.popitem(last=False)
+        public = [{k: v for k, v in r.items() if k != "_raw"} for r in runs]
+        return jsonify({
+            "id": rid, "runs": public, "meta": meta,
+            "html_url": f"/api/test/benchmark/{rid}.html",
+            "xlsx_url": (f"/api/test/benchmark/{rid}.xlsx" if xlsx else None),
+            "xlsx_error": xlsx_error,
+        })
+
+    @app.get("/api/test/benchmark/<rid>.html")
+    def api_benchmark_html(rid):
+        rep = _BENCHMARKS.get(rid)
+        if not rep:
+            return jsonify({"error": "report expired"}), 404
+        return Response(rep["html"], mimetype="text/html")
+
+    @app.get("/api/test/benchmark/<rid>.xlsx")
+    def api_benchmark_xlsx(rid):
+        rep = _BENCHMARKS.get(rid)
+        if not rep or not rep.get("xlsx"):
+            return jsonify({"error": "no XLSX (install openpyxl) or report expired"}), 404
+        return Response(
+            rep["xlsx"],
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="benchmark_{rid}.xlsx"'})
 
     @app.post("/api/cats/boost")
     def api_cats_boost():
