@@ -462,6 +462,12 @@ let catRotate = false, catCams = [], catRotateIdx = 0;
 const watchableCam = (name) =>
   Array.from($("live-camera").options).some((o) => o.value === name);
 
+// Ask the loop to run that camera's detector continuously for a short window, so
+// the live feed keeps boxing the cat (even a still one) while the user looks.
+function boostCam(name) {
+  if (name) api("/api/cats/boost", postJSON({ camera: name }));
+}
+
 async function loadCats() {
   const { body } = await api("/api/cats");
   if (!body) return;
@@ -501,6 +507,7 @@ async function showCat() {
   catCams = present.filter(watchableCam);
   catRotate = catCams.length > 1;
   catRotateIdx = Math.max(0, catCams.indexOf(pick));
+  boostCam(pick);   // keep the jumped-to camera actively detecting so the box shows
   await loadCats();
   $("live-enabled").checked = true;
   if (liveOn) liveOn = false;          // force the feed to re-point at the chosen camera
@@ -516,6 +523,7 @@ function rotateCatFeed() {
   const name = catCams[catRotateIdx];
   if (!watchableCam(name)) return;
   $("live-camera").value = name;
+  boostCam(name);                      // keep the room we rotate to actively detecting
   liveOn = false;                      // force updateLiveView to re-point the stream
   updateLiveView(isRunning);
 }

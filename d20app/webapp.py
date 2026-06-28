@@ -328,4 +328,12 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         app.config["loop"].cats.clear()
         return jsonify({"ok": True})
 
+    @app.post("/api/cats/boost")
+    def api_cats_boost():
+        # "Show cat" jumped the live feed to this camera — run its detector
+        # continuously for a short window so the feed boxes the cat while you look.
+        name = (request.get_json(silent=True) or {}).get("camera")
+        ok = app.config["loop"].boost_detection(name) if name else False
+        return jsonify({"ok": bool(ok)})
+
     return app

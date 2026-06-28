@@ -160,9 +160,12 @@ The **🐱 Cat cam** card sits at the top of the page: a big **Show me the cat!*
 button that **flashes green while a cat is on camera right now — moving _or_
 sleeping**, plus the latest sighting — **when** it was seen, on **which camera**,
 and roughly **where** in the frame (e.g. *bottom-left*), with an annotated snapshot.
-Tapping the button pulls up the live feed of **the camera that saw it**; when
-**more than one room has a cat**, the feed **rotates** between them (pick a camera
-manually to stop). Only cameras with the 🐱 *Tracks cats* role record sightings.
+Tapping the button pulls up the live feed of **the camera that saw it** and
+**runs that camera's detector continuously for ~20 s**, so you see a box drawn
+around the cat — even a sleeping one — while you find it. When **more than one
+room has a cat**, the feed **rotates** between them (each room is boosted as the
+feed lands on it; pick a camera manually to stop). Only cameras with the 🐱
+*Tracks cats* role record sightings.
 
 **Still / sleeping cats.** A motionless cat makes no motion, so it never trips the
 detector's cheap motion gate. To catch a napping cat, a cat-tracking camera

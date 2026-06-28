@@ -11,6 +11,17 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.14.1] — 2026-06-28
+
+### Added
+- **"Show cat" detection boost.** Tapping the button now runs the jumped-to
+  camera's detector **continuously for ~20 s**, so the live feed keeps drawing a
+  box around the cat — even a motionless one between periodic scans, or when
+  still-cat scanning is set to _Off_ — while you find it. During multi-room
+  rotation, each room is boosted as the feed lands on it. New
+  `POST /api/cats/boost {camera}` and `DetectionLoop.boost_detection()`; the boost
+  never rolls (no-motion frames stay roll-free). 143 tests (was 141).
+
 ## [0.14.0] — 2026-06-28
 
 ### Added
