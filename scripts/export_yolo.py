@@ -33,6 +33,9 @@ def main() -> int:
     ap.add_argument("--imgsz", type=int, default=960,
                     help="square input size to export at (e.g. 960, 1280)")
     ap.add_argument("--opset", type=int, default=12)
+    ap.add_argument("--out", default=None,
+                    help="output filename stem (default: <model> for a native-size "
+                         "export, else <model>_<imgsz>). e.g. --out yolo26x")
     args = ap.parse_args()
 
     try:
@@ -45,11 +48,18 @@ def main() -> int:
 
     weights = args.model if args.model.endswith(".pt") else f"{args.model}.pt"
     print(f"Exporting {weights} at imgsz={args.imgsz} (downloads weights if needed)…")
-    out = YOLO(weights).export(format="onnx", imgsz=args.imgsz,
-                               opset=args.opset, simplify=True)
+    model = YOLO(weights)
+    # Force the **raw** detection head: YOLO26 is NMS-free end-to-end by default and
+    # its export emits a (1,300,6) tensor cv2.dnn mis-decodes. end2end=False gives the
+    # familiar (1,84,N) head the app's decoder expects. No-op for heads without it.
+    head = model.model.model[-1]
+    if hasattr(head, "end2end"):
+        head.end2end = False
+    out = model.export(format="onnx", imgsz=args.imgsz, opset=args.opset, simplify=True)
 
     base = args.model[:-3] if args.model.endswith(".pt") else args.model
-    dest = os.path.join(_MODELS_DIR, f"{base}_{args.imgsz}.onnx")
+    stem = args.out if args.out else f"{base}_{args.imgsz}"
+    dest = os.path.join(_MODELS_DIR, f"{stem}.onnx")
     os.makedirs(_MODELS_DIR, exist_ok=True)
     os.replace(out, dest)
     print(f"Wrote {os.path.relpath(dest)}")

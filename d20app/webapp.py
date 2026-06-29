@@ -179,7 +179,7 @@ def _benchmark_models():
     size. Single source so the sweep and the dropdown stay in sync."""
     from . import yolo
 
-    out = [v for v in ("yolo11n", "yolo11m", "yolo11m_960")
+    out = [v for v in ("yolo11n", "yolo11m", "yolo11m_960", "yolo26m", "yolo26x")
            if v in yolo.MODELS and os.path.exists(yolo.model_path(v))]
     return out + list(_SSD_VARIANTS)
 

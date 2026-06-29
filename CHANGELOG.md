@@ -11,6 +11,31 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.22.0] — 2026-06-29
+
+### Added
+- **YOLO26 detection models** (#45). Same COCO lineage as the YOLO11 models (so no
+  open-vocabulary false-positive problem), tuned for small-object accuracy — a
+  same-lineage candidate for the two-tier locator (cheap always-on + heavyweight
+  escalation). Two variants in the model dropdown and the benchmark sweep:
+  - **`yolo26m` (640)** — bundled (~79 MB), a head-to-head everyday-model candidate
+    against `yolo11m`. Found the cat at **0.85** on the fixture (vs the model's own
+    0.85 reference) through the unchanged CPU/`cv2.dnn` path.
+  - **`yolo26x` (640)** — the heavyweight (the model that cracked the hard frames in
+    hand-testing). Its ONNX is **~213 MB**, over GitHub's 100 MB limit, so it's
+    **export-only** (graceful fallback when absent, like the larger YOLO11 exports):
+    `python scripts/export_yolo.py --model yolo26x --imgsz 640 --out yolo26x`.
+  - **Decode note:** YOLO26 is **NMS-free end-to-end** and its default export emits a
+    `(1, 300, 6)` tensor that `cv2.dnn` mis-decodes (near-zero scores). The export now
+    forces the **raw `(1, 84, N)` head** (`end2end=False`), which the existing letterbox
+    + NMS decoder handles unchanged — verified against the `.pt`'s own predictions.
+
+### Notes
+- The real payoff (does `yolo26m` beat `yolo11m` on recall *and* NAS-iGPU speed? is
+  `yolo26x` worth it as an escalation tier?) needs the **target hardware** — run the new
+  models through the batch benchmark on the NAS to get those numbers. The wiring + CPU
+  decode are validated here; the head-to-head is not.
+
 ## [0.21.0] — 2026-06-29
 
 ### Added
