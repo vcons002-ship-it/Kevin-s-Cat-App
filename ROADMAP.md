@@ -62,7 +62,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **189 automated tests**, including a detection-accuracy regression guard over
+- **193 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
@@ -128,7 +128,11 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       click-to-expand **miss traceability** (which frame, what score, link to its
       report), a **config×image heatmap**, and optional **empty-room controls** that
       turn the summary into a false-positive check (0.19.0, #32). Answers "which config
-      should the locator use?" inside the app.
+      should the locator use?" inside the app. Portability + scale (0.20.0): a
+      **"Download all"** zip with slug-named files whose links resolve when hosted, a
+      **soft cap with cost warning** + an **abort** button, slug-based summary links,
+      legible dark-theme link colours, and **video → "benchmark all frames"** (extract
+      ≈1 fps, run the whole clip through the summary) (#35/#36/#37/#38).
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

@@ -45,7 +45,8 @@ ALLOWED_SOUND_EXT = {".wav", ".mp3", ".ogg", ".m4a", ".aac"}
 _TEST_SESSIONS: "OrderedDict[str, list]" = OrderedDict()   # id -> [BGR frame, ...]
 _TEST_SESSIONS_LOCK = threading.Lock()
 _TEST_MAX_SESSIONS = 4
-_TEST_VIDEO_FRAMES = 8
+_TEST_VIDEO_FRAMES = 8           # fallback when a clip's duration can't be read
+_TEST_MAX_FRAMES = 100           # cap video-frame extraction (#38)
 _test_detectors: dict = {}              # (model, accelerator) -> reusable PersonDetector
 _test_detect_lock = threading.Lock()    # serialise test detection + detector reuse
 _TEST_MAX_UPLOAD = 256 * 1024 * 1024    # 256 MB cap on a test upload
@@ -63,8 +64,30 @@ def _thumb_data_url(frame, width: int = 200) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
 
 
-def _decode_test_upload(data: bytes, filename: str) -> list:
-    """Return BGR frames from uploaded image *or* video bytes ([] if unreadable)."""
+def _video_default_frames(path: str) -> int:
+    """~1 frame per second of clip (duration drives the count), clamped to
+    ``[1, _TEST_MAX_FRAMES]``; falls back to ``_TEST_VIDEO_FRAMES`` when the
+    container doesn't report fps/length (#38)."""
+    import cv2
+
+    cap = cv2.VideoCapture(path)
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0
+        total = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        if fps > 0 and total > 0:
+            return max(1, min(_TEST_MAX_FRAMES, round(total / fps)))
+    finally:
+        cap.release()
+    return _TEST_VIDEO_FRAMES
+
+
+def _decode_test_upload(data: bytes, filename: str, n_frames=None) -> list:
+    """Return BGR frames from uploaded image *or* video bytes ([] if unreadable).
+
+    For a video, ``n_frames`` sets how many evenly-spaced frames to extract; when it
+    is ``None`` the count defaults to ~1 fps of the clip's duration (#38). Always
+    clamped to ``[1, _TEST_MAX_FRAMES]``.
+    """
     import cv2
     import numpy as np
 
@@ -80,7 +103,9 @@ def _decode_test_upload(data: bytes, filename: str) -> list:
         tmp.write(data)
         tmp.flush()
         tmp.close()
-        return sample_video_frames(tmp.name, _TEST_VIDEO_FRAMES)
+        n = n_frames if n_frames else _video_default_frames(tmp.name)
+        n = max(1, min(_TEST_MAX_FRAMES, int(n)))
+        return sample_video_frames(tmp.name, n)
     finally:
         try:
             os.unlink(tmp.name)
@@ -365,7 +390,10 @@ def _benchmark_xlsx(runs: list, meta: dict) -> bytes:
 # --- Batch benchmark: run the sweep across many images and aggregate which config
 # is most reliable across all of them (the cross-image question single reports can't
 # answer). Per-image reports are still produced; the summary links out to them. ----
-_BENCH_MAX_IMAGES = 12          # cap a batch so one request can't run for ages
+_BENCH_MAX_IMAGES = 12          # *recommended* batch size — the GUI warns past this
+_BENCH_MAX_IMAGES_HARD = 100    # absolute ceiling (soft cap above; #37) — refuse beyond
+_BENCH_CANCEL: set = set()      # batch ids the client asked to abort mid-run (#37)
+_BENCH_CANCEL_LOCK = threading.Lock()
 
 
 def _orig_thumb_data_url(frame, width: int = 200) -> str:
@@ -439,9 +467,12 @@ def _benchmark_summary_html(per_image: list, configs: list, meta: dict) -> str:
             r = next((x for x in im["runs"]
                       if x["model"] == c["model"] and x["tiling"] == c["tiling"]), None)
             sc = f"{r['combined_score']:.2f}" if r else "—"
+            # Link by the report's SLUG (not its hash id): that's the filename each
+            # per-image report downloads under, so a downloaded/hosted bundle stays
+            # self-consistent. The serving route resolves a slug too (#35).
             cells.append(
                 f"<div class='miss'><img src='{im['orig_thumb']}' onclick='zoom(this.src)' "
-                f"title='click to enlarge'><div><a href='{im['report_id']}.html' "
+                f"title='click to enlarge'><div><a href='{im['slug']}.html' "
                 f"target='_blank'>{esc(im['name'])}</a><br><span class='sub'>scored {sc}, "
                 f"below {meta['cat_threshold']:.2f}</span></div></div>")
         return "<div class='misses'>" + "".join(cells) + "</div>"
@@ -540,6 +571,15 @@ def _benchmark_summary_html(per_image: list, configs: list, meta: dict) -> str:
         "<table class='grid'><tr><th style='text-align:left'>config</th>"
         + head_cells + "</tr>" + "".join(grid_rows) + "</table>"
         "</body></html>")
+
+
+def _find_report(key: str):
+    """Resolve a stored report by its hash id **or** its slug, so the slug-based links
+    a downloaded/hosted bundle uses also resolve on-server (#35)."""
+    rep = _BENCHMARKS.get(key)
+    if rep:
+        return rep
+    return next((r for r in _BENCHMARKS.values() if r.get("slug") == key), None)
 
 
 def _mask_cameras(cameras, cfg=None) -> list:
@@ -845,7 +885,12 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         data = request.files["file"].read()
         if not data:
             return jsonify({"error": "empty file"}), 400
-        frames = _decode_test_upload(data, request.files["file"].filename or "")
+        # Optional frame count for videos (#38) — default ~1 fps when omitted.
+        try:
+            n_frames = int(request.form.get("frames")) if request.form.get("frames") else None
+        except (TypeError, ValueError):
+            n_frames = None
+        frames = _decode_test_upload(data, request.files["file"].filename or "", n_frames)
         if not frames:
             return jsonify({"error": "Couldn't read that as an image or video."}), 400
         sid = uuid.uuid4().hex
@@ -948,9 +993,11 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         items = body.get("items") or []
         if not items:
             return jsonify({"error": "Add at least one image to the batch."}), 400
-        if len(items) > _BENCH_MAX_IMAGES:
-            return jsonify({"error": f"Too many images ({len(items)}); "
-                            f"cap is {_BENCH_MAX_IMAGES} per batch."}), 400
+        # Soft cap (#37): the recommended limit is advisory — the GUI warns with the
+        # cost and proceeds. Only an absolute ceiling is refused, to bound pathology.
+        if len(items) > _BENCH_MAX_IMAGES_HARD:
+            return jsonify({"error": f"Too many images ({len(items)}); the absolute "
+                            f"ceiling is {_BENCH_MAX_IMAGES_HARD}."}), 400
         models = [m for m in (body.get("models") or _benchmark_models()) if m]
         tilings = [t for t in (body.get("tilings") or _BENCH_TILINGS) if t]
         if not models or not tilings:
@@ -964,11 +1011,20 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         except (TypeError, ValueError):
             cat_threshold = 0.5
         accelerator = body.get("accelerator") or "cpu"
+        batch_id = body.get("batch_id")        # client token for mid-run abort (#37)
         ts_disp = time.strftime("%Y-%m-%d %H:%M")
         ts_file = time.strftime("%Y%m%d-%H%M%S")
 
-        per_image, images = [], []
+        per_image, images, members = [], [], []
+        cancelled = False
         for i, it in enumerate(items):
+            # Abort check between images: stop, keep what's done, return partial (#37).
+            if batch_id:
+                with _BENCH_CANCEL_LOCK:
+                    if batch_id in _BENCH_CANCEL:
+                        cancelled = True
+            if cancelled:
+                break
             with _TEST_SESSIONS_LOCK:
                 frames = _TEST_SESSIONS.get((it or {}).get("id"))
             if not frames:
@@ -986,47 +1042,70 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             meta_i = {"cat_threshold": cat_threshold, "accelerator": accelerator,
                       "image": name, "ts": ts_disp, "width": int(w), "height": int(h)}
             rid = uuid.uuid4().hex
+            slug = f"benchmark-{_slugify(stem)}-{ts_file}-{i + 1}"
             html = _benchmark_html(runs, meta_i,
                                    original_url=_full_jpeg_data_url(frame),
                                    original_name=f"{_slugify(stem)}.jpg")
             with _BENCH_LOCK:
-                _BENCHMARKS[rid] = {"html": html, "xlsx": None,
-                                    "slug": f"benchmark-{_slugify(stem)}-{ts_file}"}
+                _BENCHMARKS[rid] = {"html": html, "xlsx": None, "slug": slug}
+            members.append((slug, html))
             # Keep only the light fields the summary needs (no thumbs/raw bytes).
             light = [{"model": r["model"], "tiling": r["tiling"], "size": r["size"],
                       "combined_score": r["combined_score"], "detected": r["detected"],
                       "inference_ms": r["inference_ms"]} for r in runs]
             per_image.append({"idx": len(per_image), "name": name, "report_id": rid,
-                              "has_cat": has_cat, "orig_thumb": _orig_thumb_data_url(frame),
-                              "runs": light})
-            images.append({"name": name, "has_cat": has_cat,
-                           "report_url": f"/api/test/benchmark/{rid}.html"})
+                              "slug": slug, "has_cat": has_cat,
+                              "orig_thumb": _orig_thumb_data_url(frame), "runs": light})
+            # Link by slug so the link matches the per-image download filename (#35).
+            images.append({"name": name, "has_cat": has_cat, "slug": slug,
+                           "report_url": f"/api/test/benchmark/{slug}.html"})
 
+        if batch_id:        # done (or aborted) — clear the cancel flag either way
+            with _BENCH_CANCEL_LOCK:
+                _BENCH_CANCEL.discard(batch_id)
         if not per_image:
-            return jsonify({"error": "All uploads expired — re-select the images."}), 404
+            msg = ("Batch cancelled before any image finished." if cancelled
+                   else "All uploads expired — re-select the images.")
+            return jsonify({"error": msg, "cancelled": cancelled}), 404
 
         configs = _aggregate_configs(per_image)
         smeta = {"cat_threshold": cat_threshold, "accelerator": accelerator, "ts": ts_disp}
         summary_html = _benchmark_summary_html(per_image, configs, smeta)
         sid = uuid.uuid4().hex
+        summary_slug = f"benchmark-summary-{ts_file}"
         with _BENCH_LOCK:
-            _BENCHMARKS[sid] = {"html": summary_html, "xlsx": None,
-                                "slug": f"benchmark-summary-{ts_file}"}
+            # Stash the batch's members (slug → html) on the summary so "Download all"
+            # can zip the summary + every per-image report under their slug names (#35).
+            _BENCHMARKS[sid] = {"html": summary_html, "xlsx": None, "slug": summary_slug,
+                                "members": [(summary_slug, summary_html)] + members}
             while len(_BENCHMARKS) > _BENCH_MAX_REPORTS:
                 _BENCHMARKS.popitem(last=False)
         n_cat = sum(1 for im in per_image if im["has_cat"])
         return jsonify({
             "summary_id": sid,
             "summary_url": f"/api/test/benchmark/{sid}.html",
+            "zip_url": f"/api/test/benchmark/{sid}/all.zip",
+            "cancelled": cancelled,
             "images": images, "configs": configs,
             "meta": {"n_images": len(per_image), "n_cat": n_cat,
                      "n_nocat": len(per_image) - n_cat,
                      "cat_threshold": cat_threshold, "accelerator": accelerator},
         })
 
+    @app.post("/api/test/benchmark/cancel")
+    def api_test_benchmark_cancel():
+        # Flag a running batch to stop after its current image (#37). The in-flight
+        # batch request sees this between images and returns whatever finished.
+        bid = (request.get_json(silent=True) or {}).get("batch_id")
+        if not bid:
+            return jsonify({"error": "no batch_id"}), 400
+        with _BENCH_CANCEL_LOCK:
+            _BENCH_CANCEL.add(bid)
+        return jsonify({"ok": True})
+
     @app.get("/api/test/benchmark/<rid>.html")
     def api_benchmark_html(rid):
-        rep = _BENCHMARKS.get(rid)
+        rep = _find_report(rid)
         if not rep:
             return jsonify({"error": "report expired"}), 404
         slug = rep.get("slug") or f"benchmark_{rid}"
@@ -1035,7 +1114,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
 
     @app.get("/api/test/benchmark/<rid>.xlsx")
     def api_benchmark_xlsx(rid):
-        rep = _BENCHMARKS.get(rid)
+        rep = _find_report(rid)
         if not rep or not rep.get("xlsx"):
             return jsonify({"error": "no XLSX (install openpyxl) or report expired"}), 404
         slug = rep.get("slug") or f"benchmark_{rid}"
@@ -1043,6 +1122,26 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             rep["xlsx"],
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f'attachment; filename="{slug}.xlsx"'})
+
+    @app.get("/api/test/benchmark/<sid>/all.zip")
+    def api_benchmark_zip(sid):
+        # "Download all" (#35): one zip of the summary + every per-image report, each
+        # named with its slug — unzip into a folder, host together, links resolve.
+        import io
+        import zipfile
+
+        rep = _find_report(sid)
+        members = (rep or {}).get("members")
+        if not members:
+            return jsonify({"error": "no batch bundle (single report or expired)"}), 404
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for slug, html in members:
+                zf.writestr(f"{slug}.html", html)
+        return Response(
+            buf.getvalue(), mimetype="application/zip",
+            headers={"Content-Disposition":
+                     f'attachment; filename="{rep.get("slug") or "benchmark-batch"}.zip"'})
 
     @app.post("/api/cats/boost")
     def api_cats_boost():

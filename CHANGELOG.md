@@ -11,6 +11,37 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.20.0] — 2026-06-29
+
+### Fixed
+- **Batch summary links survive download/hosting** (#35). The cross-image summary
+  linked each per-image report by its hash id, but the reports **download under their
+  slug** filename — so once you saved the bundle and hosted it together (e.g. GitHub
+  Pages), every miss link 404'd. The summary now links by **slug**, and the serving
+  route resolves a slug as well as a hash id, so the links work both live and in a
+  downloaded/hosted set.
+- **Dark-theme links are legible** (#36). Links were the browser-default bright blue
+  (harsh on the dark-blue background) and **unreadable purple once visited**. They're
+  now an explicit **cyan**, with a differentiated-but-readable visited colour,
+  underline on hover, and a visible keyboard-focus outline. The download "buttons"
+  keep their white-on-box look.
+
+### Added
+- **"Download all" for a batch** (#35). One click returns a **zip** of the cross-image
+  summary plus every per-image report, each named with its slug — unzip into a folder,
+  host together, and all the links resolve. Endpoint: `GET /api/test/benchmark/<id>/all.zip`.
+- **Soft cap + abort for batches** (#37). The recommended batch size (12) is now a
+  **soft cap**: past it the GUI shows the run count and rough time and lets you proceed
+  (only an absolute ceiling of 100 is refused). A new **Abort** button stops a running
+  batch after the current image and returns the summary of whatever finished
+  (`POST /api/test/benchmark/cancel`).
+- **Video → "benchmark all frames"** (#38). A video in Test Detection now extracts
+  **~1 frame per second** of the clip (was a hard-coded 8) — the count is selectable
+  (max 100) with a **Re-extract** button — and a **"Benchmark all N frames"** button
+  runs the sweep across every extracted frame into the same cross-image summary,
+  reusing the batch endpoint. (Frame extraction feeding the still benchmark — not
+  video-feed detection, which stays out of scope.)
+
 ## [0.19.0] — 2026-06-28
 
 ### Added

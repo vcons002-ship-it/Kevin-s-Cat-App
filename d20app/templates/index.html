@@ -99,6 +99,14 @@
           <input id="test-file" type="file" accept="image/*,video/*" hidden />
         </label>
       </div>
+      <!-- Video tools: choose how many frames to extract, and benchmark them all (#38) -->
+      <div id="test-video-tools" class="test-video-tools hidden">
+        <label class="inline" title="Frames extracted from the clip (≈1 per second by default, max 100)">
+          Frames <input id="test-frames" type="number" min="1" max="100" step="1" />
+        </label>
+        <button id="test-reextract" class="ghost" type="button">Re-extract</button>
+        <button id="test-bench-all" class="ghost" type="button">📊 Benchmark all frames</button>
+      </div>
       <div id="test-film" class="test-film hidden"></div>
       <div id="test-stage" class="roi-stage">
         <img id="test-img" class="hidden" alt="test detection result" />
@@ -208,12 +216,14 @@
               ＋ Add images
             </label>
             <button id="bench-batch-run" class="ghost" type="button" disabled>📊 Run batch + summary</button>
+            <button id="bench-batch-abort" class="stop hidden" type="button">✋ Abort</button>
             <span id="bench-batch-note" class="muted"></span>
           </div>
           <div id="bench-batch-list"></div>
           <div id="bench-batch-results" class="hidden">
             <div class="row">
               <a id="bench-summary-html" class="ghost" target="_blank" rel="noopener">⬇ Cross-image summary</a>
+              <a id="bench-summary-zip" class="ghost" download>⬇ Download all (zip)</a>
             </div>
             <div id="bench-summary-table"></div>
           </div>
