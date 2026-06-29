@@ -230,6 +230,12 @@ the score it got, link to that image's report), and a **config×image heatmap** 
 the pattern obvious (one hard frame vs a weak config). Tick a frame **"no cat"** to use
 it as an empty-room control, and the summary reports that config's **false-positive**
 rate separately — a good locator finds the cat *and* stays quiet on empty rooms.
+**"Download all"** zips the summary + every per-image report under matching slug names,
+so you can host the set together and the links resolve. Past the recommended size the
+batch **warns with the run count/time and proceeds** (soft cap), and an **Abort** button
+stops a long run after the current image, keeping whatever finished. For a video, set
+how many frames to extract (≈1/sec, max 100) and **"Benchmark all frames"** runs the
+whole clip through the same summary.
 
 ### Finding a still cat that's too small (resolution)
 

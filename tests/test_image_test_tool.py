@@ -323,12 +323,19 @@ def test_benchmark_batch_nocat_control_reports_false_positives():
     assert "false-positive check" in html
 
 
-def test_benchmark_batch_rejects_empty_and_oversized():
+def test_benchmark_batch_soft_cap_allows_over_recommended_but_caps_absolute():
+    # #37: the recommended size is a *soft* cap (the GUI warns, the backend proceeds);
+    # only the absolute ceiling is refused. Empty is still a 400.
     c = _client()
     assert c.post("/api/test/benchmark/batch", json={"items": []}).status_code == 400
-    big = {"items": [{"id": "x", "name": str(i)} for i in range(20)],
-           "models": ["mobilenet_ssd"], "tilings": ["off"]}
-    assert c.post("/api/test/benchmark/batch", json=big).status_code == 400
+    # 20 (> recommended 12) is NOT hard-blocked — bogus ids just expire to a 404.
+    over = {"items": [{"id": "x", "name": str(i)} for i in range(20)],
+            "models": ["mobilenet_ssd"], "tilings": ["off"]}
+    assert c.post("/api/test/benchmark/batch", json=over).status_code == 404
+    # past the absolute ceiling, it's refused outright (400).
+    huge = {"items": [{"id": "x", "name": str(i)} for i in range(101)],
+            "models": ["mobilenet_ssd"], "tilings": ["off"]}
+    assert c.post("/api/test/benchmark/batch", json=huge).status_code == 400
 
 
 def test_benchmark_batch_404_when_all_uploads_expired():
@@ -337,6 +344,81 @@ def test_benchmark_batch_404_when_all_uploads_expired():
         "items": [{"id": "gone", "name": "x.jpg"}],
         "models": ["mobilenet_ssd"], "tilings": ["off"]})
     assert r.status_code == 404
+
+
+def _run_batch(c, names=("a.jpg", "b.jpg")):
+    items = []
+    for nm in names:
+        up = _upload(c, _CAT, nm).get_json()
+        items.append({"id": up["id"], "name": nm, "has_cat": True})
+    return c.post("/api/test/benchmark/batch", json={
+        "items": items, "models": ["mobilenet_ssd"], "tilings": ["off"]}).get_json()
+
+
+def test_benchmark_summary_links_by_slug_and_resolves():
+    # #35: summary links use the per-image SLUG (the download filename), and the
+    # serving route resolves a slug as well as the hash id — so a downloaded/hosted
+    # bundle's relative links don't 404.
+    c = _client()
+    # A real cat + a blank frame marked "cat present" → the blank is a guaranteed
+    # miss, so the summary's miss-detail carries a per-image link we can check.
+    cat = _upload(c, _CAT, "real.jpg").get_json()
+    blank = _upload_blank(c, "blank.jpg")
+    body = c.post("/api/test/benchmark/batch", json={
+        "items": [{"id": cat["id"], "name": "real.jpg", "has_cat": True},
+                  {"id": blank["id"], "name": "blank.jpg", "has_cat": True}],
+        "models": ["mobilenet_ssd"], "tilings": ["off"]}).get_json()
+    slug = body["images"][0]["slug"]
+    assert body["images"][0]["report_url"] == f"/api/test/benchmark/{slug}.html"
+    # every per-image report's slug resolves on-server (not just the hash id)
+    for im in body["images"]:
+        assert c.get(im["report_url"]).status_code == 200
+    # the summary's miss link points at a slug, and no link points at a bare 32-hex id
+    html = c.get(body["summary_url"]).get_data(as_text=True)
+    assert "benchmark-blank-" in html
+    import re
+    assert not re.search(r"href='[0-9a-f]{32}\.html'", html)
+
+
+def test_benchmark_batch_download_all_zip():
+    # #35: one zip of the summary + every per-image report, named by slug.
+    import io
+    import zipfile
+
+    c = _client()
+    body = _run_batch(c, names=("a.jpg", "b.jpg"))
+    z = c.get(body["zip_url"])
+    assert z.status_code == 200 and z.data[:2] == b"PK"
+    names = zipfile.ZipFile(io.BytesIO(z.data)).namelist()
+    assert any(n.startswith("benchmark-summary-") for n in names)
+    assert len(names) == 3              # summary + 2 per-image reports
+    assert all(n.endswith(".html") for n in names)
+
+
+def test_benchmark_cancel_flag_endpoint():
+    # #37: the cancel endpoint accepts a batch_id (the abort path's signalling).
+    c = _client()
+    assert c.post("/api/test/benchmark/cancel", json={}).status_code == 400
+    assert c.post("/api/test/benchmark/cancel", json={"batch_id": "abc"}).get_json()["ok"]
+
+
+def test_upload_video_respects_frame_count():
+    # #38: a video upload honours an explicit frame count (clamped to the cap).
+    import cv2
+
+    c = _client()
+    path = os.path.join(tempfile.gettempdir(), "clip_test.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    vw = cv2.VideoWriter(path, fourcc, 10.0, (64, 48))
+    for i in range(30):
+        vw.write(np.full((48, 64, 3), i * 5 % 255, np.uint8))
+    vw.release()
+    with open(path, "rb") as fh:
+        data = fh.read()
+    r = c.post("/api/test/upload",
+               data={"file": (io.BytesIO(data), "clip.mp4"), "frames": "5"},
+               content_type="multipart/form-data").get_json()
+    assert r["kind"] == "video" and r["count"] == 5
 
 
 def test_test_detect_returns_inference_ms_and_respects_tiling():

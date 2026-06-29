@@ -661,16 +661,33 @@ function renderFilmstrip() {
   });
 }
 
-async function uploadTest(file) {
+let lastTestFile = null;     // keep the uploaded file so a video can be re-extracted at N frames
+
+async function uploadTest(file, frames) {
   if (!file) return;
+  lastTestFile = file;
   $("test-note").textContent = "Uploading…";
   const fd = new FormData(); fd.append("file", file);
+  if (frames) fd.append("frames", String(frames));
   const { ok, body } = await api("/api/test/upload", { method: "POST", body: fd });
   if (!ok || !body || body.error) { $("test-note").textContent = (body && body.error) || "Upload failed."; return; }
   testSession = body; testSession.name = file.name; testFrameIdx = 0;
-  $("test-note").textContent = body.kind === "video" ? `${body.count} frames sampled — pick one below.` : "";
+  $("test-note").textContent = body.kind === "video" ? `${body.count} frames extracted — pick one below, or benchmark them all.` : "";
+  renderVideoTools();
   renderFilmstrip();
   runTestDetection();
+}
+
+// Controls shown only for a video: choose how many frames to extract (#38) and
+// benchmark every extracted frame into the cross-image summary.
+function renderVideoTools() {
+  const tools = $("test-video-tools");
+  if (!tools) return;
+  const isVideo = testSession && testSession.kind === "video";
+  tools.classList.toggle("hidden", !isVideo);
+  if (!isVideo) return;
+  $("test-frames").value = testSession.count;
+  $("test-bench-all").textContent = `📊 Benchmark all ${testSession.count} frames`;
 }
 
 function populateTestSaveTargets() {
@@ -820,23 +837,64 @@ function renderBatchList() {
   });
 }
 
-async function runBatch() {
-  if (!batchItems.length) return;
+const BENCH_RECOMMENDED_IMAGES = 12;     // soft cap — warn past this, don't block (#37)
+let activeBatchId = null;                // the running batch's id, for abort (#37)
+
+function newBatchId() {
+  try { return crypto.randomUUID(); }
+  catch (e) { return "b-" + Date.now() + "-" + Math.random().toString(16).slice(2); }
+}
+
+// Shared runner for the multi-image batch AND the video "benchmark all frames" path.
+async function runBatchOf(items, noteEl) {
+  if (!items.length) { noteEl.textContent = "Add at least one image."; return; }
   const models = benchChecked("bench-models"), tilings = benchChecked("bench-tilings");
-  if (!models.length || !tilings.length) { $("bench-batch-note").textContent = "Pick a model and a tiling above."; return; }
-  const n = batchItems.length * models.length * tilings.length;
+  if (!models.length || !tilings.length) { noteEl.textContent = "Pick a model and a tiling in sweep options above."; return; }
+  const runs = items.length * models.length * tilings.length;
+  if (items.length > BENCH_RECOMMENDED_IMAGES) {       // soft cap: show cost, confirm
+    const estMin = Math.max(1, Math.round(runs * 0.6 / 60));
+    if (!confirm(`${items.length} images × ${models.length * tilings.length} = ${runs} runs (rough est. ~${estMin} min on CPU). Run anyway?`)) return;
+  }
+  const batchId = newBatchId(); activeBatchId = batchId;
   $("bench-batch-run").disabled = true;
-  $("bench-batch-note").textContent = `Benchmarking ${batchItems.length} images (~${n} runs)… this can take minutes.`;
+  $("bench-batch-abort").classList.remove("hidden");
+  noteEl.textContent = `Benchmarking ${items.length} images (~${runs} runs)… you can abort.`;
   const { ok, body } = await api("/api/test/benchmark/batch", postJSON({
-    items: batchItems, models, tilings,
+    items, models, tilings, batch_id: batchId,
     cat_threshold: Number($("t_cat_confidence").value), accelerator: $("t_accelerator").value,
   }));
+  activeBatchId = null;
   $("bench-batch-run").disabled = false;
-  if (!ok || !body || body.error) { $("bench-batch-note").textContent = (body && body.error) || "Batch failed."; return; }
-  $("bench-batch-note").textContent = "";
+  $("bench-batch-abort").classList.add("hidden");
+  if (!ok || !body || body.error) { noteEl.textContent = (body && body.error) || "Batch failed."; return; }
+  noteEl.textContent = body.cancelled
+    ? `Stopped early — summarised ${body.meta.n_images} of ${items.length} images.` : "";
   $("bench-batch-results").classList.remove("hidden");
   $("bench-summary-html").href = body.summary_url;
+  const zip = $("bench-summary-zip"); if (zip) zip.href = body.zip_url;
   renderBatchSummary(body.configs, body.meta, body.images);
+  $("bench-batch-results").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function runBatch() { return runBatchOf(batchItems, $("bench-batch-note")); }
+
+async function abortBatch() {
+  if (!activeBatchId) return;
+  $("bench-batch-note").textContent = "Stopping after the current image…";
+  await api("/api/test/benchmark/cancel", postJSON({ batch_id: activeBatchId }));
+}
+
+// Video → "benchmark all frames": every extracted frame becomes a batch entry,
+// reusing the same cross-image summary path (#38).
+function benchmarkAllFrames() {
+  if (!testSession || testSession.count < 1) return;
+  const items = [];
+  for (let i = 0; i < testSession.count; i++) {
+    items.push({ id: testSession.id, frame_index: i,
+                 name: `${testSession.name || "clip"} #${i + 1}`, has_cat: true });
+  }
+  $("bench-batch").open = true;
+  runBatchOf(items, $("bench-batch-note"));
 }
 
 function renderBatchSummary(configs, meta, images) {
@@ -999,6 +1057,14 @@ function wire() {
   if (bf) bf.onchange = (e) => { addBatchFiles(Array.from(e.target.files)); e.target.value = ""; };
   const br = $("bench-batch-run");
   if (br) br.onclick = runBatch;
+  const ab = $("bench-batch-abort");
+  if (ab) ab.onclick = abortBatch;
+  const rx = $("test-reextract");
+  if (rx) rx.onclick = () => {
+    if (lastTestFile) uploadTest(lastTestFile, Number($("test-frames").value) || undefined);
+  };
+  const ba = $("test-bench-all");
+  if (ba) ba.onclick = benchmarkAllFrames;
 }
 
 async function loadVersion() {
