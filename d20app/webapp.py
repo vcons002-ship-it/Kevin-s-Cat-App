@@ -44,7 +44,11 @@ ALLOWED_SOUND_EXT = {".wav", ".mp3", ".ogg", ".m4a", ".aac"}
 # the GUI can re-run on each slider tweak without re-uploading. ---------------
 _TEST_SESSIONS: "OrderedDict[str, list]" = OrderedDict()   # id -> [BGR frame, ...]
 _TEST_SESSIONS_LOCK = threading.Lock()
-_TEST_MAX_SESSIONS = 4
+# Must hold a whole batch's uploads at once — it's tied to the batch image ceiling
+# (`_BENCH_MAX_IMAGES_HARD`) below so the two can't drift again: the old cap of 4 was
+# sized for single-image testing and silently truncated big batches (#40). Each
+# session is a handful of small frames, trivial in RAM at this size.
+_TEST_MAX_SESSIONS = 100
 _TEST_VIDEO_FRAMES = 8           # fallback when a clip's duration can't be read
 _TEST_MAX_FRAMES = 100           # cap video-frame extraction (#38)
 _test_detectors: dict = {}              # (model, accelerator) -> reusable PersonDetector
@@ -391,7 +395,9 @@ def _benchmark_xlsx(runs: list, meta: dict) -> bytes:
 # is most reliable across all of them (the cross-image question single reports can't
 # answer). Per-image reports are still produced; the summary links out to them. ----
 _BENCH_MAX_IMAGES = 12          # *recommended* batch size — the GUI warns past this
-_BENCH_MAX_IMAGES_HARD = 100    # absolute ceiling (soft cap above; #37) — refuse beyond
+# Absolute ceiling (soft cap above; #37). Tied to the upload-session cap so a batch can
+# never accept more images than the session store can hold at once (#40).
+_BENCH_MAX_IMAGES_HARD = _TEST_MAX_SESSIONS
 _BENCH_CANCEL: set = set()      # batch ids the client asked to abort mid-run (#37)
 _BENCH_CANCEL_LOCK = threading.Lock()
 
@@ -1015,7 +1021,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         ts_disp = time.strftime("%Y-%m-%d %H:%M")
         ts_file = time.strftime("%Y%m%d-%H%M%S")
 
-        per_image, images, members = [], [], []
+        per_image, images, members, skipped = [], [], [], []
         cancelled = False
         for i, it in enumerate(items):
             # Abort check between images: stop, keep what's done, return partial (#37).
@@ -1025,16 +1031,18 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                         cancelled = True
             if cancelled:
                 break
+            name = (it or {}).get("name") or f"image {i + 1}"
             with _TEST_SESSIONS_LOCK:
                 frames = _TEST_SESSIONS.get((it or {}).get("id"))
             if not frames:
-                continue                # an upload expired — skip it, don't fail the batch
+                # Don't hide it: a missing session means a quietly-incomplete run (#40).
+                skipped.append(name)
+                continue
             try:
                 idx = max(0, min(int(it.get("frame_index", 0)), len(frames) - 1))
             except (TypeError, ValueError):
                 idx = 0
             frame = frames[idx]
-            name = it.get("name") or f"image {i + 1}"
             has_cat = it.get("has_cat", True) is not False
             runs = _run_benchmark(frame, models, tilings, cat_threshold, accelerator)
             h, w = frame.shape[:2]
@@ -1086,6 +1094,9 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             "summary_url": f"/api/test/benchmark/{sid}.html",
             "zip_url": f"/api/test/benchmark/{sid}/all.zip",
             "cancelled": cancelled,
+            # Surface dropped images so a partial run can't masquerade as complete (#40).
+            "requested": len(items), "ran": len(per_image),
+            "skipped": len(skipped), "skipped_names": skipped[:20],
             "images": images, "configs": configs,
             "meta": {"n_images": len(per_image), "n_cat": n_cat,
                      "n_nocat": len(per_image) - n_cat,
