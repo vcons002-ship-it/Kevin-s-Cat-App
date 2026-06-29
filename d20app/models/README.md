@@ -131,3 +131,21 @@ python scripts/export_yolo.py --model yolo11m --imgsz 1280
 Until the file is present, selecting that locator size **falls back** to the native
 size + tiling (no crash) — so tiling (Option B), which needs no export, is the
 default. MobileNet resizes freely and needs no export for a larger locator input.
+
+### YOLO26 variants
+
+`yolo26m` (bundled) and `yolo26x` (export-only — its ~213 MB ONNX is over GitHub's
+100 MB limit) are the YOLO26 models. **They must be exported with the raw detection
+head:** YOLO26 is NMS-free end-to-end and its default export emits a `(1, 300, 6)`
+tensor that OpenCV's `cv2.dnn` mis-decodes (near-zero scores). The export helper sets
+`end2end=False`, which produces the familiar `(1, 84, N)` head the app decodes
+unchanged:
+
+```
+python scripts/export_yolo.py --model yolo26m --imgsz 640 --out yolo26m
+python scripts/export_yolo.py --model yolo26x --imgsz 640 --out yolo26x
+```
+
+(If you export by hand instead of the helper, set
+`m.model.model[-1].end2end = False` before `m.export(...)`, or the `cv2.dnn` path
+will silently return garbage.)

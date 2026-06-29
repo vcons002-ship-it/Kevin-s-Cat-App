@@ -73,6 +73,14 @@ MODELS = {
     # them (see models/README.md). Until present, selecting one falls back gracefully.
     "yolo11m_960": {"file": "yolo11m_960.onnx", "size": 960},
     "yolo11m_1280": {"file": "yolo11m_1280.onnx", "size": 1280},
+    # YOLO26 (same COCO lineage as YOLO11, tuned for small objects). It must be
+    # exported with the **raw detection head** (end2end=False) — YOLO26 is NMS-free
+    # by default and its end-to-end export emits a (1,300,6) tensor that cv2.dnn
+    # mis-decodes; the raw head is the familiar (1,84,N), so the decode below is
+    # unchanged. ``yolo26m`` (~79 MB) ships; ``yolo26x`` (~213 MB) is too big to
+    # commit — export it locally (scripts/export_yolo.py), graceful fallback if absent.
+    "yolo26m": {"file": "yolo26m.onnx", "size": 640},
+    "yolo26x": {"file": "yolo26x.onnx", "size": 640},
 }
 DEFAULT_VARIANT = "yolo11n"
 

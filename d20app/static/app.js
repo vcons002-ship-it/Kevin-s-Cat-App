@@ -31,6 +31,8 @@ const MODEL_OPTS = [
   ["yolo11n", "YOLO11n (320) — low light, rec."],
   ["yolo11m", "YOLO11m (640) — heavier"],
   ["yolo11m_960", "YOLO11m (960) — max"],
+  ["yolo26m", "YOLO26m (640) — newer, small-object"],
+  ["yolo26x", "YOLO26x (640) — heaviest (export)"],
   ["mobilenet_ssd", "MobileNet (300) — lightest"],
   ["mobilenet_ssd@512", "MobileNet (512)"],
   ["mobilenet_ssd@768", "MobileNet (768)"],

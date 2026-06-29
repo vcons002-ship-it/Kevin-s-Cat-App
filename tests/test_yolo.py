@@ -40,7 +40,8 @@ def test_persondetector_yolo_detects_people():
 
 # The bundled variants ship their ONNX; the larger-input locator exports
 # (yolo11m_960/_1280) are optional and produced on demand by scripts/export_yolo.py.
-_BUNDLED_VARIANTS = ("yolo11n", "yolo11m")
+_BUNDLED_VARIANTS = ("yolo11n", "yolo11m", "yolo26m")
+_CATS = sorted(glob.glob(os.path.join(FIXTURES, "cats", "*.jpg")))
 
 
 def test_variant_registry_files_present_and_sized():
@@ -69,6 +70,18 @@ def test_persondetector_yolo11m_detects_a_person():
     det = PersonDetector(source="unused", confidence=0.4, model="yolo11m")
     assert det.detect_in_frame(cv2.imread(PEOPLE[0])) is True
     assert det.model == "yolo11m" and det._yolo_size == 640
+
+
+def test_yolo26m_raw_head_decodes_and_finds_a_cat():
+    # #45: YOLO26 ships its raw (1,84,N) head (exported with end2end=False), so the
+    # existing cv2.dnn decode works unchanged — the NMS-free e2e export does not.
+    net = yolo.load_net("yolo26m")
+    out = net.infer(__import__("numpy").zeros((1, 3, 640, 640), "float32"))
+    assert out.shape[1] == 84, "yolo26m must be the raw head (1,84,N), not e2e (1,300,6)"
+    boxes = yolo.detect_boxes(net, cv2.imread(_CATS[0]), floor=0.25, size=640)
+    for label, score, box in boxes:           # same box format as the other variants
+        assert isinstance(label, str) and 0.0 <= score <= 1.0 and len(box) == 4
+    assert any(b[0] == "cat" for b in boxes), "yolo26m found no cat in a clear photo"
 
 
 def test_unknown_accelerator_rejected():

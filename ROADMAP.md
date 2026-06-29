@@ -62,7 +62,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **197 automated tests**, including a detection-accuracy regression guard over
+- **198 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
   CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
@@ -137,6 +137,11 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on
       our night test, so nano stays the default.
+- [x] **YOLO26 models** — `yolo26m` (bundled) and `yolo26x` (export-only, ~213 MB),
+      same COCO lineage as YOLO11, tuned for small objects; in the dropdown + benchmark
+      sweep (0.22.0, #45). Exported with the raw head (`end2end=False`) since YOLO26's
+      NMS-free export isn't `cv2.dnn`-decodable. The `26m`-vs-`11m` head-to-head + the
+      `26x` escalation question need the NAS iGPU — run them through the benchmark.
 - [x] **GPU / Intel iGPU acceleration** for YOLO — an `accelerator` setting with
       OpenCL and Intel **OpenVINO** (GPU/AUTO) backends, falling back to CPU
       (0.8.0). Frees the CPU and makes `yolo11m` practical on Intel hardware.
