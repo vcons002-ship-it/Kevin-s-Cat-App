@@ -156,6 +156,20 @@ if ($wantXlsx) {
     }
 }
 
+# Optional: the local VLM "Cat-presence" tester (moondream). Model is multi-GB and
+# downloaded separately - set MOONDREAM_MODEL to its path.
+$wantVlm = $false
+if ([Environment]::UserInteractive) {
+    $a = Read-Host "Install the moondream VLM cat-presence tester (optional, large model)? [y/N]"
+    if ($a -and $a.Trim().ToLower().StartsWith('y')) { $wantVlm = $true }
+}
+if ($wantVlm) {
+    & $vpy -m pip install moondream
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "    (moondream install failed - the Cat-presence (VLM) tester will be unavailable)"
+    }
+}
+
 Write-Host "==> Generating the default treat chime"
 & $vpy d20app\sounds\generate_chime.py
 

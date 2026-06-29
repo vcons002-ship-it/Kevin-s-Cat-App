@@ -96,6 +96,13 @@ if confirm "Install XLSX export for the benchmark tool (optional)?"; then
     || echo "    (openpyxl install failed — benchmark XLSX export will be unavailable; HTML still works)"
 fi
 
+# Optional: the local VLM "Cat-presence" tester (moondream). The package is small but
+# the model is multi-GB and downloaded separately — set MOONDREAM_MODEL to its path.
+if confirm "Install the moondream VLM cat-presence tester (optional, large model)?"; then
+  ./venv/bin/python -m pip install moondream \
+    || echo "    (moondream install failed — the Cat-presence (VLM) tester will be unavailable)"
+fi
+
 echo "==> Generating the default treat chime"
 ./venv/bin/python d20app/sounds/generate_chime.py
 

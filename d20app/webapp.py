@@ -34,6 +34,7 @@ from werkzeug.utils import secure_filename
 from . import __version__
 from . import config as config_mod
 from . import discovery
+from . import moondream as vlm
 from .detector import PersonDetector, grab_frame_jpeg, sample_video_frames
 from .loop import DetectionLoop, _camera_source
 
@@ -1178,6 +1179,37 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         with _BENCH_CANCEL_LOCK:
             _BENCH_CANCEL.add(bid)
         return jsonify({"ok": True})
+
+    # -- local VLM (moondream) cat-presence tester (#48) ----------------------
+    @app.get("/api/vlm/status")
+    def api_vlm_status():
+        # Tells the GUI whether the optional 'moondream' package is installed, so it
+        # can hint how to enable the tester instead of failing on Run.
+        return jsonify({"available": vlm.is_available(),
+                        "default_prompt": vlm.DEFAULT_PROMPT})
+
+    @app.post("/api/vlm/query")
+    def api_vlm_query():
+        # One moondream 'query' pass on an uploaded/extracted frame. Runs on this
+        # request's worker thread (Flask is threaded) — a slow CPU query blocks only
+        # this request, not the app; the GUI shows a "working…" state. Degrades with a
+        # clear message when moondream or the model is absent (never a 500).
+        body = request.get_json(silent=True) or {}
+        with _TEST_SESSIONS_LOCK:
+            frames = _TEST_SESSIONS.get(body.get("id"))
+        if not frames:
+            return jsonify({"error": "Upload a frame first (it may have expired)."}), 404
+        try:
+            idx = max(0, min(int(body.get("frame_index", 0)), len(frames) - 1))
+        except (TypeError, ValueError):
+            idx = 0
+        try:
+            result = vlm.query_image(
+                frames[idx], prompt=body.get("prompt") or vlm.DEFAULT_PROMPT,
+                model=body.get("model"), device=body.get("device") or "cpu")
+        except RuntimeError as exc:         # optional dep / missing model / query failure
+            return jsonify({"error": str(exc)}), 503
+        return jsonify(result)
 
     @app.get("/api/test/benchmark/<rid>.html")
     def api_benchmark_html(rid):

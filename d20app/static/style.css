@@ -89,6 +89,16 @@ button.link { background: none; border: none; color: var(--stop); cursor: pointe
 .test-video-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
 .test-video-tools.hidden { display: none; }
 .test-video-tools #test-frames { width: 70px; }
+.vlm-prompt-label { display: block; margin: 8px 0; }
+.vlm-prompt-label textarea { width: 100%; margin-top: 4px; font-family: inherit; resize: vertical; }
+.vlm-result.hidden { display: none; }
+.vlm-verdict { gap: 14px; align-items: baseline; margin: 6px 0; }
+.vlm-badge { font-weight: 700; padding: 3px 10px; border-radius: 6px; }
+.vlm-yes { background: var(--go); color: #fff; }
+.vlm-no { background: var(--line); color: var(--ink); }
+.vlm-unparsed { background: var(--warn); color: #111; }
+.vlm-raw { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; max-height: 240px; overflow: auto; font-size: 0.85em; }
 .upload { display: inline-flex; align-items: center; }
 .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 details { margin-top: 12px; }
