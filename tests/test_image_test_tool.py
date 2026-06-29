@@ -395,6 +395,28 @@ def test_benchmark_batch_download_all_zip():
     assert all(n.endswith(".html") for n in names)
 
 
+def test_session_cap_holds_a_whole_batch():
+    # #40: the upload-session cap must not be smaller than the batch ceiling, or big
+    # batches get silently truncated to the last few uploads.
+    from d20app import webapp
+    assert webapp._TEST_MAX_SESSIONS >= webapp._BENCH_MAX_IMAGES_HARD
+
+
+def test_benchmark_batch_holds_more_than_old_cap_and_reports_skips():
+    # #40: uploading well past the old cap of 4 no longer evicts earlier sessions, so
+    # a batch runs them all; and any genuinely-missing session is reported, not hidden.
+    c = _client()
+    items = []
+    for i in range(7):                          # > the old _TEST_MAX_SESSIONS of 4
+        up = _upload(c, _CAT, f"img{i}.jpg").get_json()
+        items.append({"id": up["id"], "name": f"img{i}.jpg", "has_cat": True})
+    items.append({"id": "gone", "name": "missing.jpg", "has_cat": True})   # one bad id
+    body = c.post("/api/test/benchmark/batch", json={
+        "items": items, "models": ["mobilenet_ssd"], "tilings": ["off"]}).get_json()
+    assert body["requested"] == 8 and body["ran"] == 7      # all 7 real ones ran
+    assert body["skipped"] == 1 and "missing.jpg" in body["skipped_names"]
+
+
 def test_benchmark_cancel_flag_endpoint():
     # #37: the cancel endpoint accepts a batch_id (the abort path's signalling).
     c = _client()

@@ -867,8 +867,14 @@ async function runBatchOf(items, noteEl) {
   $("bench-batch-run").disabled = false;
   $("bench-batch-abort").classList.add("hidden");
   if (!ok || !body || body.error) { noteEl.textContent = (body && body.error) || "Batch failed."; return; }
-  noteEl.textContent = body.cancelled
-    ? `Stopped early — summarised ${body.meta.n_images} of ${items.length} images.` : "";
+  // Surface a partial run prominently — never let it look like a complete one (#40).
+  if (body.cancelled) {
+    noteEl.textContent = `Stopped early — summarised ${body.ran} of ${body.requested} images.`;
+  } else if (body.skipped > 0) {
+    noteEl.textContent = `⚠ Ran ${body.ran} of ${body.requested} — ${body.skipped} upload(s) were no longer available. Re-add them and run again.`;
+  } else {
+    noteEl.textContent = "";
+  }
   $("bench-batch-results").classList.remove("hidden");
   $("bench-summary-html").href = body.summary_url;
   const zip = $("bench-summary-zip"); if (zip) zip.href = body.zip_url;

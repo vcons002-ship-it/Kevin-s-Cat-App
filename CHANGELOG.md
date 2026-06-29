@@ -11,6 +11,22 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.20.1] — 2026-06-29
+
+### Fixed
+- **Big batches no longer silently truncate to the last few images** (#40). The
+  upload-session store was capped at **4** (sized for single-image testing), so a
+  23-image batch had its first 19 uploads **evicted before the batch ran** — and the
+  batch then *silently skipped* the missing sessions and built a "successful"
+  4-image summary. The session cap is now **tied to the batch ceiling**
+  (`_TEST_MAX_SESSIONS == _BENCH_MAX_IMAGES_HARD`), so a batch can never accept more
+  images than the store can hold, and the two can't drift apart again.
+- **A partial batch can no longer masquerade as a complete one** (#40). If any image's
+  upload is genuinely missing, the batch now **reports it** — the response carries
+  `requested` / `ran` / `skipped` / `skipped_names`, and the GUI shows a prominent
+  "⚠ Ran X of Y — N upload(s) were no longer available" instead of a quietly
+  incomplete report.
+
 ## [0.20.0] — 2026-06-29
 
 ### Fixed
