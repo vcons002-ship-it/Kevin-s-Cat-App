@@ -120,14 +120,8 @@
 
       <div class="test-grid">
         <label>Model
-          <select id="t_model">
-            <option value="yolo11n">YOLO11n (320)</option>
-            <option value="yolo11m">YOLO11m (640)</option>
-            <option value="yolo11m_960">YOLO11m (960)</option>
-            <option value="mobilenet_ssd">MobileNet (300)</option>
-            <option value="mobilenet_ssd@512">MobileNet (512)</option>
-            <option value="mobilenet_ssd@768">MobileNet (768)</option>
-          </select>
+          <!-- Options populated from /api/models (single registry source) — #50 -->
+          <select id="t_model"></select>
         </label>
         <label>Person confidence <span id="t_person_confidence_v" class="rngval"></span>
           <input id="t_person_confidence" type="range" min="0.1" max="0.9" step="0.05" />

@@ -11,6 +11,22 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.23.1] — 2026-06-29
+
+### Fixed
+- **YOLO26 (and any model) now appears in the live/Test picker, not just the
+  benchmark** (#50). The Test-detection model dropdown was a **hardcoded** list in the
+  template that still stopped at YOLO11 + SSD, so `yolo26m`/`yolo26x` could be
+  *swept* but not *selected* for deployment or single-image tests — the mirror of the
+  earlier "SSD variants missing from the sweep" drift. Fixed the **pattern**, not just
+  the instance: a new `GET /api/models` returns the canonical present-checked
+  `{value,label}` list derived from the model registry, and **every** GUI model
+  dropdown (the Test picker and the per-camera editor) plus the benchmark sweep are now
+  built from that one source — they can't desync again, and any model added to the
+  registry shows up everywhere automatically. Export-only variants (yolo26x,
+  yolo11m_1280) appear only once their ONNX is present, so the picker never offers a
+  model that can't load.
+
 ## [0.23.0] — 2026-06-29
 
 ### Added
