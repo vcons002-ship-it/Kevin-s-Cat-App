@@ -525,7 +525,43 @@ def _aggregate_configs(per_image: list) -> list:
     return out
 
 
-def _benchmark_summary_html(per_image: list, configs: list, meta: dict) -> str:
+def _vlm_block_html(vlm_info: dict, per_image: list) -> str:
+    """The VLM section of a cross-image summary (#54): one accuracy line (recall + FP,
+    separate) and the frames where the VLM and the best YOLO config disagree — the
+    interesting rows. Empty string when the toggle didn't run."""
+    if not vlm_info:
+        return ""
+    if vlm_info.get("error"):
+        return ("<div class='fixed'><b>VLM:</b> skipped — "
+                f"{esc(vlm_info['error'])}</div>")
+    s = vlm_info["summary"]
+    by_slug = {im["slug"]: im for im in per_image}
+    rec = "—" if s["recall"] is None else f"{s['recall'] * 100:.0f}% ({s['found']}/{s['n_cat']})"
+    fpr = "—" if s["fp_rate"] is None else f"{s['fp_rate'] * 100:.0f}% ({s['fp']}/{s['n_nocat']})"
+    dis = vlm_info.get("disagreements") or []
+    rows = ""
+    for d in dis:
+        im = by_slug.get(d["slug"], {})
+        thumb = (f"<img src='{im.get('orig_thumb', '')}' onclick='zoom(this.src)' "
+                 "title='click to enlarge'>") if im.get("orig_thumb") else ""
+        gt = "cat" if d["has_cat"] else "no-cat"
+        rows += (f"<tr><td>{thumb}</td><td style='text-align:left'>"
+                 f"<a href='{d['slug']}.html' target='_blank'>{esc(d['name'])}</a></td>"
+                 f"<td>{esc(gt)}</td><td>VLM {esc(d['vlm'])}</td>"
+                 f"<td>YOLO {esc(d['yolo'])}</td></tr>")
+    dis_html = ("<p class='muted' style='font-size:13px'>VLM and the best YOLO config "
+                "agree on every frame.</p>" if not dis else
+                "<table><tr><th>frame</th><th>image</th><th>truth</th><th></th><th></th>"
+                f"</tr>{rows}</table>")
+    return (
+        f"<div class='fixed'><b>VLM ({esc(vlm_info['model'])}) accuracy for batch:</b> "
+        f"recall <b>{rec}</b> · false-positive rate <b>{fpr}</b> "
+        "<span class='muted'>(one query per image; recall on cat frames, FP on no-cat "
+        "frames — reported separately)</span></div>"
+        "<h3>VLM ⇄ YOLO disagreements</h3>" + dis_html)
+
+
+def _benchmark_summary_html(per_image: list, configs: list, meta: dict, vlm=None) -> str:
     """The cross-image summary: a clean config table (sorted by detection rate) whose
     'found' cell expands to the missed frames, a config×image heatmap, and an image
     catalog embedded once each. Links out to the per-image reports (kept small)."""
@@ -652,6 +688,7 @@ def _benchmark_summary_html(per_image: list, configs: list, meta: dict) -> str:
         f"{esc(_fixed_settings_text(meta))}. "
         "<b>found</b> = images where the cat cleared the threshold; click an imperfect "
         "rate to see which frames it missed.</div>"
+        + _vlm_block_html(vlm, per_image) +
         "<table><tr><th style='text-align:left'>config</th><th>found</th>"
         "<th>avg conf</th><th>avg ms</th><th>false +</th></tr>"
         + body_rows + "</table>"
@@ -670,6 +707,62 @@ def _find_report(key: str):
     if rep:
         return rep
     return next((r for r in _BENCHMARKS.values() if r.get("slug") == key), None)
+
+
+# --- VLM (moondream) batch: one query per image, scored against the SAME "cat present"
+# ground-truth labels as the detection benchmark, with recall and false-positive rate
+# reported separately (#54). The VLM runs once per image — no tiling, no per-config sweep.
+def _vlm_summary(verdicts: list) -> dict:
+    """Recall on cat-present frames and false-positive rate on no-cat frames, kept
+    separate (same methodology as the detection benchmark). ``None`` rates when there
+    are no frames of that kind; errored frames are excluded from both."""
+    cat = [v for v in verdicts if v.get("has_cat") and not v.get("error")]
+    nocat = [v for v in verdicts if not v.get("has_cat") and not v.get("error")]
+    found = sum(1 for v in cat if v.get("answer") == "yes")
+    fp = sum(1 for v in nocat if v.get("answer") == "yes")
+    return {
+        "n_cat": len(cat), "found": found,
+        "recall": round(found / len(cat), 3) if cat else None,
+        "n_nocat": len(nocat), "fp": fp,
+        "fp_rate": round(fp / len(nocat), 3) if nocat else None,
+        "errors": sum(1 for v in verdicts if v.get("error")),
+    }
+
+
+def _run_vlm_items(items: list, model: str, batch_id=None):
+    """Run one VLM query per uploaded item; return ``(verdicts, skipped, cancelled)``.
+    Each verdict carries ``name``/``has_cat``/``answer``/``reason``/``query_ms``/``error``.
+    Cancel- and skip-aware, mirroring the detection batch. Caller should ``preflight``
+    first so a setup error (no package/key/GPU) fails fast rather than once per image."""
+    verdicts, skipped = [], []
+    cancelled = False
+    for i, it in enumerate(items):
+        if batch_id:
+            with _BENCH_CANCEL_LOCK:
+                if batch_id in _BENCH_CANCEL:
+                    cancelled = True
+        if cancelled:
+            break
+        it = it or {}
+        name = it.get("name") or f"image {i + 1}"
+        has_cat = it.get("has_cat", True) is not False
+        with _TEST_SESSIONS_LOCK:
+            frames = _TEST_SESSIONS.get(it.get("id"))
+        if not frames:
+            skipped.append(name)
+            continue
+        try:
+            idx = max(0, min(int(it.get("frame_index", 0)), len(frames) - 1))
+        except (TypeError, ValueError):
+            idx = 0
+        try:
+            r = vlm.query_image(frames[idx], model=model)
+            verdicts.append({"name": name, "has_cat": has_cat, "answer": r["answer"],
+                             "reason": r["reason"], "query_ms": r["query_ms"], "error": None})
+        except RuntimeError as exc:     # a per-image query failure — keep going
+            verdicts.append({"name": name, "has_cat": has_cat, "answer": None,
+                             "reason": "", "query_ms": 0.0, "error": str(exc)})
+    return verdicts, skipped, cancelled
 
 
 def _mask_cameras(cameras, cfg=None) -> list:
@@ -1113,6 +1206,16 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         batch_id = body.get("batch_id")        # client token for mid-run abort (#37)
         ts_disp = time.strftime("%Y-%m-%d %H:%M")
         ts_file = time.strftime("%Y%m%d-%H%M%S")
+        # Optional "also run VLM on each image" (#54). Off by default — no added cost.
+        # If the VLM can't run, don't fail the whole sweep: note it and carry on.
+        run_vlm = bool(body.get("run_vlm"))
+        vlm_model = body.get("vlm_model") or vlm.DEFAULT_MODEL
+        vlm_error = None
+        if run_vlm:
+            try:
+                vlm.preflight(body.get("api_key"))
+            except RuntimeError as exc:
+                run_vlm, vlm_error = False, str(exc)
 
         per_image, images, members, skipped = [], [], [], []
         cancelled = False
@@ -1155,9 +1258,18 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             light = [{"model": r["model"], "tiling": r["tiling"], "size": r["size"],
                       "combined_score": r["combined_score"], "detected": r["detected"],
                       "inference_ms": r["inference_ms"]} for r in runs]
-            per_image.append({"idx": len(per_image), "name": name, "report_id": rid,
-                              "slug": slug, "has_cat": has_cat,
-                              "orig_thumb": _orig_thumb_data_url(frame), "runs": light})
+            entry = {"idx": len(per_image), "name": name, "report_id": rid,
+                     "slug": slug, "has_cat": has_cat,
+                     "orig_thumb": _orig_thumb_data_url(frame), "runs": light}
+            if run_vlm:        # one VLM query per image, alongside the sweep (#54)
+                try:
+                    vr = vlm.query_image(frame, model=vlm_model)
+                    entry["vlm"] = {"answer": vr["answer"], "reason": vr["reason"],
+                                    "query_ms": vr["query_ms"], "error": None}
+                except RuntimeError as exc:
+                    entry["vlm"] = {"answer": None, "reason": "", "query_ms": 0.0,
+                                    "error": str(exc)}
+            per_image.append(entry)
             # Link by slug so the link matches the per-image download filename (#35).
             images.append({"name": name, "has_cat": has_cat, "slug": slug,
                            "report_url": f"/api/test/benchmark/{slug}.html"})
@@ -1173,7 +1285,30 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         configs = _aggregate_configs(per_image)
         smeta = {"cat_threshold": cat_threshold, "accelerator": accelerator,
                  "ts": ts_disp, **opts}
-        summary_html = _benchmark_summary_html(per_image, configs, smeta)
+        # VLM verdicts (if the toggle ran): recall/FP summary + the interesting frames
+        # where the VLM and the best YOLO config disagree (#54).
+        vlm_info = None
+        graded = [im for im in per_image if im.get("vlm")]
+        if graded:
+            verdicts = [{**im["vlm"], "has_cat": im["has_cat"], "name": im["name"]}
+                        for im in graded]
+            disagreements = []
+            for im in graded:
+                v = im["vlm"]
+                if v.get("error") or v.get("answer") is None:
+                    continue
+                yolo_found = any(r["detected"] for r in im["runs"])
+                vlm_yes = v["answer"] == "yes"
+                if vlm_yes != yolo_found:
+                    disagreements.append(
+                        {"name": im["name"], "slug": im["slug"], "has_cat": im["has_cat"],
+                         "vlm": "yes" if vlm_yes else "no",
+                         "yolo": "found" if yolo_found else "miss"})
+            vlm_info = {"summary": _vlm_summary(verdicts), "model": vlm_model,
+                        "disagreements": disagreements}
+        elif vlm_error:
+            vlm_info = {"error": vlm_error}
+        summary_html = _benchmark_summary_html(per_image, configs, smeta, vlm=vlm_info)
         sid = uuid.uuid4().hex
         summary_slug = f"benchmark-summary-{ts_file}"
         with _BENCH_LOCK:
@@ -1192,7 +1327,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # Surface dropped images so a partial run can't masquerade as complete (#40).
             "requested": len(items), "ran": len(per_image),
             "skipped": len(skipped), "skipped_names": skipped[:20],
-            "images": images, "configs": configs,
+            "images": images, "configs": configs, "vlm": vlm_info,
             "meta": {"n_images": len(per_image), "n_cat": n_cat,
                      "n_nocat": len(per_image) - n_cat,
                      "cat_threshold": cat_threshold, "accelerator": accelerator},
@@ -1240,6 +1375,37 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         except RuntimeError as exc:         # optional dep / no GPU / no key / query failure
             return jsonify({"error": str(exc)}), 503
         return jsonify(result)
+
+    @app.post("/api/vlm/batch")
+    def api_vlm_batch():
+        # Run the VLM once per uploaded image and score recall (cat-present frames) +
+        # false-positive rate (no-cat frames) separately, against the same "cat present"
+        # toggle the detection benchmark uses (#54). One query per image — no sweep.
+        body = request.get_json(silent=True) or {}
+        items = body.get("items") or []
+        if not items:
+            return jsonify({"error": "Add at least one image."}), 400
+        if len(items) > _BENCH_MAX_IMAGES_HARD:
+            return jsonify({"error": f"Too many images ({len(items)}); ceiling is "
+                            f"{_BENCH_MAX_IMAGES_HARD}."}), 400
+        model = body.get("model") or vlm.DEFAULT_MODEL
+        try:                                # fail fast on a setup error, not per image
+            vlm.preflight(body.get("api_key"))
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 503
+        batch_id = body.get("batch_id")
+        verdicts, skipped, cancelled = _run_vlm_items(items, model, batch_id)
+        if batch_id:
+            with _BENCH_CANCEL_LOCK:
+                _BENCH_CANCEL.discard(batch_id)
+        if not verdicts:
+            return jsonify({"error": "All uploads expired — re-select the images.",
+                            "cancelled": cancelled}), 404
+        return jsonify({
+            "model": model, "summary": _vlm_summary(verdicts), "verdicts": verdicts,
+            "cancelled": cancelled, "requested": len(items), "ran": len(verdicts),
+            "skipped": len(skipped), "skipped_names": skipped[:20],
+        })
 
     @app.get("/api/test/benchmark/<rid>.html")
     def api_benchmark_html(rid):
