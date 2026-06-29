@@ -253,20 +253,15 @@
         <textarea id="vlm-prompt" rows="3"></textarea>
       </label>
       <div class="row">
-        <label class="inline">Model <input id="vlm-model" type="text" placeholder="path or $MOONDREAM_MODEL" /></label>
-        <label class="inline">Device
-          <select id="vlm-device"><option value="cpu">CPU</option><option value="gpu">GPU</option></select>
-        </label>
+        <label class="inline">Model <select id="vlm-model"></select></label>
         <button id="vlm-run" class="primary" type="button" disabled>Ask “is there a cat?”</button>
         <span id="vlm-note" class="muted"></span>
       </div>
       <div id="vlm-result" class="vlm-result hidden">
         <div class="row vlm-verdict">
           <span id="vlm-answer" class="vlm-badge"></span>
-          <span id="vlm-confidence" class="muted"></span>
           <span id="vlm-latency" class="muted"></span>
         </div>
-        <p id="vlm-reason"></p>
         <details open>
           <summary class="muted">full model response (the reasoning is the point)</summary>
           <pre id="vlm-raw" class="vlm-raw"></pre>
@@ -279,10 +274,10 @@
         detectors, good on hard frames they miss and on decoys they false-fire on. The
         <strong>full response is shown</strong> because the reasoning is the tool: it
         reveals <em>why</em> it answered (e.g. “the round fuzzy object looks like a cat”).
-        The stated confidence is the model’s own <strong>self-report, not a calibrated
-        score</strong>. moondream is an optional install and the model is multi-GB —
-        this is an occasional evaluation tool (multi-second-to-minute on CPU), not an
-        every-frame path.
+        No confidence number is shown — moondream’s self-report proved meaningless. Local
+        inference <strong>needs a supported GPU</strong> (CUDA/Ampere or Apple Silicon —
+        there’s no CPU path) and an <code>MOONDREAM_API_KEY</code> for the one-time weight
+        download; it’s an occasional evaluation tool, not an every-frame path.
       </p>
     </section>
 

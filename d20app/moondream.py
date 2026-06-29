@@ -4,18 +4,21 @@ YOLO/SSD answer "*where* is the cat" (boxes) and miss small/distant/backlit cats
 open-vocabulary detectors false-fire on cat-shaped decoys. A small vision-language
 model takes a different angle: *reason* about the whole image to answer "*is* there a
 cat". This module wraps `moondream` for a single **query** pass on one frame, so its
-answer/reasoning/latency can be measured on real frames before wiring it into any
-escalation workflow (issue #48).
+answer + reasoning can be measured on real frames before wiring it into any escalation
+workflow (issue #48).
 
-`moondream` is an **optional dependency** (mirrors the openvino/playsound3/gTTS pattern):
-the core install stays lean, and this degrades with a clear "pip install moondream"
-message when it (or a local model) isn't present. The model itself is multi-GB, so it's
-**not committed** — point ``MOONDREAM_MODEL`` (or the request's ``model`` field) at a
-local quantized model file. CPU latency is multi-second-to-minute; this is an occasional
-evaluation/escalation tool, not an every-frame path.
+**Local inference needs a supported GPU.** moondream's local engine (Photon) requires
+an Ampere-or-newer NVIDIA GPU or Apple Silicon — there is **no CPU path** (#52). On a
+box without one this raises a clear error rather than the raw Photon failure. Weights are
+downloaded once from Hugging Face (authenticated by an API key) and cached locally;
+**per-query inference is local** — images don't leave the machine.
+
+`moondream` is an **optional dependency**; the model is selected **by name**
+(`moondream2` or `moondream3-preview`), not a file path — Photon manages its own weight
+cache (set `HF_HOME` to redirect it). The API key comes from `MOONDREAM_API_KEY`.
 
 The response **parser** (:func:`parse_vlm_response`) is pure and unit-tested; the model
-call is not exercised here (no model in CI) — run the live path on the NAS.
+call needs a GPU + key, so it's exercised where the model lives, not in CI.
 """
 
 from __future__ import annotations
@@ -25,62 +28,60 @@ import re
 import threading
 import time
 
-# A format-instructed presence question: asks for structure *and* reasoning in one pass,
-# so a single call yields a best-effort yes/no AND the reasoning (no double-latency two-pass).
-# Editable in the GUI — VLM results are very prompt-sensitive, so this doubles as a bench.
-DEFAULT_PROMPT = (
-    "Is there a cat in this image? Answer in this exact format:\n"
-    "ANSWER: yes/no | CONFIDENCE: 0-100% | REASON: <one short sentence>"
-)
+# A plain presence question — yes/no plus a short explanation. moondream's self-reported
+# confidence proved meaningless (it says "0-100%", "not sure but yes"), so we don't ask
+# for or parse a number; the reasoning text is kept purely as information (#54).
+DEFAULT_PROMPT = "Is there a cat in this image? Answer yes or no, then briefly explain."
 
-_MODELS: dict = {}                 # model_path -> loaded moondream model (load is slow; cache)
+# Local model names Photon can load (not file paths). moondream2 (2B) fits an 8 GB card
+# comfortably; moondream3-preview (9B MoE) needs more VRAM.
+MODELS = ("moondream2", "moondream3-preview")
+DEFAULT_MODEL = "moondream2"
+
+_MODELS: dict = {}                 # model name -> loaded moondream model (load is slow; cache)
 _LOAD_LOCK = threading.Lock()
 
 
 def is_available() -> bool:
-    """True if the ``moondream`` package is importable (the model may still be absent)."""
+    """True if the ``moondream`` package is importable (a GPU + key may still be needed)."""
     import importlib.util
 
     return importlib.util.find_spec("moondream") is not None
 
 
 def parse_vlm_response(text: str) -> dict:
-    """Best-effort extraction of ``ANSWER`` / ``CONFIDENCE`` / ``REASON`` from a VLM reply.
-
-    Returns ``{"answer": "yes"|"no"|None, "confidence": int|None, "reason": str|None,
-    "parsed": bool}``. ``parsed`` is True only when a structured ``ANSWER:`` was found —
-    small VLMs follow format instructions unreliably, so on a miss we report ``parsed:
-    False`` and leave the fields ``None`` (the caller shows the raw text). We never
-    invent a yes/no or a confidence number (#48)."""
-    text = text or ""
-    answer = None
-    m = re.search(r"ANSWER\s*[:=]\s*(yes|no)\b", text, re.IGNORECASE)
-    if m:
-        answer = m.group(1).lower()
-
-    confidence = None
-    c = re.search(r"CONFIDENCE\s*[:=]\s*(\d{1,3})", text, re.IGNORECASE)
-    if c:
-        confidence = max(0, min(100, int(c.group(1))))
-
-    reason = None
-    r = re.search(r"REASON\s*[:=]\s*(.+)", text, re.IGNORECASE | re.DOTALL)
-    if r:
-        # Keep the first line/sentence of the reason; drop trailing format noise.
-        reason = r.group(1).strip().splitlines()[0].strip(" |") or None
-
-    return {"answer": answer, "confidence": confidence, "reason": reason,
-            "parsed": answer is not None}
+    """Best-effort yes/no extraction from a VLM reply, with the full text kept as the
+    reason. Returns ``{"answer": "yes"|"no"|None, "reason": str, "parsed": bool}``;
+    ``parsed`` is True only when a yes/no was found — we never invent an answer (#52/#54).
+    No confidence is parsed (moondream's self-report is noise)."""
+    text = (text or "").strip()
+    m = re.search(r"\b(yes|no)\b", text, re.IGNORECASE)
+    answer = m.group(1).lower() if m else None
+    return {"answer": answer, "reason": text, "parsed": answer is not None}
 
 
-def _resolve_model_path(model: str | None) -> str | None:
-    """Where the local model file lives: the request value, else ``MOONDREAM_MODEL``."""
-    return (model or "").strip() or os.environ.get("MOONDREAM_MODEL") or None
+def _require_gpu() -> str:
+    """Return the local accelerator name, or raise a clear error when there's none —
+    moondream's Photon engine has no CPU path (#52)."""
+    try:
+        import torch
+    except Exception:               # noqa: BLE001 — torch ships with moondream
+        return "gpu"                # can't check; let Photon decide
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(getattr(torch, "backends", None), "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    raise RuntimeError(
+        "moondream local inference needs a CUDA (Ampere+) or Apple-Silicon GPU — there "
+        "is no CPU path. Run the VLM tester on a machine with a supported GPU.")
 
 
-def _load_model(model_path: str | None):
-    """Load (and cache) a moondream model. Raises a clear error if the package or the
-    model file is missing — both are the user's to provide (optional dep, multi-GB model)."""
+def _load_model(model_name: str, api_key: str | None):
+    """Load (and cache) a local moondream model by **name** via Photon.
+
+    Uses the documented local invocation ``md.vl(api_key=…, local=True, model=…)`` —
+    *not* ``md.vl(model=path)``, which has no ``model`` param and silently routes to the
+    cloud (401) instead of running locally (#52)."""
     try:
         import moondream as md
     except Exception as exc:        # noqa: BLE001 — optional dependency
@@ -89,21 +90,19 @@ def _load_model(model_path: str | None):
             "(say yes to the VLM tester) or: pip install moondream"
         ) from exc
 
-    if model_path and not os.path.exists(model_path):
+    key = api_key or os.environ.get("MOONDREAM_API_KEY")
+    if not key:
         raise RuntimeError(
-            f"moondream model not found at {model_path!r}. Download a quantized model "
-            "and set MOONDREAM_MODEL (or the 'model' field) to its path.")
+            "moondream local needs an API key (it authenticates the one-time weight "
+            "download from Hugging Face; inference is then local). Set MOONDREAM_API_KEY.")
+    _require_gpu()
 
-    key = model_path or "__default__"
+    name = model_name or DEFAULT_MODEL
     with _LOAD_LOCK:
-        m = _MODELS.get(key)
+        m = _MODELS.get(name)
         if m is None:
-            # The package API drifts between versions; try the documented signatures.
-            try:
-                m = md.vl(model=model_path) if model_path else md.vl()
-            except TypeError:
-                m = md.vl(model_path) if model_path else md.vl()
-            _MODELS[key] = m
+            m = md.vl(api_key=key, local=True, model=name)
+            _MODELS[name] = m
         return m
 
 
@@ -115,20 +114,20 @@ def _to_pil(frame_bgr):
     return Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
 
 
-def query_image(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str | None = None,
-                device: str = "cpu") -> dict:
+def query_image(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MODEL,
+                api_key: str | None = None) -> dict:
     """Run one moondream **query** pass on ``frame_bgr`` and return a result dict:
 
-    ``raw`` (full response text — always shown), the parsed ``answer``/``confidence``/
-    ``reason``/``parsed`` from :func:`parse_vlm_response`, ``load_ms`` (one-time model
-    load, 0 if already cached) split from ``query_ms`` (per-frame), and the ``prompt`` /
-    ``model`` / ``device`` used (for reproducibility). Raises ``RuntimeError`` with an
-    actionable message if moondream or the model is unavailable."""
-    model_path = _resolve_model_path(model)
-    cached = (model_path or "__default__") in _MODELS
+    ``raw`` (full response text — always shown), the parsed ``answer``/``reason``/
+    ``parsed`` from :func:`parse_vlm_response`, ``load_ms`` (one-time model load, 0 if
+    cached) split from ``query_ms`` (per-frame), and the ``prompt``/``model``/``device``
+    used. Raises ``RuntimeError`` with an actionable message when moondream, a GPU, or
+    the key is unavailable."""
+    name = model or DEFAULT_MODEL
+    cached = name in _MODELS
 
     t0 = time.perf_counter()
-    m = _load_model(model_path)
+    m = _load_model(name, api_key)
     load_ms = 0.0 if cached else round((time.perf_counter() - t0) * 1000.0, 1)
 
     img = _to_pil(frame_bgr)
@@ -142,10 +141,9 @@ def query_image(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str | None = Non
 
     raw = result.get("answer", "") if isinstance(result, dict) else str(result)
     parsed = parse_vlm_response(raw)
+    device = _require_gpu()
     return {
         "raw": raw, "load_ms": load_ms, "query_ms": query_ms,
-        "prompt": prompt or DEFAULT_PROMPT,
-        "model": os.path.basename(model_path) if model_path else "moondream (default)",
-        "device": device or "cpu",
+        "prompt": prompt or DEFAULT_PROMPT, "model": name, "device": device,
         **parsed,
     }
