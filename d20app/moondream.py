@@ -106,6 +106,21 @@ def _load_model(model_name: str, api_key: str | None):
         return m
 
 
+def preflight(api_key: str | None = None) -> None:
+    """Raise the same actionable error :func:`query_image` would, *before* running a
+    whole batch — so a batch fails fast with one clear message (missing package / key /
+    GPU) instead of erroring once per image (#54)."""
+    if not is_available():
+        raise RuntimeError(
+            "The local VLM tester needs the 'moondream' package — re-run setup "
+            "(say yes to the VLM tester) or: pip install moondream")
+    if not (api_key or os.environ.get("MOONDREAM_API_KEY")):
+        raise RuntimeError(
+            "moondream local needs an API key (it authenticates the one-time weight "
+            "download from Hugging Face; inference is then local). Set MOONDREAM_API_KEY.")
+    _require_gpu()
+
+
 def _to_pil(frame_bgr):
     """BGR ndarray → RGB PIL image (what moondream's encoder expects)."""
     import cv2

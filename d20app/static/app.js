@@ -886,8 +886,11 @@ async function runBatchOf(items, noteEl) {
   $("bench-batch-run").disabled = true;
   $("bench-batch-abort").classList.remove("hidden");
   noteEl.textContent = `Benchmarking ${items.length} images (~${runs} runs)… you can abort.`;
+  const vlmEl = $("bench-vlm");
   const { ok, body } = await api("/api/test/benchmark/batch", postJSON({
     items, models, tilings, batch_id: batchId, ...benchControls(),
+    run_vlm: !!(vlmEl && vlmEl.checked),
+    vlm_model: $("vlm-model") ? $("vlm-model").value : undefined,
   }));
   activeBatchId = null;
   $("bench-batch-run").disabled = false;
@@ -904,7 +907,7 @@ async function runBatchOf(items, noteEl) {
   $("bench-batch-results").classList.remove("hidden");
   $("bench-summary-html").href = body.summary_url;
   const zip = $("bench-summary-zip"); if (zip) zip.href = body.zip_url;
-  renderBatchSummary(body.configs, body.meta, body.images);
+  renderBatchSummary(body.configs, body.meta, body.images, body.vlm);
   $("bench-batch-results").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -994,7 +997,19 @@ function renderVlm(b) {
   $("vlm-meta").textContent = `model: ${b.model} · device: ${b.device}`;
 }
 
-function renderBatchSummary(configs, meta, images) {
+function vlmSummaryLine(v) {
+  if (!v) return "";
+  if (v.error) return `<p class="muted">VLM skipped — ${esc(v.error)}</p>`;
+  const s = v.summary;
+  const pct = (r, n, d) => r == null ? "—" : `${Math.round(r * 100)}% (${n}/${d})`;
+  const dis = (v.disagreements || []).map((d) =>
+    `<a href="/api/test/benchmark/${d.slug}.html" target="_blank" rel="noopener">${esc(d.name)}</a> (VLM ${d.vlm} / YOLO ${d.yolo})`).join(" · ");
+  return `<p class="muted"><strong>VLM (${esc(v.model)}):</strong> recall ${pct(s.recall, s.found, s.n_cat)} · false-positive ${pct(s.fp_rate, s.fp, s.n_nocat)}</p>`
+    + (dis ? `<p class="muted" style="font-size:12px">Disagreements vs best YOLO: ${dis}</p>`
+           : (v.summary && (v.disagreements || []).length === 0 ? `<p class="muted" style="font-size:12px">VLM and YOLO agree on every frame.</p>` : ""));
+}
+
+function renderBatchSummary(configs, meta, images, vlm) {
   const rows = configs.map((c) => {
     const found = `${c.found}/${c.total}`;
     const fp = meta.n_nocat ? `${c.fp}/${c.fp_total}` : "—";
@@ -1006,8 +1021,82 @@ function renderBatchSummary(configs, meta, images) {
     `<a href="${im.report_url}" target="_blank" rel="noopener">${esc(im.name)}${im.has_cat ? "" : " ∅"}</a>`).join(" · ");
   $("bench-summary-table").innerHTML =
     `<p class="muted">${meta.n_images} images (${meta.n_cat} with a cat) · sorted by detection rate · cat threshold ${meta.cat_threshold.toFixed(2)} · ${esc(meta.accelerator)}. Open the summary report for the miss detail and the config×image grid.</p>
+     ${vlmSummaryLine(vlm)}
      <table class="bench-tbl"><tr><th>config</th><th>found</th><th>avg conf</th><th>avg ms</th><th>false +</th></tr>${rows}</table>
      <p class="muted" style="font-size:12px">Per-image reports: ${links}</p>`;
+}
+
+// ---- standalone batch VLM tester (#54) -------------------------------------
+let vlmBatchItems = [];
+let vlmBatchId = null;
+
+async function addVlmBatchFiles(files) {
+  if (!files || !files.length) return;
+  $("vlm-batch-note").textContent = `Uploading ${files.length}…`;
+  for (const f of files) {
+    const fd = new FormData(); fd.append("file", f);
+    const { ok, body } = await api("/api/test/upload", { method: "POST", body: fd });
+    if (ok && body && body.id) vlmBatchItems.push({ id: body.id, name: f.name, frame_index: 0, has_cat: true });
+  }
+  $("vlm-batch-note").textContent = "";
+  renderVlmBatchList();
+}
+
+function renderVlmBatchList() {
+  const box = $("vlm-batch-list");
+  $("vlm-batch-run").disabled = vlmBatchItems.length === 0;
+  box.innerHTML = vlmBatchItems.map((it, i) => `<div class="batch-row">
+    <span class="grow">${esc(it.name)}</span>
+    <label class="inline"><input type="checkbox" data-i="${i}" class="vbatch-cat" ${it.has_cat ? "checked" : ""}/> cat present</label>
+    <button type="button" class="link vbatch-rm" data-i="${i}">remove</button></div>`).join("");
+  box.querySelectorAll(".vbatch-cat").forEach((el) => {
+    el.onchange = () => { vlmBatchItems[Number(el.dataset.i)].has_cat = el.checked; };
+  });
+  box.querySelectorAll(".vbatch-rm").forEach((el) => {
+    el.onclick = () => { vlmBatchItems.splice(Number(el.dataset.i), 1); renderVlmBatchList(); };
+  });
+}
+
+async function runVlmBatch() {
+  if (!vlmBatchItems.length) return;
+  vlmBatchId = newBatchId();
+  $("vlm-batch-run").disabled = true;
+  $("vlm-batch-abort").classList.remove("hidden");
+  $("vlm-batch-note").textContent = `Running the VLM on ${vlmBatchItems.length} images… you can abort.`;
+  const { ok, body } = await api("/api/vlm/batch", postJSON({
+    items: vlmBatchItems, batch_id: vlmBatchId, model: $("vlm-model").value,
+  }));
+  vlmBatchId = null;
+  $("vlm-batch-run").disabled = false;
+  $("vlm-batch-abort").classList.add("hidden");
+  if (!ok || !body || body.error) { $("vlm-batch-note").textContent = (body && body.error) || "VLM batch failed."; return; }
+  $("vlm-batch-note").textContent = body.cancelled
+    ? `Stopped early — ${body.ran} of ${body.requested} done.`
+    : (body.skipped ? `⚠ Ran ${body.ran} of ${body.requested} — ${body.skipped} upload(s) expired.` : "");
+  renderVlmBatch(body);
+}
+
+async function abortVlmBatch() {
+  if (!vlmBatchId) return;
+  $("vlm-batch-note").textContent = "Stopping after the current image…";
+  await api("/api/test/benchmark/cancel", postJSON({ batch_id: vlmBatchId }));
+}
+
+function renderVlmBatch(b) {
+  const s = b.summary;
+  const pct = (r, n, d) => r == null ? "—" : `${Math.round(r * 100)}% (${n}/${d})`;
+  const rows = (b.verdicts || []).map((v) => {
+    const a = v.error ? `<span class="vlm-badge vlm-unparsed">error</span>`
+      : (v.answer === "yes" ? `<span class="vlm-badge vlm-yes">yes</span>`
+        : v.answer === "no" ? `<span class="vlm-badge vlm-no">no</span>`
+          : `<span class="vlm-badge vlm-unparsed">?</span>`);
+    return `<tr><td style="text-align:left">${esc(v.name)}${v.has_cat ? "" : " ∅"}</td>
+      <td>${a}</td><td style="text-align:left">${esc(v.error || v.reason || "")}</td>
+      <td>${Math.round(v.query_ms)} ms</td></tr>`;
+  }).join("");
+  $("vlm-batch-results").innerHTML =
+    `<p class="muted"><strong>${esc(b.model)}:</strong> recall ${pct(s.recall, s.found, s.n_cat)} · false-positive ${pct(s.fp_rate, s.fp, s.n_nocat)}${s.errors ? ` · ${s.errors} error(s)` : ""}</p>
+     <table class="bench-tbl"><tr><th>image</th><th>cat?</th><th>reason</th><th>latency</th></tr>${rows}</table>`;
 }
 
 // ---- activity log ----------------------------------------------------------
@@ -1166,6 +1255,12 @@ function wire() {
   if (vf) vf.onchange = (e) => uploadVlm(e.target.files[0]);
   const vr = $("vlm-run");
   if (vr) vr.onclick = runVlm;
+  const vbf = $("vlm-batch-files");
+  if (vbf) vbf.onchange = (e) => { addVlmBatchFiles(Array.from(e.target.files)); e.target.value = ""; };
+  const vbr = $("vlm-batch-run");
+  if (vbr) vbr.onclick = runVlmBatch;
+  const vba = $("vlm-batch-abort");
+  if (vba) vba.onclick = abortVlmBatch;
 }
 
 async function loadVersion() {

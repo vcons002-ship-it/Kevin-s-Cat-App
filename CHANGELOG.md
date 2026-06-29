@@ -11,6 +11,28 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.24.0] — 2026-06-29
+
+### Added
+- **Batch VLM tester** (#54). The moondream tester now runs across many images like
+  the detection models do: add multiple frames (with the same per-image **"cat present"**
+  ground-truth toggle), run **one query per image** (no sweep), and get a per-image
+  table (**yes/no + reason + latency**) plus a summary that reports **recall** (on
+  cat-present frames) and **false-positive rate** (on no-cat frames) **separately** —
+  the same methodology as the detection benchmark. Cancel/abort supported.
+  Endpoint: `POST /api/vlm/batch`.
+- **Optional "also run VLM" toggle in the detection batch** (#54). Off by default (no
+  added cost). On, it runs the VLM **once per image** alongside the model × tiling
+  sweep and adds to the cross-image summary:
+  - a **"VLM accuracy for batch"** line — recall + false-positive rate, graded against
+    the same per-image "cat present" labels that score the YOLO configs;
+  - the **frames where the VLM and the best YOLO config disagree** (VLM yes / YOLO miss,
+    or VLM no / YOLO hit), each linked to its per-image report — the interesting rows,
+    surfaced so you don't have to eyeball every frame.
+  - Cost is **+1 VLM call per image** (not per config); VLM latency is reported
+    separately from YOLO. If the VLM can't run (no GPU/key), the sweep still completes
+    and the report notes the VLM was skipped.
+
 ## [0.23.2] — 2026-06-29
 
 ### Fixed

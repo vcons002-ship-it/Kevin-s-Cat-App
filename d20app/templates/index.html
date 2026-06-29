@@ -213,6 +213,9 @@
             <button id="bench-batch-abort" class="stop hidden" type="button">✋ Abort</button>
             <span id="bench-batch-note" class="muted"></span>
           </div>
+          <label class="inline" title="One extra moondream query per image (needs a GPU + key); adds a VLM-accuracy line and flags VLM↔YOLO disagreements">
+            <input type="checkbox" id="bench-vlm"/> Also run VLM on each image (#54)
+          </label>
           <div id="bench-batch-list"></div>
           <div id="bench-batch-results" class="hidden">
             <div class="row">
@@ -268,6 +271,27 @@
         </details>
         <p id="vlm-meta" class="muted"></p>
       </div>
+
+      <!-- Batch VLM: run one query per image across many, report recall + FP (#54) -->
+      <details id="vlm-batch">
+        <summary class="muted">batch: run the VLM across several images</summary>
+        <p class="help" style="font-size:13px">
+          One query per image (no sweep). Tick “cat present” per image (untick for
+          empty-room controls); the summary reports <strong>recall</strong> on cat frames
+          and <strong>false-positive rate</strong> on no-cat frames, separately.
+        </p>
+        <div class="row">
+          <label class="upload ghost">
+            <input type="file" id="vlm-batch-files" accept="image/*" multiple hidden/>
+            ＋ Add images
+          </label>
+          <button id="vlm-batch-run" class="ghost" type="button" disabled>🌙 Run VLM batch</button>
+          <button id="vlm-batch-abort" class="stop hidden" type="button">✋ Abort</button>
+          <span id="vlm-batch-note" class="muted"></span>
+        </div>
+        <div id="vlm-batch-list"></div>
+        <div id="vlm-batch-results"></div>
+      </details>
       <p class="help">
         A small <strong>vision-language model</strong> (moondream) <em>reasons</em> about
         the whole frame to answer “is there a cat?” — a different angle from the box
