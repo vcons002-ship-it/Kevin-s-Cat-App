@@ -914,6 +914,70 @@ function benchmarkAllFrames() {
   runBatchOf(items, $("bench-batch-note"));
 }
 
+// ---- Cat-presence (VLM / moondream) tester (#48) ---------------------------
+let vlmSession = null;
+
+async function loadVlmStatus() {
+  const { body } = await api("/api/vlm/status");
+  if (!body) return;
+  if ($("vlm-prompt") && !$("vlm-prompt").value) $("vlm-prompt").value = body.default_prompt || "";
+  if (!body.available) {
+    const note = $("vlm-unavailable");
+    note.textContent = "moondream isn’t installed — the tester is ready, but Run needs: pip install moondream (and a local model). It’ll work once that’s in place.";
+    note.classList.remove("hidden");
+  }
+}
+
+async function uploadVlm(file) {
+  if (!file) return;
+  $("vlm-note").textContent = "Uploading…";
+  const fd = new FormData(); fd.append("file", file);
+  const { ok, body } = await api("/api/test/upload", { method: "POST", body: fd });
+  if (!ok || !body || body.error) { $("vlm-note").textContent = (body && body.error) || "Upload failed."; return; }
+  vlmSession = body; vlmSession.name = file.name;
+  $("vlm-note").textContent = body.kind === "video" ? `${body.count} frames — pick one below.` : "";
+  const pick = $("vlm-frame-pick");
+  pick.classList.toggle("hidden", body.kind !== "video");
+  if (body.kind === "video") {
+    $("vlm-frame").max = body.count - 1; $("vlm-frame").value = 0;
+    $("vlm-frame-count").textContent = `of ${body.count}`;
+  }
+  $("vlm-run").disabled = false;
+}
+
+async function runVlm() {
+  if (!vlmSession) { $("vlm-note").textContent = "Upload a photo or video first."; return; }
+  $("vlm-run").disabled = true;
+  $("vlm-note").textContent = "Asking moondream… (multi-second to a minute on CPU)";
+  const { ok, body } = await api("/api/vlm/query", postJSON({
+    id: vlmSession.id, frame_index: Number($("vlm-frame").value) || 0,
+    prompt: $("vlm-prompt").value, model: $("vlm-model").value.trim(),
+    device: $("vlm-device").value,
+  }));
+  $("vlm-run").disabled = false;
+  if (!ok || !body || body.error) { $("vlm-note").textContent = (body && body.error) || "Query failed."; return; }
+  $("vlm-note").textContent = "";
+  renderVlm(body);
+}
+
+function renderVlm(b) {
+  $("vlm-result").classList.remove("hidden");
+  const badge = $("vlm-answer");
+  if (!b.parsed || b.answer == null) {
+    badge.textContent = "unparsed"; badge.className = "vlm-badge vlm-unparsed";
+  } else {
+    badge.textContent = b.answer === "yes" ? "CAT: yes" : "CAT: no";
+    badge.className = "vlm-badge " + (b.answer === "yes" ? "vlm-yes" : "vlm-no");
+  }
+  $("vlm-confidence").textContent = b.confidence != null
+    ? `model’s stated confidence: ${b.confidence}% (self-report, not a calibrated score)` : "";
+  const load = b.load_ms ? ` · model load ${Math.round(b.load_ms)} ms` : "";
+  $("vlm-latency").textContent = `query ${Math.round(b.query_ms)} ms${load}`;
+  $("vlm-reason").textContent = b.reason ? `“${b.reason}”` : "";
+  $("vlm-raw").textContent = b.raw || "(empty response)";
+  $("vlm-meta").textContent = `model: ${b.model} · device: ${b.device}`;
+}
+
 function renderBatchSummary(configs, meta, images) {
   const rows = configs.map((c) => {
     const found = `${c.found}/${c.total}`;
@@ -1082,6 +1146,10 @@ function wire() {
   };
   const ba = $("test-bench-all");
   if (ba) ba.onclick = benchmarkAllFrames;
+  const vf = $("vlm-file");
+  if (vf) vf.onchange = (e) => uploadVlm(e.target.files[0]);
+  const vr = $("vlm-run");
+  if (vr) vr.onclick = runVlm;
 }
 
 async function loadVersion() {
@@ -1092,7 +1160,7 @@ async function loadVersion() {
 async function init() {
   wire();
   await loadConfig();
-  await Promise.all([loadSpeakers(false), loadSounds(), loadCamerasList(), loadBenchOptions()]);
+  await Promise.all([loadSpeakers(false), loadSounds(), loadCamerasList(), loadBenchOptions(), loadVlmStatus()]);
   refreshStatus();
   loadLog();
   loadCats();

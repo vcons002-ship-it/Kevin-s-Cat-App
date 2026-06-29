@@ -26,3 +26,8 @@ onvif-zeep>=0.2.12
 # setup.sh / setup.ps1 offer it, or:
 #   pip install openpyxl
 # openpyxl>=3.0
+
+# Optional: the local VLM "Cat-presence" tester (moondream). The model is multi-GB
+# and downloaded separately — point MOONDREAM_MODEL at it. Not installed by default:
+#   pip install moondream
+# moondream>=0.1

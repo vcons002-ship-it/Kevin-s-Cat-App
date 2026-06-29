@@ -11,6 +11,38 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.23.0] — 2026-06-29
+
+### Added
+- **Cat-presence (VLM) tester** (#48). A new GUI panel that asks a small
+  vision-language model (**moondream**) "*is* there a cat?" about a whole frame —
+  a different angle from the box detectors: it *reasons*, so it's strong on the hard
+  frames they miss and on the decoys (beds, posters) that open-vocabulary detectors
+  false-fire on. v1 is a **manual evaluation tool**, not a live path:
+  - **Single `query` pass** with an **editable, format-instructed prompt** (the panel
+    doubles as a prompt bench — VLM results are very prompt-sensitive). One call yields
+    both the reasoning and a best-effort yes/no (no double-latency two-pass).
+  - **The full raw response is always shown** — the reasoning is the point: it reveals
+    *why* it answered (e.g. "the round fuzzy object looks like a cat"), which is exactly
+    how you catch a decoy confusion. A best-effort **Yes/No** + **stated confidence**
+    are parsed out and shown, with confidence labelled as the model's **self-report,
+    not a calibrated score**. If the model ignores the format, the fields read
+    **unparsed** and the raw text still shows — it never invents an answer.
+  - **Latency** is split into one-time **model load** vs **per-query** time, with the
+    prompt / model / device shown for reproducibility.
+  - Input is an uploaded image or a frame from an uploaded video (reuses the existing
+    frame extractor). Endpoints: `GET /api/vlm/status`, `POST /api/vlm/query`.
+- **`moondream` is an optional dependency** (mirrors openvino/openpyxl/playsound3):
+  `setup.sh`/`setup.ps1` offer it, and the panel degrades with a clear "install
+  moondream + point `MOONDREAM_MODEL` at a model" message when it (or the multi-GB
+  model) is absent — Run never 500s.
+
+### Notes
+- **The live path runs on the NAS**, not here: the model is multi-GB (not committed)
+  and CPU inference is multi-second-to-minute. The wiring + the response **parser** are
+  unit-tested; the actual moondream call is exercised where the model lives. `detect`
+  mode (VLM-guided cropping → YOLO) is deliberately **out of scope** for v1.
+
 ## [0.22.0] — 2026-06-29
 
 ### Added

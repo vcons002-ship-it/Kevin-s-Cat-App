@@ -241,6 +241,57 @@
       </p>
     </section>
 
+    <!-- ===== Cat-presence (VLM) tester — moondream "is there a cat?" (#48) ===== -->
+    <section class="card" id="vlm-card">
+      <div class="test-head">
+        <h2>🌙 Cat-presence (VLM)</h2>
+        <label class="upload ghost">
+          ＋ Photo / video
+          <input id="vlm-file" type="file" accept="image/*,video/*" hidden />
+        </label>
+      </div>
+      <p id="vlm-unavailable" class="muted hidden"></p>
+      <div id="vlm-frame-pick" class="test-video-tools hidden">
+        <label class="inline">Frame <input id="vlm-frame" type="number" min="0" step="1" value="0" /></label>
+        <span id="vlm-frame-count" class="muted"></span>
+      </div>
+      <label class="vlm-prompt-label">Prompt <span class="muted">(editable — VLM results are prompt-sensitive)</span>
+        <textarea id="vlm-prompt" rows="3"></textarea>
+      </label>
+      <div class="row">
+        <label class="inline">Model <input id="vlm-model" type="text" placeholder="path or $MOONDREAM_MODEL" /></label>
+        <label class="inline">Device
+          <select id="vlm-device"><option value="cpu">CPU</option><option value="gpu">GPU</option></select>
+        </label>
+        <button id="vlm-run" class="primary" type="button" disabled>Ask “is there a cat?”</button>
+        <span id="vlm-note" class="muted"></span>
+      </div>
+      <div id="vlm-result" class="vlm-result hidden">
+        <div class="row vlm-verdict">
+          <span id="vlm-answer" class="vlm-badge"></span>
+          <span id="vlm-confidence" class="muted"></span>
+          <span id="vlm-latency" class="muted"></span>
+        </div>
+        <p id="vlm-reason"></p>
+        <details open>
+          <summary class="muted">full model response (the reasoning is the point)</summary>
+          <pre id="vlm-raw" class="vlm-raw"></pre>
+        </details>
+        <p id="vlm-meta" class="muted"></p>
+      </div>
+      <p class="help">
+        A small <strong>vision-language model</strong> (moondream) <em>reasons</em> about
+        the whole frame to answer “is there a cat?” — a different angle from the box
+        detectors, good on hard frames they miss and on decoys they false-fire on. The
+        <strong>full response is shown</strong> because the reasoning is the tool: it
+        reveals <em>why</em> it answered (e.g. “the round fuzzy object looks like a cat”).
+        The stated confidence is the model’s own <strong>self-report, not a calibrated
+        score</strong>. moondream is an optional install and the model is multi-GB —
+        this is an occasional evaluation tool (multi-second-to-minute on CPU), not an
+        every-frame path.
+      </p>
+    </section>
+
     <!-- ===== Activity log ===== -->
     <section class="card">
       <div class="row log-head">
