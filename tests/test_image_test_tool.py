@@ -417,6 +417,37 @@ def test_benchmark_batch_holds_more_than_old_cap_and_reports_skips():
     assert body["skipped"] == 1 and "missing.jpg" in body["skipped_names"]
 
 
+def test_benchmark_honors_tester_controls_in_report():
+    # #44: the benchmark applies the tester's controls and shows the *real* values in
+    # the fixed-settings block (not a hardcoded "tile overlap 0.2 · person 0.50").
+    c = _client()
+    body = _benchmark(c, tile_overlap=0.45, person_confidence=0.6,
+                      gamma=1.5, brightness=20).get_json()
+    html = c.get(body["html_url"]).get_data(as_text=True)
+    assert "tile overlap 0.45" in html and "person 0.60" in html
+    assert "gamma 1.50" in html and "brightness +20" in html
+    # an untouched run shows the defaults and no spurious "adjust:" clause
+    plain = c.get(_benchmark(c).get_json()["html_url"]).get_data(as_text=True)
+    assert "tile overlap 0.20" in plain and "adjust:" not in plain
+
+
+def test_benchmark_summary_grid_links_columns_to_reports():
+    # #42: the config×image grid's column headers link to the per-image report (by
+    # slug), and miss entries are numbered so a column # and the miss list line up.
+    c = _client()
+    cat = _upload(c, _CAT, "real.jpg").get_json()
+    blank = _upload_blank(c, "blank.jpg")
+    body = c.post("/api/test/benchmark/batch", json={
+        "items": [{"id": cat["id"], "name": "real.jpg", "has_cat": True},
+                  {"id": blank["id"], "name": "blank.jpg", "has_cat": True}],
+        "models": ["mobilenet_ssd"], "tilings": ["off"]}).get_json()
+    html = c.get(body["summary_url"]).get_data(as_text=True)
+    slug2 = body["images"][1]["slug"]
+    assert f"<a href='{slug2}.html'" in html      # column header links to image #2
+    assert "th class='imgcol'" in html            # header carries the hover tooltip
+    assert "#2 blank.jpg" in html                 # miss entry is numbered + named
+
+
 def test_benchmark_cancel_flag_endpoint():
     # #37: the cancel endpoint accepts a batch_id (the abort path's signalling).
     c = _client()

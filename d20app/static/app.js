@@ -745,6 +745,17 @@ async function loadBenchOptions() {
 const benchChecked = (id) =>
   Array.from($(id).querySelectorAll("input:checked")).map((el) => el.value);
 
+// The tester controls the benchmark now applies uniformly to every run (#44).
+function benchControls() {
+  const num = (id) => Number($(id).value);
+  return {
+    cat_threshold: num("t_cat_confidence"), accelerator: $("t_accelerator").value,
+    tile_overlap: num("t_tile_overlap"), person_confidence: num("t_person_confidence"),
+    gamma: num("t_gamma"), brightness: num("t_brightness"),
+    contrast: num("t_contrast"), saturation: num("t_saturation"),
+  };
+}
+
 async function runBenchmark() {
   if (!testSession) { $("bench-note").textContent = "Upload a photo first."; return; }
   const models = benchChecked("bench-models"), tilings = benchChecked("bench-tilings");
@@ -754,8 +765,7 @@ async function runBenchmark() {
   $("bench-note").textContent = `Benchmarking ${n} run${n === 1 ? "" : "s"}… (4×4 / large models can take a while)`;
   const { ok, body } = await api("/api/test/benchmark", postJSON({
     id: testSession.id, frame_index: testFrameIdx, models, tilings,
-    cat_threshold: Number($("t_cat_confidence").value),
-    accelerator: $("t_accelerator").value, name: testSession.name || "uploaded image",
+    name: testSession.name || "uploaded image", ...benchControls(),
   }));
   $("bench-run").disabled = false;
   if (!ok || !body || body.error) { $("bench-note").textContent = (body && body.error) || "Benchmark failed."; return; }
@@ -860,8 +870,7 @@ async function runBatchOf(items, noteEl) {
   $("bench-batch-abort").classList.remove("hidden");
   noteEl.textContent = `Benchmarking ${items.length} images (~${runs} runs)… you can abort.`;
   const { ok, body } = await api("/api/test/benchmark/batch", postJSON({
-    items, models, tilings, batch_id: batchId,
-    cat_threshold: Number($("t_cat_confidence").value), accelerator: $("t_accelerator").value,
+    items, models, tilings, batch_id: batchId, ...benchControls(),
   }));
   activeBatchId = null;
   $("bench-batch-run").disabled = false;

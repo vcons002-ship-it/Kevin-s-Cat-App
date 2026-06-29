@@ -11,6 +11,25 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.21.0] — 2026-06-29
+
+### Added
+- **The benchmark honours the tester's controls** (#44). The sweep used to run at
+  hardcoded defaults, so you couldn't benchmark under the conditions you can hand-tune
+  on one image. It now applies the **tile overlap, person confidence, and image
+  adjustments (gamma / brightness / contrast / saturation)** from the Test-detection
+  panel, **uniformly to every run** (one value each — not a sweep axis), on both the
+  single-image and batch endpoints. Defaults match the old behaviour, and the report's
+  "held fixed for every run" block shows the **actual values used** — so a seam-straddling
+  cat missed at 0.2 overlap can be re-run at 0.45, or a backlit cat re-run with a gamma
+  lift, and the two reports are distinguishable on paper.
+- **The cross-image summary grid is navigable** (#42). The config×image heatmap's
+  column headers (#1–#N) now **link to each image's per-image report** (by slug, so
+  the link resolves live and in a downloaded/hosted set) and reveal the **image name +
+  a thumbnail on hover**. Expanded miss entries are **numbered** (`#5 backyard.jpg`) so
+  the grid column and the miss list share one identifier — from "column #5 is hard" to
+  that frame's full report in one click.
+
 ## [0.20.1] — 2026-06-29
 
 ### Fixed
