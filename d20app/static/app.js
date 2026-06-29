@@ -27,16 +27,31 @@ const MOTION_PRESETS = {
 // Per-camera dropdown options.
 // The model dropdown is the single resolution selector: YOLO sizes are baked into
 // the export (320/640/960); MobileNet carries its blob size as a "@N" suffix.
-const MODEL_OPTS = [
+// Fallback only — the real list comes from /api/models (the registry-backed source
+// shared with the benchmark, so the live picker can never drift again). #50
+let MODEL_OPTS = [
   ["yolo11n", "YOLO11n (320) — low light, rec."],
   ["yolo11m", "YOLO11m (640) — heavier"],
   ["yolo11m_960", "YOLO11m (960) — max"],
-  ["yolo26m", "YOLO26m (640) — newer, small-object"],
-  ["yolo26x", "YOLO26x (640) — heaviest (export)"],
   ["mobilenet_ssd", "MobileNet (300) — lightest"],
   ["mobilenet_ssd@512", "MobileNet (512)"],
   ["mobilenet_ssd@768", "MobileNet (768)"],
 ];
+
+// Load the canonical model list and build every model dropdown from it (the Test card's
+// #t_model here; the per-camera editor reads MODEL_OPTS when it renders). #50
+async function loadModelOptions() {
+  const { body } = await api("/api/models");
+  if (body && Array.isArray(body.models) && body.models.length) {
+    MODEL_OPTS = body.models.map((m) => [m.value, m.label]);
+  }
+  const sel = $("t_model");
+  if (sel) {
+    const prev = sel.value;
+    sel.innerHTML = MODEL_OPTS.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+    if (MODEL_OPTS.some(([v]) => v === prev)) sel.value = prev;
+  }
+}
 const ACCEL_OPTS = [["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"]];
 const SENS_OPTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"]];
 const TILING_OPTS = [["off", "Off"], ["2x2", "2×2"], ["3x3", "3×3"], ["4x4", "4×4"]];
@@ -1159,6 +1174,7 @@ async function loadVersion() {
 
 async function init() {
   wire();
+  await loadModelOptions();      // before config seeds #t_model and before cameras render (#50)
   await loadConfig();
   await Promise.all([loadSpeakers(false), loadSounds(), loadCamerasList(), loadBenchOptions(), loadVlmStatus()]);
   refreshStatus();

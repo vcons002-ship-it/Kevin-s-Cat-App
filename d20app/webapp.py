@@ -169,20 +169,43 @@ _BENCH_LOCK = threading.Lock()
 _BENCH_MAX_REPORTS = 40         # hold a full batch (per-image reports + summary) at once
 _BENCH_TILINGS = ["off", "2x2", "3x3", "4x4"]
 _BENCH_MAX_RUNS = 24            # cap the matrix so one request can't run forever
-# The MobileNet input-size variants the manual model dropdown offers — the sweep
-# uses the SAME list so the two can't drift (it was missing @512/@768).
-_SSD_VARIANTS = ["mobilenet_ssd", "mobilenet_ssd@512", "mobilenet_ssd@768"]
+# Selectable detection models with display labels. This is the SINGLE source for the
+# benchmark sweep AND every GUI model dropdown, so a hand-maintained list can't drift
+# from the registry again (#50 — the YOLO26 entries reached the sweep but not the live
+# picker, the mirror of the earlier "SSD variants missing from the sweep" bug).
+_YOLO_OPTIONS = [
+    ("yolo11n", "YOLO11n (320) — low light, rec."),
+    ("yolo11m", "YOLO11m (640) — heavier"),
+    ("yolo11m_960", "YOLO11m (960) — max"),
+    ("yolo11m_1280", "YOLO11m (1280)"),
+    ("yolo26m", "YOLO26m (640) — newer, small-object"),
+    ("yolo26x", "YOLO26x (640) — heaviest"),
+]
+_SSD_OPTIONS = [
+    ("mobilenet_ssd", "MobileNet (300) — lightest"),
+    ("mobilenet_ssd@512", "MobileNet (512)"),
+    ("mobilenet_ssd@768", "MobileNet (768)"),
+]
+_SSD_VARIANTS = [v for v, _ in _SSD_OPTIONS]
+
+
+def _model_options() -> list:
+    """``[{value, label}]`` for every selectable model: the YOLO variants whose ONNX is
+    actually present (export-only ones like yolo26x/yolo11m_1280 appear only once their
+    file exists, so the picker never offers a model that can't load) plus the MobileNet
+    sizes (always available — the caffemodel ships). Order = lightest-to-heaviest."""
+    from . import yolo
+
+    out = [{"value": v, "label": lbl} for v, lbl in _YOLO_OPTIONS
+           if v in yolo.MODELS and os.path.exists(yolo.model_path(v))]
+    out += [{"value": v, "label": lbl} for v, lbl in _SSD_OPTIONS]
+    return out
 
 
 def _benchmark_models():
-    """The models a sweep offers — the same set the manual dropdown shows: the
-    present YOLO variants (a 960 export only if produced) plus every MobileNet
-    size. Single source so the sweep and the dropdown stay in sync."""
-    from . import yolo
-
-    out = [v for v in ("yolo11n", "yolo11m", "yolo11m_960", "yolo26m", "yolo26x")
-           if v in yolo.MODELS and os.path.exists(yolo.model_path(v))]
-    return out + list(_SSD_VARIANTS)
+    """The model values a sweep offers — derived from :func:`_model_options` so the
+    sweep and the GUI dropdowns share one registry-backed source and can't drift."""
+    return [m["value"] for m in _model_options()]
 
 
 def _model_native_size(model: str) -> int:
@@ -688,6 +711,12 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     @app.get("/api/version")
     def api_version():
         return jsonify({"version": __version__})
+
+    @app.get("/api/models")
+    def api_models():
+        # The canonical [{value,label}] model list (present-checked), so every GUI
+        # dropdown is built from the same registry the benchmark uses — no drift (#50).
+        return jsonify({"models": _model_options()})
 
     # -- detection snapshots (annotated images shown in the activity log) ----
     @app.get("/snapshots/<path:name>")

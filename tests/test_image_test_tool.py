@@ -268,6 +268,22 @@ def test_benchmark_model_list_includes_ssd_size_variants():
     assert {"mobilenet_ssd", "mobilenet_ssd@512", "mobilenet_ssd@768"} <= set(models)
 
 
+def test_models_endpoint_is_the_single_source_for_pickers_and_sweep():
+    # #50: the live/Test picker and the benchmark sweep are built from ONE
+    # registry-backed source, so they can't drift (the YOLO26 entries reached the
+    # sweep but not the live dropdown).
+    c = _client()
+    opts = c.get("/api/models").get_json()["models"]
+    assert opts and all(m.get("value") and m.get("label") for m in opts)
+    # the bundled yolo26m is offered to the live picker, not just the sweep
+    assert any(m["value"] == "yolo26m" for m in opts)
+    # export-only variants (not committed) aren't offered — they'd fail to load
+    assert not any(m["value"] in ("yolo26x", "yolo11m_1280") for m in opts)
+    # picker values and sweep values are identical (the anti-drift guarantee)
+    sweep = c.get("/api/test/benchmark/models").get_json()["models"]
+    assert [m["value"] for m in opts] == sweep
+
+
 # ---- batch benchmark + cross-image summary (#32) ---------------------------
 def _upload_blank(c, filename="empty-room.jpg"):
     import cv2
