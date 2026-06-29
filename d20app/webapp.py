@@ -242,18 +242,44 @@ def _bench_thumb(jpeg: bytes, width: int = 680):
     return ("data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")), raw
 
 
+# The tester controls the benchmark now applies uniformly to every run (#44), with
+# the Test-detection defaults. The cat/locator score is still captured at a low floor
+# (so the score column stays meaningful); the user's cat threshold marks "found?".
+_BENCH_OPT_DEFAULTS = {"tile_overlap": 0.2, "person_confidence": 0.5,
+                       "gamma": 1.0, "brightness": 0, "contrast": 1.0, "saturation": 1.0}
+
+
+def _bench_opts(body: dict) -> dict:
+    """Pull the tester controls from a request, falling back to the tester defaults so
+    existing behaviour is unchanged when they're omitted (#44)."""
+    out = {}
+    for k, d in _BENCH_OPT_DEFAULTS.items():
+        try:
+            out[k] = (int(body.get(k, d)) if k == "brightness" else float(body.get(k, d)))
+        except (TypeError, ValueError):
+            out[k] = d
+    return out
+
+
 def _run_benchmark(frame, models: list, tilings: list, cat_threshold: float,
-                   accelerator: str) -> list:
+                   accelerator: str, opts: dict = None) -> list:
     """Sweep ``models × tilings`` on one frame. Each run reuses ``_run_test_detection``
     (no parallel detection path) with a very low floor + cat/dog locator so the
     **raw** best cat/dog score is captured; ``detected`` marks it against
-    ``cat_threshold``. Sorted by combined (cat-or-dog) score, best first."""
+    ``cat_threshold``. The tester controls in ``opts`` (tile overlap, person
+    confidence, gamma/brightness/contrast/saturation) are applied uniformly to every
+    run (#44). Sorted by combined (cat-or-dog) score, best first."""
+    opts = {**_BENCH_OPT_DEFAULTS, **(opts or {})}
     runs = []
     for model in models:
         for tiling in tilings:
             settings = {
-                "model": model, "tiling": tiling, "tile_overlap": 0.2,
-                "accelerator": accelerator, "person_confidence": 0.5,
+                "model": model, "tiling": tiling,
+                "tile_overlap": opts["tile_overlap"],
+                "accelerator": accelerator,
+                "person_confidence": opts["person_confidence"],
+                "gamma": opts["gamma"], "brightness": opts["brightness"],
+                "contrast": opts["contrast"], "saturation": opts["saturation"],
                 "cat_confidence": 0.01, "label_floor": 0.01,
                 "locator_classes": ["cat", "dog"],
             }
@@ -264,7 +290,7 @@ def _run_benchmark(frame, models: list, tilings: list, cat_threshold: float,
             thumb, raw = _bench_thumb(annotated)
             runs.append({
                 "model": model, "size": _model_native_size(model), "tiling": tiling,
-                "tile_overlap": 0.2, "accelerator": accelerator,
+                "tile_overlap": opts["tile_overlap"], "accelerator": accelerator,
                 "cat_score": round(best_cat, 3), "dog_score": round(best_dog, 3),
                 "combined_score": round(combined, 3),
                 "detected": bool(combined >= cat_threshold),
@@ -273,6 +299,31 @@ def _run_benchmark(frame, models: list, tilings: list, cat_threshold: float,
             })
     runs.sort(key=lambda r: -r["combined_score"])
     return runs
+
+
+def _fixed_settings_text(meta: dict) -> str:
+    """The 'held fixed for every run' line for a report — the **actual** values used,
+    not a hardcoded string, so two runs under different settings are distinguishable
+    on paper (#44). Non-default image adjustments are appended only when set."""
+    o = {**_BENCH_OPT_DEFAULTS,
+         **{k: meta[k] for k in _BENCH_OPT_DEFAULTS if meta.get(k) is not None}}
+    parts = [f"cat threshold {meta['cat_threshold']:.2f}",
+             f"accelerator {meta['accelerator']}",
+             f"tile overlap {float(o['tile_overlap']):.2f}",
+             f"person {float(o['person_confidence']):.2f}",
+             "locator [cat, dog]"]
+    adj = []
+    if abs(float(o["gamma"]) - 1.0) > 1e-9:
+        adj.append(f"gamma {float(o['gamma']):.2f}")
+    if int(o["brightness"]) != 0:
+        adj.append(f"brightness {int(o['brightness']):+d}")
+    if abs(float(o["contrast"]) - 1.0) > 1e-9:
+        adj.append(f"contrast {float(o['contrast']):.2f}")
+    if abs(float(o["saturation"]) - 1.0) > 1e-9:
+        adj.append(f"saturation {float(o['saturation']):.2f}")
+    if adj:
+        parts.append("adjust: " + ", ".join(adj))
+    return " · ".join(parts)
 
 
 def _score_color(score: float) -> str:
@@ -300,9 +351,7 @@ def _benchmark_html(runs: list, meta: dict, original_url: str = "",
             f"<b>{r['combined_score']:.2f}</b></td>"
             f"<td>{r['cat_score']:.2f}</td><td>{r['dog_score']:.2f}</td>"
             f"<td>{hit}</td><td>{r['inference_ms']:.0f} ms</td></tr>")
-    fixed = (f"cat threshold <b>{meta['cat_threshold']:.2f}</b> · accelerator "
-             f"<b>{esc(meta['accelerator'])}</b> · tile overlap 0.2 · person 0.50 · "
-             f"locator [cat, dog]")
+    fixed = esc(_fixed_settings_text(meta))
     original = ""
     if original_url:
         # Enlarge in-page via the lightbox (browsers block top-level navigation to
@@ -363,8 +412,7 @@ def _benchmark_xlsx(runs: list, meta: dict) -> bytes:
     ws.title = "benchmark"
     ws["A1"] = f"Cat detection benchmark — {meta['image']} ({meta['ts']})"
     ws["A1"].font = Font(bold=True)
-    ws["A2"] = (f"Fixed: cat threshold {meta['cat_threshold']:.2f} · accelerator "
-                f"{meta['accelerator']} · tile overlap 0.2 · person 0.50 · locator [cat, dog]")
+    ws["A2"] = "Fixed: " + _fixed_settings_text(meta)
     headers = ["frame", "model", "size", "tiling", "cat-or-dog", "cat", "dog",
                "found?", "time (ms)"]
     ws.append([])
@@ -476,11 +524,14 @@ def _benchmark_summary_html(per_image: list, configs: list, meta: dict) -> str:
             # Link by the report's SLUG (not its hash id): that's the filename each
             # per-image report downloads under, so a downloaded/hosted bundle stays
             # self-consistent. The serving route resolves a slug too (#35).
+            # Lead with the image number so the grid column (#N) and the miss list use
+            # the same identifier (#42); link by slug (matches the download filename).
             cells.append(
                 f"<div class='miss'><img src='{im['orig_thumb']}' onclick='zoom(this.src)' "
                 f"title='click to enlarge'><div><a href='{im['slug']}.html' "
-                f"target='_blank'>{esc(im['name'])}</a><br><span class='sub'>scored {sc}, "
-                f"below {meta['cat_threshold']:.2f}</span></div></div>")
+                f"target='_blank'>#{idx + 1} {esc(im['name'])}</a><br>"
+                f"<span class='sub'>scored {sc}, below {meta['cat_threshold']:.2f}</span>"
+                "</div></div>")
         return "<div class='misses'>" + "".join(cells) + "</div>"
 
     rows, details = [], []
@@ -509,10 +560,15 @@ def _benchmark_summary_html(per_image: list, configs: list, meta: dict) -> str:
             details.append("")
     body_rows = "".join(r + d for r, d in zip(rows, details))
 
-    # config × image heatmap: rows = configs (best first), cols = images.
+    # config × image heatmap: rows = configs (best first), cols = images. Each column
+    # header links to that image's per-image report (by slug) and reveals its name +
+    # thumbnail on hover, so "column #5 is hard" is one click from frame #5's report (#42).
     head_cells = "".join(
-        f"<th title='{esc(im['name'])}'>#{im['idx'] + 1}"
-        + ("" if im["has_cat"] else " ∅") + "</th>" for im in per_image)
+        f"<th class='imgcol'><a href='{im['slug']}.html' target='_blank' "
+        f"title='{esc(im['name'])}'>#{im['idx'] + 1}"
+        + ("" if im["has_cat"] else " ∅") + "</a>"
+        f"<span class='tip'><img src='{im['orig_thumb']}'><br>{esc(im['name'])}</span>"
+        "</th>" for im in per_image)
     grid_rows = []
     for c in configs:
         cells = []
@@ -547,6 +603,11 @@ def _benchmark_summary_html(per_image: list, configs: list, meta: dict) -> str:
         ".miss{display:flex;gap:8px;align-items:center;font-size:13px}"
         ".miss img{width:90px;border-radius:4px;cursor:zoom-in}"
         ".miss .sub{color:#a33}.grid td{font-size:12px;padding:4px 6px}"
+        "th.imgcol{position:relative}th.imgcol a{color:#06c;text-decoration:none}"
+        "th.imgcol .tip{display:none;position:absolute;z-index:6;top:100%;left:50%;"
+        "transform:translateX(-50%);background:#fff;border:1px solid #bbb;border-radius:4px;"
+        "padding:4px;font-size:11px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.2)}"
+        "th.imgcol:hover .tip{display:block}th.imgcol .tip img{width:150px;display:block}"
         ".fixed{background:#f7f7f9;border:1px solid #e3e3e8;border-radius:8px;"
         "padding:10px 14px;margin:10px 0;font-size:14px}"
         "#lb{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;"
@@ -563,9 +624,8 @@ def _benchmark_summary_html(per_image: list, configs: list, meta: dict) -> str:
         "<h2>🐱 Cat detection benchmark — cross-image summary</h2>"
         f"<p class='muted'>{esc(meta['ts'])} · {len(per_image)} images "
         f"({n_cat} with a cat{fp_note}) · {len(configs)} configs</p>"
-        f"<div class='fixed'><b>Held fixed for every run:</b> cat threshold "
-        f"<b>{meta['cat_threshold']:.2f}</b> · accelerator "
-        f"<b>{esc(meta['accelerator'])}</b> · tile overlap 0.2 · locator [cat, dog]. "
+        f"<div class='fixed'><b>Held fixed for every run:</b> "
+        f"{esc(_fixed_settings_text(meta))}. "
         "<b>found</b> = images where the cat cleared the threshold; click an imperfect "
         "rate to see which frames it missed.</div>"
         "<table><tr><th style='text-align:left'>config</th><th>found</th>"
@@ -959,12 +1019,14 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         except (TypeError, ValueError):
             cat_threshold = 0.5
         accelerator = body.get("accelerator") or "cpu"
-        runs = _run_benchmark(frames[idx], models, tilings, cat_threshold, accelerator)
+        opts = _bench_opts(body)        # tester controls, applied to every run (#44)
+        runs = _run_benchmark(frames[idx], models, tilings, cat_threshold, accelerator, opts)
         h, w = frames[idx].shape[:2]
         image_name = body.get("name") or "uploaded image"
         meta = {"cat_threshold": cat_threshold, "accelerator": accelerator,
                 "image": image_name,
-                "ts": time.strftime("%Y-%m-%d %H:%M"), "width": int(w), "height": int(h)}
+                "ts": time.strftime("%Y-%m-%d %H:%M"), "width": int(w), "height": int(h),
+                **opts}
         # A human-readable filename slug for the downloaded report (#27), and the
         # full-res original frame embedded once for reproducibility (#25).
         stem = os.path.splitext(os.path.basename(image_name))[0]
@@ -1017,6 +1079,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         except (TypeError, ValueError):
             cat_threshold = 0.5
         accelerator = body.get("accelerator") or "cpu"
+        opts = _bench_opts(body)               # tester controls, applied to every run (#44)
         batch_id = body.get("batch_id")        # client token for mid-run abort (#37)
         ts_disp = time.strftime("%Y-%m-%d %H:%M")
         ts_file = time.strftime("%Y%m%d-%H%M%S")
@@ -1044,11 +1107,12 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 idx = 0
             frame = frames[idx]
             has_cat = it.get("has_cat", True) is not False
-            runs = _run_benchmark(frame, models, tilings, cat_threshold, accelerator)
+            runs = _run_benchmark(frame, models, tilings, cat_threshold, accelerator, opts)
             h, w = frame.shape[:2]
             stem = os.path.splitext(os.path.basename(name))[0]
             meta_i = {"cat_threshold": cat_threshold, "accelerator": accelerator,
-                      "image": name, "ts": ts_disp, "width": int(w), "height": int(h)}
+                      "image": name, "ts": ts_disp, "width": int(w), "height": int(h),
+                      **opts}
             rid = uuid.uuid4().hex
             slug = f"benchmark-{_slugify(stem)}-{ts_file}-{i + 1}"
             html = _benchmark_html(runs, meta_i,
@@ -1077,7 +1141,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             return jsonify({"error": msg, "cancelled": cancelled}), 404
 
         configs = _aggregate_configs(per_image)
-        smeta = {"cat_threshold": cat_threshold, "accelerator": accelerator, "ts": ts_disp}
+        smeta = {"cat_threshold": cat_threshold, "accelerator": accelerator,
+                 "ts": ts_disp, **opts}
         summary_html = _benchmark_summary_html(per_image, configs, smeta)
         sid = uuid.uuid4().hex
         summary_slug = f"benchmark-summary-{ts_file}"
