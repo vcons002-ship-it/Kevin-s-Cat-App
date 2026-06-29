@@ -1215,7 +1215,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         # Tells the GUI whether the optional 'moondream' package is installed, so it
         # can hint how to enable the tester instead of failing on Run.
         return jsonify({"available": vlm.is_available(),
-                        "default_prompt": vlm.DEFAULT_PROMPT})
+                        "default_prompt": vlm.DEFAULT_PROMPT,
+                        "models": list(vlm.MODELS), "default_model": vlm.DEFAULT_MODEL})
 
     @app.post("/api/vlm/query")
     def api_vlm_query():
@@ -1235,8 +1236,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         try:
             result = vlm.query_image(
                 frames[idx], prompt=body.get("prompt") or vlm.DEFAULT_PROMPT,
-                model=body.get("model"), device=body.get("device") or "cpu")
-        except RuntimeError as exc:         # optional dep / missing model / query failure
+                model=body.get("model") or vlm.DEFAULT_MODEL, api_key=body.get("api_key"))
+        except RuntimeError as exc:         # optional dep / no GPU / no key / query failure
             return jsonify({"error": str(exc)}), 503
         return jsonify(result)
 

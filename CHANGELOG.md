@@ -11,6 +11,34 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.23.2] — 2026-06-29
+
+### Fixed
+- **The moondream VLM tester now actually runs locally** (#52). The old call
+  `md.vl(model=path)` was wrong — moondream's `vl()` has no `model=` parameter, so the
+  argument was swallowed, `local` stayed `False`, and it silently hit the **cloud** API
+  (HTTP 401, and would have sent frames off-machine). It now uses the documented local
+  invocation `md.vl(api_key=…, local=True, model=…)`:
+  - The model is selected **by name** (`moondream2` default, or `moondream3-preview`),
+    not a file path — Photon manages its own Hugging Face weight cache (redirect with
+    `HF_HOME`). The GUI has a model picker.
+  - The **API key** comes from `MOONDREAM_API_KEY` (authenticates the one-time weight
+    download; per-query inference is local — frames don't leave the machine).
+  - **Local inference needs a supported GPU** (CUDA/Ampere or Apple Silicon) — there's
+    **no CPU path**; the tester now raises a clear "needs a supported GPU" error instead
+    of a cryptic Photon failure, and the earlier "multi-second-to-minute on CPU" framing
+    is gone.
+- **Benchmark XLSX export works out of the box** (#53). `openpyxl` is now a **real
+  dependency** (uncommented in `requirements.txt`) instead of a manual `pip install` —
+  a button in the shipped GUI shouldn't need an undocumented manual step to function.
+
+### Changed
+- **The VLM no longer reports a confidence number** (#54). moondream's self-reported
+  confidence proved meaningless ("0-100%", "not sure but yes"), so the output is now just
+  **yes/no + the reasoning text** (kept purely as information). The default prompt is
+  "Is there a cat in this image? Answer yes or no, then briefly explain," and the parser
+  was simplified to extract the yes/no and keep the rest as free-text reason.
+
 ## [0.23.1] — 2026-06-29
 
 ### Fixed

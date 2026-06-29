@@ -15,37 +15,32 @@ _FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 _CAT = os.path.join(_FIXTURES, "cats", "cat01.jpg")
 
 
-# ---- parser (pure) ---------------------------------------------------------
-def test_parser_extracts_a_clean_formatted_response():
-    out = vlm.parse_vlm_response(
-        "ANSWER: yes | CONFIDENCE: 92% | REASON: a tabby cat sits on the sofa")
-    assert out["answer"] == "yes" and out["confidence"] == 92
-    assert out["reason"] == "a tabby cat sits on the sofa" and out["parsed"] is True
+# ---- parser (pure) — yes/no + free-text reason, no confidence (#52/#54) ----
+def test_parser_extracts_yes_and_keeps_reason():
+    out = vlm.parse_vlm_response("Yes, a tabby cat is sitting on the sofa.")
+    assert out["answer"] == "yes" and out["parsed"] is True
+    assert "tabby cat" in out["reason"] and "confidence" not in out
 
 
-def test_parser_handles_no_answer():
-    out = vlm.parse_vlm_response("ANSWER: no | CONFIDENCE: 40% | REASON: empty room")
-    assert out["answer"] == "no" and out["confidence"] == 40 and out["parsed"] is True
+def test_parser_extracts_no():
+    out = vlm.parse_vlm_response("No — the room is empty.")
+    assert out["answer"] == "no" and out["parsed"] is True
 
 
-def test_parser_is_case_and_separator_tolerant():
-    out = vlm.parse_vlm_response("answer = Yes\nconfidence = 5\nreason = faint shape")
-    assert out["answer"] == "yes" and out["confidence"] == 5
+def test_parser_is_case_insensitive():
+    assert vlm.parse_vlm_response("YES. clearly a cat.")["answer"] == "yes"
 
 
-def test_parser_clamps_confidence():
-    assert vlm.parse_vlm_response("ANSWER: yes CONFIDENCE: 250")["confidence"] == 100
+def test_parser_unparsed_when_no_yes_or_no():
+    # Model never committed to yes/no → unparsed, invent nothing, keep the raw text.
+    out = vlm.parse_vlm_response("I think I can see something furry but I'm uncertain.")
+    assert out["answer"] is None and out["parsed"] is False
+    assert out["reason"].startswith("I think")
 
 
-def test_parser_unparsed_when_model_rambles():
-    # A small VLM that ignored the format → mark unparsed, invent nothing, keep raw.
-    out = vlm.parse_vlm_response("I think I can see something furry but I'm not certain.")
-    assert out["answer"] is None and out["confidence"] is None and out["parsed"] is False
-
-
-def test_parser_yes_without_confidence_still_parses():
-    out = vlm.parse_vlm_response("ANSWER: yes - pretty sure")
-    assert out["answer"] == "yes" and out["confidence"] is None and out["parsed"] is True
+def test_parser_takes_the_first_verdict():
+    # "yes" before "no" → yes (the model's lead answer).
+    assert vlm.parse_vlm_response("Yes. It is not a dog, it's a cat.")["answer"] == "yes"
 
 
 # ---- endpoints -------------------------------------------------------------
@@ -61,10 +56,11 @@ def _upload(c):
                   content_type="multipart/form-data").get_json()
 
 
-def test_vlm_status_reports_availability_and_default_prompt():
+def test_vlm_status_reports_availability_models_and_prompt():
     body = _client().get("/api/vlm/status").get_json()
     assert "available" in body and isinstance(body["available"], bool)
-    assert "ANSWER:" in body["default_prompt"]
+    assert "cat" in body["default_prompt"].lower()
+    assert "moondream2" in body["models"] and body["default_model"] == "moondream2"
 
 
 def test_vlm_query_degrades_gracefully_without_model(monkeypatch):

@@ -21,13 +21,14 @@ onvif-zeep>=0.2.12
 #   pip install openvino
 # openvino>=2024.0
 
-# Optional: export the "Benchmark this image" results to an XLSX with embedded
-# thumbnails (the HTML report needs nothing extra). Not installed by default —
-# setup.sh / setup.ps1 offer it, or:
-#   pip install openpyxl
-# openpyxl>=3.0
+# XLSX export for the "Benchmark this image" tool (the HTML report needs nothing
+# extra). Small and pure-Python, and there's a button for it in the GUI, so it ships
+# by default now — a visible control shouldn't need a manual install to work (#53).
+openpyxl>=3.0
 
-# Optional: the local VLM "Cat-presence" tester (moondream). The model is multi-GB
-# and downloaded separately — point MOONDREAM_MODEL at it. Not installed by default:
+# Optional: the local VLM "Cat-presence" tester (moondream). Needs a supported GPU
+# (CUDA/Ampere or Apple Silicon — no CPU path) and MOONDREAM_API_KEY (authenticates the
+# one-time Hugging Face weight download; inference is then local). Not installed by
+# default — it's a heavy, hardware-gated evaluation tool:
 #   pip install moondream
-# moondream>=0.1
+# moondream>=1.3

@@ -936,9 +936,14 @@ async function loadVlmStatus() {
   const { body } = await api("/api/vlm/status");
   if (!body) return;
   if ($("vlm-prompt") && !$("vlm-prompt").value) $("vlm-prompt").value = body.default_prompt || "";
+  const sel = $("vlm-model");
+  if (sel && Array.isArray(body.models)) {
+    sel.innerHTML = body.models.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+    if (body.default_model) sel.value = body.default_model;
+  }
   if (!body.available) {
     const note = $("vlm-unavailable");
-    note.textContent = "moondream isn’t installed — the tester is ready, but Run needs: pip install moondream (and a local model). It’ll work once that’s in place.";
+    note.textContent = "moondream isn’t installed — the tester is ready, but Run needs: pip install moondream, a supported GPU (CUDA/Ampere or Apple Silicon), and MOONDREAM_API_KEY. It’ll work once that’s in place.";
     note.classList.remove("hidden");
   }
 }
@@ -966,8 +971,7 @@ async function runVlm() {
   $("vlm-note").textContent = "Asking moondream… (multi-second to a minute on CPU)";
   const { ok, body } = await api("/api/vlm/query", postJSON({
     id: vlmSession.id, frame_index: Number($("vlm-frame").value) || 0,
-    prompt: $("vlm-prompt").value, model: $("vlm-model").value.trim(),
-    device: $("vlm-device").value,
+    prompt: $("vlm-prompt").value, model: $("vlm-model").value,
   }));
   $("vlm-run").disabled = false;
   if (!ok || !body || body.error) { $("vlm-note").textContent = (body && body.error) || "Query failed."; return; }
@@ -984,11 +988,8 @@ function renderVlm(b) {
     badge.textContent = b.answer === "yes" ? "CAT: yes" : "CAT: no";
     badge.className = "vlm-badge " + (b.answer === "yes" ? "vlm-yes" : "vlm-no");
   }
-  $("vlm-confidence").textContent = b.confidence != null
-    ? `model’s stated confidence: ${b.confidence}% (self-report, not a calibrated score)` : "";
   const load = b.load_ms ? ` · model load ${Math.round(b.load_ms)} ms` : "";
   $("vlm-latency").textContent = `query ${Math.round(b.query_ms)} ms${load}`;
-  $("vlm-reason").textContent = b.reason ? `“${b.reason}”` : "";
   $("vlm-raw").textContent = b.raw || "(empty response)";
   $("vlm-meta").textContent = `model: ${b.model} · device: ${b.device}`;
 }
