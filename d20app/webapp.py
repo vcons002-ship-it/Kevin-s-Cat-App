@@ -141,7 +141,6 @@ def _run_test_detection(frame, settings: dict):
             det = PersonDetector(source="__test__", model=model, accelerator=accel)
             _test_detectors[key] = det
         det.confidence = _f("person_confidence", 0.5)
-        det.detect_size = int(_f("detect_size", 300)) or 300
         det.label_floor = _f("label_floor", 0.55)
         det.cat_confidence = _f("cat_confidence", 0.5)
         lc = settings.get("locator_classes")
@@ -181,25 +180,17 @@ _YOLO_OPTIONS = [
     ("yolo26m", "YOLO26m (640) — newer, small-object"),
     ("yolo26x", "YOLO26x (640) — heaviest"),
 ]
-_SSD_OPTIONS = [
-    ("mobilenet_ssd", "MobileNet (300) — lightest"),
-    ("mobilenet_ssd@512", "MobileNet (512)"),
-    ("mobilenet_ssd@768", "MobileNet (768)"),
-]
-_SSD_VARIANTS = [v for v, _ in _SSD_OPTIONS]
 
 
 def _model_options() -> list:
     """``[{value, label}]`` for every selectable model: the YOLO variants whose ONNX is
     actually present (export-only ones like yolo26x/yolo11m_1280 appear only once their
-    file exists, so the picker never offers a model that can't load) plus the MobileNet
-    sizes (always available — the caffemodel ships). Order = lightest-to-heaviest."""
+    file exists, so the picker never offers a model that can't load). Order =
+    lightest-to-heaviest."""
     from . import yolo
 
-    out = [{"value": v, "label": lbl} for v, lbl in _YOLO_OPTIONS
-           if v in yolo.MODELS and os.path.exists(yolo.model_path(v))]
-    out += [{"value": v, "label": lbl} for v, lbl in _SSD_OPTIONS]
-    return out
+    return [{"value": v, "label": lbl} for v, lbl in _YOLO_OPTIONS
+            if v in yolo.MODELS and os.path.exists(yolo.model_path(v))]
 
 
 def _benchmark_models():
@@ -213,20 +204,13 @@ def _model_native_size(model: str) -> int:
 
     if model in yolo.MODELS:
         return yolo.input_size(model)
-    if "@" in model:
-        try:
-            return int(model.split("@", 1)[1])
-        except ValueError:
-            pass
-    return 300
+    return 0
 
 
 def _display_model(model: str) -> str:
-    """Visible model name for reports: drop the ``@size`` suffix, since the size
-    column already carries it — otherwise an SSD variant reads ``mobilenet_ssd@512``
-    next to size ``512`` (the size shown twice). The full ``model`` key is kept
-    elsewhere for re-runs; only the label changes (#31)."""
-    return model.split("@", 1)[0]
+    """Visible model name for reports. All models are now YOLO variants whose size is
+    their export, so the name stands on its own."""
+    return model
 
 
 def _slugify(text: str) -> str:

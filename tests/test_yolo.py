@@ -124,11 +124,16 @@ def test_detector_falls_back_to_cpu_when_accelerator_fails(monkeypatch):
     assert det.model == "yolo11n" and det.accelerator == "cpu"   # kept model, fell to CPU
 
 
-def test_falls_back_to_mobilenet_when_yolo_unavailable(monkeypatch):
-    def boom():
+def test_raises_clear_error_when_yolo_cannot_load(monkeypatch):
+    # MobileNet-SSD was removed in 0.25.0 (#57): there is no silent fallback. When
+    # the chosen model can't load on CPU, the detector raises an actionable error
+    # rather than quietly running a worse (or no) detector.
+    def boom(variant, accelerator="cpu"):
         raise RuntimeError("no onnx here")
     monkeypatch.setattr(yolo, "load_net", boom)
     det = PersonDetector(source="unused", confidence=0.4, model="yolo11n")
-    # First detection triggers the load, which fails and silently downgrades.
-    assert det.detect_in_frame(cv2.imread(PEOPLE[0])) in (True, False)
-    assert det.model == "mobilenet_ssd"
+    with pytest.raises(RuntimeError) as exc:
+        det.detect_in_frame(cv2.imread(PEOPLE[0]))
+    msg = str(exc.value)
+    assert "yolo11n" in msg and "models" in msg          # names the model + where to look
+    assert det.model == "yolo11n"                         # no silent model swap

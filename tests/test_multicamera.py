@@ -466,11 +466,11 @@ def test_saved_camera_round_trips_full_settings(tmp_path, monkeypatch):
     c, cfgfile = _client(tmp_path, monkeypatch)
     c.post("/api/cameras/saved", json={
         "name": "Kitchen", "url": "rtsp://1/s", "password": "sec",
-        "roll": False, "track_cats": True, "model": "mobilenet_ssd",
+        "roll": False, "track_cats": True, "model": "yolo11n",
         "scan_fps": 5, "roi": [10, 20, 30, 40]})
     cam = c.get("/api/cameras/saved").get_json()[0]
     assert cam["roll"] is False and cam["track_cats"] is True
-    assert cam["model"] == "mobilenet_ssd" and cam["scan_fps"] == 5
+    assert cam["model"] == "yolo11n" and cam["scan_fps"] == 5
     assert cam["roi"] == [10, 20, 30, 40]
     assert "password" not in cam and cam["has_password"] is True
 

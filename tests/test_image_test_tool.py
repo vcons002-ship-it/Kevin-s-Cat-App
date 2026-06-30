@@ -56,8 +56,7 @@ def test_detect_image_returns_jpeg_and_detections():
 
     frame = cv2.imread(_CAT)
     assert frame is not None
-    det = PersonDetector(source="__test__", model="mobilenet_ssd",
-                         detect_size=512, label_floor=0.4)
+    det = PersonDetector(source="__test__", model="yolo11n", label_floor=0.4)
     annotated, dets = det.detect_image(frame)
     assert annotated and annotated[:2] == b"\xff\xd8"      # JPEG magic
     assert any(d["label"] == "cat" for d in dets)
@@ -71,7 +70,7 @@ def test_detect_image_respects_confidence_floor():
 
     frame = cv2.imread(_CAT)
     # Cat now has its own threshold, so raise it too (a real cat scores ~0.96).
-    high = PersonDetector(source="x", model="mobilenet_ssd", detect_size=512,
+    high = PersonDetector(source="x", model="yolo11n",
                           confidence=0.99, label_floor=0.99, cat_confidence=0.99)
     _, dets = high.detect_image(frame)
     assert dets == []      # nothing clears a 0.99 floor
@@ -137,7 +136,7 @@ def test_test_upload_and_detect_roundtrip():
     assert up["width"] > 0 and up["thumbs"][0].startswith("data:image/jpeg;base64,")
     r = c.post("/api/test/detect", json={
         "id": up["id"], "frame_index": 0,
-        "settings": {"model": "mobilenet_ssd", "detect_size": 512, "label_floor": 0.4},
+        "settings": {"model": "yolo11n", "label_floor": 0.4},
     })
     body = r.get_json()
     assert r.status_code == 200
@@ -166,7 +165,7 @@ def test_test_upload_requires_a_file():
 # ---- benchmark (#21) -------------------------------------------------------
 def _benchmark(c, **kw):
     up = _upload(c, _CAT).get_json()
-    payload = {"id": up["id"], "models": ["mobilenet_ssd"], "tilings": ["off", "2x2"]}
+    payload = {"id": up["id"], "models": ["yolo11n"], "tilings": ["off", "2x2"]}
     payload.update(kw)
     return c.post("/api/test/benchmark", json=payload)
 
@@ -212,7 +211,7 @@ def test_benchmark_xlsx_degrades_without_openpyxl(monkeypatch):
 def test_benchmark_caps_matrix_size():
     c = _client()
     up = _upload(c, _CAT).get_json()
-    big = {"id": up["id"], "models": ["mobilenet_ssd"] * 7, "tilings": ["off", "2x2", "3x3", "4x4"]}
+    big = {"id": up["id"], "models": ["yolo11n"] * 7, "tilings": ["off", "2x2", "3x3", "4x4"]}
     assert c.post("/api/test/benchmark", json=big).status_code == 400
 
 
@@ -239,17 +238,6 @@ def test_benchmark_html_uses_lightbox_not_data_url_navigation():
     assert "download='" in html                        # download link (download=) kept
 
 
-def test_benchmark_report_strips_at_size_from_model_label():
-    # #31: SSD size variants shouldn't read "mobilenet_ssd@512" next to size 512 —
-    # the model column shows the base name, the size column carries the number.
-    c = _client()
-    body = _benchmark(c, models=["mobilenet_ssd@512"], tilings=["off"]).get_json()
-    assert body["runs"][0]["model"] == "mobilenet_ssd@512"   # key unchanged (re-runs)
-    html = c.get(body["html_url"]).get_data(as_text=True)
-    assert "mobilenet_ssd@512" not in html              # not in the visible label
-    assert "<td>mobilenet_ssd</td>" in html             # base name in the model column
-
-
 def test_benchmark_reports_have_human_readable_filenames():
     # #27: Content-Disposition uses a slug from the uploaded image name, not the uuid.
     c = _client()
@@ -260,12 +248,13 @@ def test_benchmark_reports_have_human_readable_filenames():
     assert "benchmark-living-room-cam-" in xl.headers.get("Content-Disposition", "")
 
 
-def test_benchmark_model_list_includes_ssd_size_variants():
-    # #28: the default sweep list must not drift from the dropdown — it carries the
-    # MobileNet size variants alongside any present YOLO models.
+def test_benchmark_model_list_is_yolo_only_after_ssd_removal():
+    # #57: MobileNet-SSD is gone — the sweep list offers only present YOLO variants,
+    # no mobilenet entries (and still no drift from the live picker, see below).
     c = _client()
     models = c.get("/api/test/benchmark/models").get_json()["models"]
-    assert {"mobilenet_ssd", "mobilenet_ssd@512", "mobilenet_ssd@768"} <= set(models)
+    assert models and all(m.startswith("yolo") for m in models)
+    assert not any("mobilenet" in m for m in models)
 
 
 def test_models_endpoint_is_the_single_source_for_pickers_and_sweep():
@@ -301,7 +290,7 @@ def test_benchmark_batch_aggregates_and_summarizes():
     res = c.post("/api/test/benchmark/batch", json={
         "items": [{"id": a["id"], "name": "kitchen.jpg", "has_cat": True},
                   {"id": b["id"], "name": "hallway.jpg", "has_cat": True}],
-        "models": ["mobilenet_ssd"], "tilings": ["off", "2x2"],
+        "models": ["yolo11n"], "tilings": ["off", "2x2"],
     })
     body = res.get_json()
     assert res.status_code == 200
@@ -329,7 +318,7 @@ def test_benchmark_batch_nocat_control_reports_false_positives():
     body = c.post("/api/test/benchmark/batch", json={
         "items": [{"id": cat["id"], "name": "with-cat.jpg", "has_cat": True},
                   {"id": empty["id"], "name": "empty-room.jpg", "has_cat": False}],
-        "models": ["mobilenet_ssd"], "tilings": ["off"],
+        "models": ["yolo11n"], "tilings": ["off"],
     }).get_json()
     assert body["meta"]["n_cat"] == 1 and body["meta"]["n_nocat"] == 1
     cfg = body["configs"][0]
@@ -346,11 +335,11 @@ def test_benchmark_batch_soft_cap_allows_over_recommended_but_caps_absolute():
     assert c.post("/api/test/benchmark/batch", json={"items": []}).status_code == 400
     # 20 (> recommended 12) is NOT hard-blocked — bogus ids just expire to a 404.
     over = {"items": [{"id": "x", "name": str(i)} for i in range(20)],
-            "models": ["mobilenet_ssd"], "tilings": ["off"]}
+            "models": ["yolo11n"], "tilings": ["off"]}
     assert c.post("/api/test/benchmark/batch", json=over).status_code == 404
     # past the absolute ceiling, it's refused outright (400).
     huge = {"items": [{"id": "x", "name": str(i)} for i in range(101)],
-            "models": ["mobilenet_ssd"], "tilings": ["off"]}
+            "models": ["yolo11n"], "tilings": ["off"]}
     assert c.post("/api/test/benchmark/batch", json=huge).status_code == 400
 
 
@@ -358,7 +347,7 @@ def test_benchmark_batch_404_when_all_uploads_expired():
     c = _client()
     r = c.post("/api/test/benchmark/batch", json={
         "items": [{"id": "gone", "name": "x.jpg"}],
-        "models": ["mobilenet_ssd"], "tilings": ["off"]})
+        "models": ["yolo11n"], "tilings": ["off"]})
     assert r.status_code == 404
 
 
@@ -368,7 +357,7 @@ def _run_batch(c, names=("a.jpg", "b.jpg")):
         up = _upload(c, _CAT, nm).get_json()
         items.append({"id": up["id"], "name": nm, "has_cat": True})
     return c.post("/api/test/benchmark/batch", json={
-        "items": items, "models": ["mobilenet_ssd"], "tilings": ["off"]}).get_json()
+        "items": items, "models": ["yolo11n"], "tilings": ["off"]}).get_json()
 
 
 def test_benchmark_summary_links_by_slug_and_resolves():
@@ -383,7 +372,7 @@ def test_benchmark_summary_links_by_slug_and_resolves():
     body = c.post("/api/test/benchmark/batch", json={
         "items": [{"id": cat["id"], "name": "real.jpg", "has_cat": True},
                   {"id": blank["id"], "name": "blank.jpg", "has_cat": True}],
-        "models": ["mobilenet_ssd"], "tilings": ["off"]}).get_json()
+        "models": ["yolo11n"], "tilings": ["off"]}).get_json()
     slug = body["images"][0]["slug"]
     assert body["images"][0]["report_url"] == f"/api/test/benchmark/{slug}.html"
     # every per-image report's slug resolves on-server (not just the hash id)
@@ -428,7 +417,7 @@ def test_benchmark_batch_holds_more_than_old_cap_and_reports_skips():
         items.append({"id": up["id"], "name": f"img{i}.jpg", "has_cat": True})
     items.append({"id": "gone", "name": "missing.jpg", "has_cat": True})   # one bad id
     body = c.post("/api/test/benchmark/batch", json={
-        "items": items, "models": ["mobilenet_ssd"], "tilings": ["off"]}).get_json()
+        "items": items, "models": ["yolo11n"], "tilings": ["off"]}).get_json()
     assert body["requested"] == 8 and body["ran"] == 7      # all 7 real ones ran
     assert body["skipped"] == 1 and "missing.jpg" in body["skipped_names"]
 
@@ -456,7 +445,7 @@ def test_benchmark_summary_grid_links_columns_to_reports():
     body = c.post("/api/test/benchmark/batch", json={
         "items": [{"id": cat["id"], "name": "real.jpg", "has_cat": True},
                   {"id": blank["id"], "name": "blank.jpg", "has_cat": True}],
-        "models": ["mobilenet_ssd"], "tilings": ["off"]}).get_json()
+        "models": ["yolo11n"], "tilings": ["off"]}).get_json()
     html = c.get(body["summary_url"]).get_data(as_text=True)
     slug2 = body["images"][1]["slug"]
     assert f"<a href='{slug2}.html'" in html      # column header links to image #2
@@ -494,7 +483,7 @@ def test_test_detect_returns_inference_ms_and_respects_tiling():
     c = _client()
     up = _upload(c, _CAT).get_json()
     body = c.post("/api/test/detect", json={"id": up["id"], "settings": {
-        "model": "mobilenet_ssd", "detect_size": 512, "label_floor": 0.4,
+        "model": "yolo11n", "label_floor": 0.4,
         "tiling": "2x2", "tile_overlap": 0.2}}).get_json()
     assert isinstance(body["inference_ms"], (int, float)) and body["inference_ms"] >= 0
     assert any(d["label"] == "cat" for d in body["detections"])
@@ -513,7 +502,7 @@ def test_merge_nms_dedupes_overlapping_same_class():
 
 
 def test_locator_tiling_runs_once_per_tile():
-    det = PersonDetector(source="x", model="mobilenet_ssd",
+    det = PersonDetector(source="x", model="yolo11n",
                          cat_scan_tiling="2x2", cat_scan_tile_overlap=0.2)
     shapes = []
     det._run_net = lambda img, floor, size=None: (shapes.append(img.shape), [])[1]
@@ -525,7 +514,7 @@ def test_locator_tiling_finds_cat_via_detect_image():
     import cv2
 
     frame = cv2.imread(_CAT)
-    det = PersonDetector(source="x", model="mobilenet_ssd", label_floor=0.4,
+    det = PersonDetector(source="x", model="yolo11n", label_floor=0.4,
                          cat_scan_tiling="2x2")
     _, dets = det.detect_image(frame)
     assert any(d["label"] == "cat" for d in dets)
@@ -536,10 +525,10 @@ def test_cat_confidence_gates_independently_of_label_floor():
 
     frame = cv2.imread(_CAT)
     # A real cat scores ~0.96. Cat is gated by cat_confidence, not label_floor.
-    seen = PersonDetector(source="x", model="mobilenet_ssd", detect_size=512,
+    seen = PersonDetector(source="x", model="yolo11n",
                           cat_confidence=0.5, label_floor=0.9)
     assert any(d["label"] == "cat" for d in seen.detect_image(frame)[1])
-    hidden = PersonDetector(source="x", model="mobilenet_ssd", detect_size=512,
+    hidden = PersonDetector(source="x", model="yolo11n",
                             cat_confidence=0.97, label_floor=0.2)
     assert not any(d["label"] == "cat" for d in hidden.detect_image(frame)[1])
 
@@ -547,20 +536,15 @@ def test_cat_confidence_gates_independently_of_label_floor():
 def test_locator_classes_count_a_dog_as_the_cat():
     import numpy as np
 
-    det = PersonDetector(source="x", model="mobilenet_ssd",
+    det = PersonDetector(source="x", model="yolo11n",
                          cat_confidence=0.4, locator_classes=("cat", "dog"))
     det._run_net = lambda img, floor, size=None: [("dog", 0.8, (5, 5, 50, 50))]
     assert det._is_locator_hit("dog", 0.8) is True
     _, dets = det.detect_image(np.zeros((80, 80, 3), np.uint8))
     assert [d["label"] for d in dets] == ["dog"]
     # Default cat-only doesn't count a dog.
-    det2 = PersonDetector(source="x", model="mobilenet_ssd", cat_confidence=0.4)
+    det2 = PersonDetector(source="x", model="yolo11n", cat_confidence=0.4)
     assert det2._is_locator_hit("dog", 0.9) is False
-
-
-def test_mobilenet_ssd_size_suffix_parsed():
-    assert PersonDetector(source="x", model="mobilenet_ssd@512")._ssd_size() == 512
-    assert PersonDetector(source="x", model="mobilenet_ssd", detect_size=300)._ssd_size() == 300
 
 
 def test_test_detect_honours_cat_confidence_and_dog():
@@ -568,7 +552,7 @@ def test_test_detect_honours_cat_confidence_and_dog():
     up = _upload(c, _CAT).get_json()
     # A high cat_confidence drops the cat from the tester's detection list.
     body = c.post("/api/test/detect", json={"id": up["id"], "settings": {
-        "model": "mobilenet_ssd", "detect_size": 512,
+        "model": "yolo11n", 
         "cat_confidence": 0.99, "label_floor": 0.2}}).get_json()
     assert not any(d["label"] == "cat" for d in body["detections"])
 

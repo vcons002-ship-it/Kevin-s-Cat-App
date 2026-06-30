@@ -1,17 +1,16 @@
-"""Person detection: cheap motion pre-filter + COCO MobileNet-SSD via cv2.dnn.
+"""Person detection: cheap motion pre-filter + COCO YOLO (YOLO11 / YOLO26).
 
 The goal is to trigger **only when a person enters frame and to ignore the
 cats**. We do this in two stages to keep CPU low on a GPU-less NAS:
 
 1. A frame-difference *motion pre-filter* — skip the neural net entirely while
    the scene is static.
-2. When motion is seen, run MobileNet-SSD (COCO). COCO has ``person`` and
-   ``cat`` as separate classes, so we report a trigger only for a ``person``
-   box above the confidence threshold and ignore ``cat`` (and everything else).
+2. When motion is seen, run a YOLO model (COCO) via :mod:`d20app.yolo`. COCO has
+   ``person`` and ``cat`` as separate classes, so we report a trigger only for a
+   ``person`` box above the confidence threshold and ignore ``cat`` (and the rest).
 
-The detection-parsing core (:func:`person_in_detections`) is a pure function
-over a raw network output array, so it is unit-testable without a camera, a
-model, or OpenCV's inference.
+The box-decode core lives in :mod:`d20app.yolo` and is unit-testable without a
+camera. (MobileNet-SSD was removed in 0.25.0 — YOLO won every benchmark.)
 """
 
 from __future__ import annotations
@@ -40,21 +39,6 @@ os.environ.setdefault(
     "OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|timeout;5000000"
 )
 os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "8")   # 8 = AV_LOG_FATAL
-
-# The 21 classes of the standard MobileNet-SSD (VOC-style) model shipped in
-# d20app/models/. Index 15 is "person"; index 8 is "cat".
-CLASSES = [
-    "background", "aeroplane", "bicycle", "bird", "boat",
-    "bottle", "bus", "car", "cat", "chair",
-    "cow", "diningtable", "dog", "horse", "motorbike",
-    "person", "pottedplant", "sheep", "sofa", "train",
-    "tvmonitor",
-]
-PERSON_CLASS_ID = CLASSES.index("person")
-
-_MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-PROTOTXT = os.path.join(_MODELS_DIR, "deploy.prototxt")
-CAFFEMODEL = os.path.join(_MODELS_DIR, "mobilenet_ssd.caffemodel")
 
 # Confidence floor for *naming* a non-person mover (e.g. "cat") in the log.
 # Lower than the person threshold so distant/uncertain cats still get identified.
@@ -232,22 +216,6 @@ def mask_credentials(url: str) -> str:
     return f"{scheme}://{creds}@{host}"
 
 
-def person_in_detections(detections, confidence: float) -> bool:
-    """Return True if any ``person`` box clears ``confidence``.
-
-    ``detections`` is the raw MobileNet-SSD output shaped ``(1, 1, N, 7)`` where
-    each row is ``[image_id, class_id, score, x1, y1, x2, y2]``. This is pure
-    array logic — no OpenCV calls — so it can be tested with a plain nested list
-    or a numpy array.
-    """
-    for i in range(detections.shape[2]):
-        score = float(detections[0, 0, i, 2])
-        class_id = int(detections[0, 0, i, 1])
-        if class_id == PERSON_CLASS_ID and score >= confidence:
-            return True
-    return False
-
-
 class MotionPrefilter:
     """Detect motion by comparing consecutive grayscale frames.
 
@@ -308,14 +276,14 @@ class MotionPrefilter:
 class PersonDetector:
     """Open a camera stream and report when a person (not a cat) is present.
 
-    Combines :class:`MotionPrefilter` with the MobileNet-SSD network. Handles
-    stream reconnection with backoff so a flaky camera doesn't kill the loop.
+    Combines :class:`MotionPrefilter` with a YOLO network. Handles stream
+    reconnection with backoff so a flaky camera doesn't kill the loop.
     """
 
     def __init__(self, source: str, confidence: float = 0.5, roi=None,
                  detect_size: int = 300, label_floor: float = _LABEL_FLOOR,
                  motion_min_area_frac: float = 0.003, motion_diff_threshold: int = 25,
-                 motion_min_blob_px: int = 14, model: str = "mobilenet_ssd",
+                 motion_min_blob_px: int = 14, model: str = "yolo11n",
                  accelerator: str = "cpu", smooth_feed: bool = False,
                  gamma: float = 1.0, brightness: int = 0,
                  contrast: float = 1.0, saturation: float = 1.0,
@@ -345,11 +313,10 @@ class PersonDetector:
         self.brightness = int(brightness)
         self.contrast = float(contrast)
         self.saturation = float(saturation)
-        # Which detection model to run: "mobilenet_ssd" (fast, bundled default),
-        # "yolo11n" (better in low light / odd poses, ~1.4x CPU), or "yolo11m"
-        # (bigger/slower medium model). Falls back to MobileNet if the YOLO model
-        # can't be loaded.
-        self.model = model or "mobilenet_ssd"
+        # Which YOLO model to run: "yolo11n" (default — low light/odd poses, ~1.4x
+        # CPU), "yolo11m"/"yolo26m"/"yolo26x" (bigger/stronger), etc. A model that
+        # can't load raises a clear error (MobileNet-SSD was removed in 0.25.0).
+        self.model = model or "yolo11n"
         # Where the YOLO conv layers run: "cpu" (default), "opencl" (iGPU via
         # OpenCL), or "openvino-gpu"/"openvino-auto" (Intel OpenVINO runtime). If a
         # GPU backend can't start, we retry the same model on CPU before giving up.
@@ -357,15 +324,14 @@ class PersonDetector:
         self._yolo = None       # the YOLO inference runner, lazily loaded
         self._yolo_size = None  # the loaded variant's fixed input size
         self.roi = roi          # optional [x, y, w, h]
-        # Net input resolution. 300 is the model's native size and most reliable
-        # for people; 512 recovers small/distant subjects (e.g. a far cat) at
-        # more CPU but can slightly hurt some person poses.
+        # Legacy MobileNet-SSD net input size. Ignored since 0.25.0 — YOLO uses its
+        # exported fixed size; pick resolution via the model name (e.g. yolo11m_960).
+        # Kept as a no-op so old callers/configs don't break.
         self.detect_size = int(detect_size) if detect_size else 300
         # Min confidence to NAME a non-person mover (cat/pottedplant/…) in the log
         # and draw it on a snapshot. Higher = fewer stray labels; doesn't affect
         # whether a person triggers a treat (that's `confidence`).
         self.label_floor = float(label_floor)
-        self._net = None
         self._cap = None
         self._read_fails = 0
         self.frame_size = None  # (w, h) of the last good frame; None until one reads
@@ -404,42 +370,27 @@ class PersonDetector:
 
     # -- model / stream lifecycle -------------------------------------------
     def _ensure_net(self):
-        import cv2
-
-        if self.model.startswith("yolo"):
-            if self._yolo is None:
-                from . import yolo
-                try:
-                    self._yolo = yolo.load_net(self.model, self.accelerator)
-                    self._yolo_size = yolo.input_size(self.model)
-                except Exception as exc:        # noqa: BLE001 — degrade, don't crash
-                    # A failed *accelerator* (e.g. no Intel GPU/driver) shouldn't
-                    # cost us the model: retry the same YOLO on CPU first.
-                    if self.accelerator != "cpu":
-                        _log.warning("%s on %s unavailable (%s) — retrying on CPU",
-                                     self.model, self.accelerator, exc)
-                        self.accelerator = "cpu"
-                        try:
-                            self._yolo = yolo.load_net(self.model, "cpu")
-                            self._yolo_size = yolo.input_size(self.model)
-                        except Exception as exc2:   # noqa: BLE001
-                            _log.warning("%s unavailable (%s) — using MobileNet-SSD",
-                                         self.model, exc2)
-                            self.model = "mobilenet_ssd"
-                    else:
-                        _log.warning("%s unavailable (%s) — using MobileNet-SSD",
-                                     self.model, exc)
-                        self.model = "mobilenet_ssd"
-            if self.model.startswith("yolo"):
-                return self._yolo
-        if self._net is None:
-            if not (os.path.exists(PROTOTXT) and os.path.exists(CAFFEMODEL)):
-                raise FileNotFoundError(
-                    "MobileNet-SSD model files are missing from d20app/models/. "
-                    "See d20app/models/README.md for how to fetch them."
-                )
-            self._net = cv2.dnn.readNetFromCaffe(PROTOTXT, CAFFEMODEL)
-        return self._net
+        if self._yolo is not None:
+            return self._yolo
+        from . import yolo
+        try:
+            self._yolo = yolo.load_net(self.model, self.accelerator)
+        except Exception as exc:            # noqa: BLE001 — degrade the *accelerator*…
+            # A failed accelerator (e.g. no GPU/driver) shouldn't cost the model:
+            # retry the same YOLO on CPU. If even that fails, raise clearly — there's
+            # no MobileNet-SSD fallback anymore (removed in 0.25.0).
+            if self.accelerator != "cpu":
+                _log.warning("%s on %s unavailable (%s) — retrying on CPU",
+                             self.model, self.accelerator, exc)
+                self.accelerator = "cpu"
+                self._yolo = yolo.load_net(self.model, "cpu")
+            else:
+                raise RuntimeError(
+                    f"YOLO model {self.model!r} failed to load ({exc}). Check the "
+                    "ONNX file in d20app/models/ (see models/README.md to export it)."
+                ) from exc
+        self._yolo_size = yolo.input_size(self.model)
+        return self._yolo
 
     def _ensure_cap(self):
         import cv2
@@ -479,41 +430,16 @@ class PersonDetector:
 
     # -- inference -----------------------------------------------------------
     def _run_net(self, img, floor: float, size: int | None = None) -> list:
-        """One forward pass on an already-cropped/tiled BGR ``img``.
+        """One YOLO forward pass on an already-cropped/tiled BGR ``img``.
 
         Returns ``[(label, score, (x1, y1, x2, y2))]`` in ``img`` pixel coords.
-        Dispatches to YOLO or MobileNet by ``self.model`` (which ``_ensure_net`` may
-        flip to MobileNet if the YOLO model can't load). ``size`` overrides the
-        MobileNet input size (YOLO's is fixed by its model).
+        ``size`` overrides the YOLO input size (used by the larger-input locator net);
+        otherwise the model's native size is used.
         """
-        import cv2
+        from . import yolo
 
         net = self._ensure_net()
-        if self.model.startswith("yolo"):
-            from . import yolo
-            return yolo.detect_boxes(net, img, floor, size=self._yolo_size)
-
-        h, w = img.shape[:2]
-        s = int(size or self._ssd_size())
-        blob = cv2.dnn.blobFromImage(
-            cv2.resize(img, (s, s)),
-            scalefactor=0.007843,        # 1/127.5
-            size=(s, s),
-            mean=127.5,
-        )
-        net.setInput(blob)
-        det = net.forward()
-        boxes = []
-        for i in range(det.shape[2]):
-            score = float(det[0, 0, i, 2])
-            cid = int(det[0, 0, i, 1])
-            if score >= floor and 0 <= cid < len(CLASSES):
-                x1 = int(det[0, 0, i, 3] * w)
-                y1 = int(det[0, 0, i, 4] * h)
-                x2 = int(det[0, 0, i, 5] * w)
-                y2 = int(det[0, 0, i, 6] * h)
-                boxes.append((CLASSES[cid], score, (x1, y1, x2, y2)))
-        return boxes
+        return yolo.detect_boxes(net, img, floor, size=size or self._yolo_size)
 
     def _detect_boxes(self, frame, floor: float) -> list:
         """Single full-frame detection on the ROI crop — the fast treat path."""
@@ -528,9 +454,8 @@ class PersonDetector:
     def _locator_net(self):
         """A larger-input YOLO runner for the locator scan, or ``None`` to use the
         camera's normal net. Loaded once; missing/failed export → ``None`` (the scan
-        then leans on tiling at the native size). MobileNet sizing is handled in
-        :meth:`_run_net`, so this only applies to YOLO."""
-        if self.cat_scan_imgsz <= 0 or not self.model.startswith("yolo"):
+        then leans on tiling at the native size)."""
+        if self.cat_scan_imgsz <= 0:
             return None
         variant = f"{self.model}_{self.cat_scan_imgsz}"
         from . import yolo
@@ -561,12 +486,9 @@ class PersonDetector:
         loc_size = self._locator_size
 
         def single(img):
-            if runner is not None:
+            if runner is not None:        # larger-input YOLO export (Option A)
                 return yolo.detect_boxes(runner, img, floor, size=loc_size)
-            # Camera's own model. For MobileNet, bump the input size if requested.
-            size = self.cat_scan_imgsz if (
-                self.cat_scan_imgsz and not self.model.startswith("yolo")) else None
-            return self._run_net(img, floor, size=size)
+            return self._run_net(img, floor)   # camera's own model at native size
 
         grid = self._tiling_grid()
         if grid <= 1:
@@ -624,16 +546,6 @@ class PersonDetector:
     def _is_locator_hit(self, label: str, score: float) -> bool:
         """True if ``label`` counts as 'the cat' for the locator at its threshold."""
         return label in self.locator_classes and score >= self.cat_confidence
-
-    def _ssd_size(self) -> int:
-        """MobileNet blob size: from a ``mobilenet_ssd@N`` model name, else
-        ``detect_size`` (so old configs and the bare name still work)."""
-        if "@" in (self.model or ""):
-            try:
-                return int(self.model.split("@", 1)[1])
-            except ValueError:
-                pass
-        return self.detect_size
 
     # Colours (BGR) for drawing boxes: person = green, cat/locator = orange, other = grey.
     _BOX_COLORS = {"person": (80, 220, 80), "cat": (40, 170, 240)}

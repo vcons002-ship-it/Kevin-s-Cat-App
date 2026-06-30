@@ -95,8 +95,8 @@ def main() -> int:
     _report_opencl()
     has_gpu = _report_openvino()
 
-    # The accelerator only affects the YOLO models; if MobileNet is selected we
-    # still demo with yolo11n so the device test is meaningful.
+    # All detection models are YOLO now; fall back to yolo11n only if the config
+    # somehow carries a non-YOLO name (e.g. an old MobileNet value, removed in 0.25.0).
     model = cfg.detector_model if cfg.detector_model.startswith("yolo") else "yolo11n"
     if model != cfg.detector_model:
         print(f"\n(Your detector_model is {cfg.detector_model}; the accelerator only "

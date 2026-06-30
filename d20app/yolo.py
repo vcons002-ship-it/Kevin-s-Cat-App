@@ -1,13 +1,13 @@
 """YOLO11 object detection via OpenCV's ``cv2.dnn`` (ONNX) — no PyTorch at runtime.
 
-A drop-in alternative backend for :class:`d20app.detector.PersonDetector`: it
-produces the same ``[(label, score, (x1, y1, x2, y2))]`` boxes the MobileNet-SSD
-path does, so the rest of the pipeline (person trigger, ``cat`` labelling,
-annotated snapshots) is unchanged.
+The detection backend for :class:`d20app.detector.PersonDetector`: it produces
+``[(label, score, (x1, y1, x2, y2))]`` boxes that the rest of the pipeline
+(person trigger, ``cat`` labelling, annotated snapshots) consumes.
 
-Why offer it: the bundled MobileNet-SSD is fast but weak in low light / odd poses
-(it scored 0.00 on a real dim night frame). YOLO11n scored ~0.87 on the same
-frame at ~1.4x the CPU — a much better night/occlusion detector for a modest cost.
+Why YOLO: the previously-bundled MobileNet-SSD was fast but weak in low light /
+odd poses (it scored 0.00 on a real dim night frame). YOLO11n scored ~0.87 on the
+same frame — a much better night/occlusion detector — so SSD was dropped entirely
+in 0.25.0 (#57) and YOLO is now the only backend.
 
 Two variants are available (see :data:`MODELS`):
 
@@ -152,7 +152,8 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"YOLO model {os.path.relpath(path)} is missing. "
-            "See d20app/models/README.md to export it, or use the MobileNet-SSD model."
+            "See d20app/models/README.md to export it, or pick a bundled model "
+            "(yolo11n / yolo11m / yolo26m) in the GUI."
         )
 
     if accel in ("openvino-gpu", "openvino-auto"):
