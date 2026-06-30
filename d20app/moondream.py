@@ -13,12 +13,25 @@ box without one this raises a clear error rather than the raw Photon failure. We
 downloaded once from Hugging Face (authenticated by an API key) and cached locally;
 **per-query inference is local** — images don't leave the machine.
 
-`moondream` is an **optional dependency**; the model is selected **by name**
+`moondream` is an **optional dependency**; the local model is selected **by name**
 (`moondream2` or `moondream3-preview`), not a file path — Photon manages its own weight
-cache (set `HF_HOME` to redirect it). The API key comes from `MOONDREAM_API_KEY`.
+cache (set `HF_HOME` to redirect it). The API key comes from the GUI (stored in config)
+or `MOONDREAM_API_KEY`, and authenticates both the one-time local weight download and
+cloud inference.
+
+Two **modes** (#59), same ``md.vl()`` interface:
+  * **local** (default) — ``moondream2`` on the box's GPU. Private (frames never leave),
+    ~0.3 s/query, fits an 8 GB card. The deployable path.
+  * **cloud** — ``md.vl(api_key=…)`` with no ``local=True`` hits moondream's hosted API
+    (currently Moondream 3, the most accurate on hard/decoy frames). **Sends images
+    off-device** and costs per call — an informed, opt-in choice, useful for validation.
+
+Loading params are the **validated** ones for an 8 GB RTX 3070 (#59): the default
+auto-sized KV cache OOMs, so we pin ``max_batch_size`` and ``kv_cache_pages`` to a window
+that both loads (~4.6 GB) and serves.
 
 The response **parser** (:func:`parse_vlm_response`) is pure and unit-tested; the model
-call needs a GPU + key, so it's exercised where the model lives, not in CI.
+call needs a GPU/key (local) or network (cloud), so it's exercised where the model lives.
 """
 
 from __future__ import annotations
@@ -34,11 +47,33 @@ import time
 DEFAULT_PROMPT = "Is there a cat in this image? Answer yes or no, then briefly explain."
 
 # Local model names Photon can load (not file paths). moondream2 (2B) fits an 8 GB card
-# comfortably; moondream3-preview (9B MoE) needs more VRAM.
+# comfortably; moondream3-preview (9B) does NOT fit 8 GB locally (Photon has no weight
+# quantisation) — so M3 is offered as a **cloud** choice, not local, on small cards (#59).
 MODELS = ("moondream2", "moondream3-preview")
 DEFAULT_MODEL = "moondream2"
 
-_MODELS: dict = {}                 # model name -> loaded moondream model (load is slow; cache)
+MODES = ("local", "cloud")
+DEFAULT_MODE = "local"
+
+# Validated local-load params for an 8 GB RTX 3070 (#59). The default auto-sized KV cache
+# (kv_cache_pages=None) OOMs even at batch 2 (CUBLAS_STATUS_ALLOC_FAILED); 256 pages loads
+# but can't serve ("insufficient KV cache capacity"); 2048 loads (~4.6 GB) AND serves at
+# batch 4. Bounded-but-adequate defaults; tune for a bigger card if you want more batch.
+MAX_BATCH_SIZE = 4
+KV_CACHE_PAGES = 2048
+
+# The coherent (mode, model) choices the GUI offers — the single source so the picker
+# can't drift from what the backend accepts (#59). Each says whether it leaves the box.
+VLM_CHOICES = [
+    {"value": "local:moondream2", "mode": "local", "model": "moondream2",
+     "label": "Moondream 2 — local (private, ~0.3s, fits 8 GB)", "off_device": False},
+    {"value": "cloud:moondream3-preview", "mode": "cloud", "model": "moondream3-preview",
+     "label": "Moondream 3 — cloud API (most accurate, but SENDS IMAGES OFF-DEVICE)",
+     "off_device": True},
+]
+DEFAULT_CHOICE = "local:moondream2"
+
+_MODELS: dict = {}                 # (mode, name) -> loaded moondream model (load is slow; cache)
 _LOAD_LOCK = threading.Lock()
 
 
@@ -76,49 +111,80 @@ def _require_gpu() -> str:
         "is no CPU path. Run the VLM tester on a machine with a supported GPU.")
 
 
-def _load_model(model_name: str, api_key: str | None):
-    """Load (and cache) a local moondream model by **name** via Photon.
+_NO_KEY_MSG = (
+    "No Moondream API key set — paste your key in the VLM tester (it authenticates the "
+    "one-time local weight download and cloud inference), or set MOONDREAM_API_KEY.")
+_NO_PKG_MSG = (
+    "The VLM tester needs the 'moondream' package — re-run setup (say yes to the VLM "
+    "tester) or: pip install moondream")
 
-    Uses the documented local invocation ``md.vl(api_key=…, local=True, model=…)`` —
-    *not* ``md.vl(model=path)``, which has no ``model`` param and silently routes to the
-    cloud (401) instead of running locally (#52)."""
+
+def _friendly_model_error(exc: Exception, model: str) -> RuntimeError:
+    """Map Photon's raw GPU failures to an actionable message (#59) — OOM / KV-cache
+    stall / cuBLAS alloc — instead of surfacing a bare traceback."""
+    s = str(exc)
+    low = s.lower()
+    if "insufficient kv cache" in low or "scheduler stalled" in low:
+        return RuntimeError(
+            f"moondream {model}: KV cache too small to serve this prompt — raise "
+            f"kv_cache_pages (currently {KV_CACHE_PAGES}).")
+    if ("out of memory" in low or "cublas_status_alloc_failed" in low
+            or "alloc_failed" in low or "cuda error" in low):
+        return RuntimeError(
+            f"moondream {model} ran out of GPU memory — lower max_batch_size (currently "
+            f"{MAX_BATCH_SIZE}), or this model doesn't fit this GPU's VRAM "
+            "(moondream3-preview needs 12 GB+ locally; use the cloud mode on a smaller card).")
+    return RuntimeError(f"moondream {model} failed: {s}")
+
+
+def _load_model(model_name: str, api_key: str | None, mode: str = DEFAULT_MODE):
+    """Load (and cache) a moondream model via Photon, for the given ``mode``.
+
+    * ``local`` — ``md.vl(api_key=…, local=True, model=name, max_batch_size, kv_cache_pages)``
+      with the validated params. *Not* ``md.vl(model=path)``, which has no ``model`` param
+      and silently routes to the cloud (401) instead of running locally (#52).
+    * ``cloud`` — ``md.vl(api_key=…)`` (no ``local=True``) hits the hosted API; needs no
+      GPU, but sends images off-device (#59)."""
     try:
         import moondream as md
     except Exception as exc:        # noqa: BLE001 — optional dependency
-        raise RuntimeError(
-            "The local VLM tester needs the 'moondream' package — re-run setup "
-            "(say yes to the VLM tester) or: pip install moondream"
-        ) from exc
+        raise RuntimeError(_NO_PKG_MSG) from exc
 
     key = api_key or os.environ.get("MOONDREAM_API_KEY")
     if not key:
-        raise RuntimeError(
-            "moondream local needs an API key (it authenticates the one-time weight "
-            "download from Hugging Face; inference is then local). Set MOONDREAM_API_KEY.")
-    _require_gpu()
+        raise RuntimeError(_NO_KEY_MSG)
 
+    mode = mode if mode in MODES else DEFAULT_MODE
     name = model_name or DEFAULT_MODEL
     with _LOAD_LOCK:
-        m = _MODELS.get(name)
+        cache_key = (mode, name)
+        m = _MODELS.get(cache_key)
         if m is None:
-            m = md.vl(api_key=key, local=True, model=name)
-            _MODELS[name] = m
+            try:
+                if mode == "cloud":
+                    m = md.vl(api_key=key)          # hosted API (Moondream 3); no GPU
+                else:
+                    _require_gpu()
+                    m = md.vl(api_key=key, local=True, model=name,
+                              max_batch_size=MAX_BATCH_SIZE, kv_cache_pages=KV_CACHE_PAGES)
+            except RuntimeError:
+                raise                               # already actionable (_require_gpu / key)
+            except Exception as exc:                # noqa: BLE001 — map OOM/KV/cuBLAS
+                raise _friendly_model_error(exc, name) from exc
+            _MODELS[cache_key] = m
         return m
 
 
-def preflight(api_key: str | None = None) -> None:
+def preflight(api_key: str | None = None, mode: str = DEFAULT_MODE) -> None:
     """Raise the same actionable error :func:`query_image` would, *before* running a
     whole batch — so a batch fails fast with one clear message (missing package / key /
-    GPU) instead of erroring once per image (#54)."""
+    GPU) instead of erroring once per image (#54). Cloud mode needs no GPU (#59)."""
     if not is_available():
-        raise RuntimeError(
-            "The local VLM tester needs the 'moondream' package — re-run setup "
-            "(say yes to the VLM tester) or: pip install moondream")
+        raise RuntimeError(_NO_PKG_MSG)
     if not (api_key or os.environ.get("MOONDREAM_API_KEY")):
-        raise RuntimeError(
-            "moondream local needs an API key (it authenticates the one-time weight "
-            "download from Hugging Face; inference is then local). Set MOONDREAM_API_KEY.")
-    _require_gpu()
+        raise RuntimeError(_NO_KEY_MSG)
+    if (mode if mode in MODES else DEFAULT_MODE) == "local":
+        _require_gpu()
 
 
 def _to_pil(frame_bgr):
@@ -130,19 +196,20 @@ def _to_pil(frame_bgr):
 
 
 def query_image(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MODEL,
-                api_key: str | None = None) -> dict:
+                api_key: str | None = None, mode: str = DEFAULT_MODE) -> dict:
     """Run one moondream **query** pass on ``frame_bgr`` and return a result dict:
 
     ``raw`` (full response text — always shown), the parsed ``answer``/``reason``/
     ``parsed`` from :func:`parse_vlm_response`, ``load_ms`` (one-time model load, 0 if
-    cached) split from ``query_ms`` (per-frame), and the ``prompt``/``model``/``device``
-    used. Raises ``RuntimeError`` with an actionable message when moondream, a GPU, or
-    the key is unavailable."""
+    cached) split from ``query_ms`` (per-frame), and the ``prompt``/``model``/``mode``/
+    ``device`` used. Raises ``RuntimeError`` with an actionable message when moondream, a
+    GPU (local mode), the key, or VRAM is unavailable."""
+    mode = mode if mode in MODES else DEFAULT_MODE
     name = model or DEFAULT_MODEL
-    cached = name in _MODELS
+    cached = (mode, name) in _MODELS
 
     t0 = time.perf_counter()
-    m = _load_model(name, api_key)
+    m = _load_model(name, api_key, mode)
     load_ms = 0.0 if cached else round((time.perf_counter() - t0) * 1000.0, 1)
 
     img = _to_pil(frame_bgr)
@@ -151,14 +218,14 @@ def query_image(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MO
         encoded = m.encode_image(img)
         result = m.query(encoded, prompt or DEFAULT_PROMPT)
     except Exception as exc:        # noqa: BLE001 — surface model/runtime errors clearly
-        raise RuntimeError(f"moondream query failed: {exc}") from exc
+        raise _friendly_model_error(exc, name) from exc
     query_ms = round((time.perf_counter() - t1) * 1000.0, 1)
 
     raw = result.get("answer", "") if isinstance(result, dict) else str(result)
     parsed = parse_vlm_response(raw)
-    device = _require_gpu()
+    device = "cloud" if mode == "cloud" else _require_gpu()
     return {
         "raw": raw, "load_ms": load_ms, "query_ms": query_ms,
-        "prompt": prompt or DEFAULT_PROMPT, "model": name, "device": device,
+        "prompt": prompt or DEFAULT_PROMPT, "model": name, "mode": mode, "device": device,
         **parsed,
     }

@@ -108,11 +108,13 @@ if confirm "Install XLSX export for the benchmark tool (optional)?"; then
     || echo "    (openpyxl install failed — benchmark XLSX export will be unavailable; HTML still works)"
 fi
 
-# Optional: the local VLM "Cat-presence" tester (moondream). The package is small but
-# the model is multi-GB and downloaded separately — set MOONDREAM_MODEL to its path.
-if confirm "Install the moondream VLM cat-presence tester (optional, large model)?"; then
+# Optional: the local VLM "Cat-presence" tester (moondream). The package is small; the
+# weights download on first use (authenticated by the API key you paste in the GUI).
+# Local inference needs an Ampere+ NVIDIA GPU or Apple Silicon; cloud mode needs neither.
+if confirm "Install the moondream VLM cat-presence tester (optional)?"; then
   ./venv/bin/python -m pip install moondream \
     || echo "    (moondream install failed — the Cat-presence (VLM) tester will be unavailable)"
+  echo "    Paste your Moondream API key in the GUI's Cat-presence card (or set MOONDREAM_API_KEY)."
 fi
 
 echo "==> Generating the default treat chime"

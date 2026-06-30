@@ -105,6 +105,9 @@ class Config:
     dont_interrupt_playback: bool = False   # skip a treat if media is playing
     keep_speakers_warm: bool = False        # loop a silent clip so the Cast receiver stays loaded and there's no "connecting" chime (holds the speaker active)
 
+    # --- VLM (moondream) cat-presence tester ---
+    moondream_api_key: str = ""      # paste once in the GUI; authenticates the one-time local weight download AND cloud inference. Never logged; masked in the API. Env MOONDREAM_API_KEY also works (headless).
+
     # --- Server ---
     web_port: int = 8080
     file_server_port: int = 8081     # serves the sound to the speaker
