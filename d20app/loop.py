@@ -332,7 +332,6 @@ class DetectionLoop:
                 source=spec["source"],
                 confidence=spec["person_confidence"],
                 roi=spec["roi"],
-                detect_size=spec["detect_size"],
                 label_floor=spec["label_floor"],
                 motion_min_area_frac=spec["motion_min_area_frac"],
                 motion_diff_threshold=spec["motion_diff_threshold"],

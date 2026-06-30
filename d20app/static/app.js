@@ -26,16 +26,13 @@ const MOTION_PRESETS = {
 
 // Per-camera dropdown options.
 // The model dropdown is the single resolution selector: YOLO sizes are baked into
-// the export (320/640/960); MobileNet carries its blob size as a "@N" suffix.
+// the export (320/640/960/1280).
 // Fallback only — the real list comes from /api/models (the registry-backed source
 // shared with the benchmark, so the live picker can never drift again). #50
 let MODEL_OPTS = [
   ["yolo11n", "YOLO11n (320) — low light, rec."],
   ["yolo11m", "YOLO11m (640) — heavier"],
   ["yolo11m_960", "YOLO11m (960) — max"],
-  ["mobilenet_ssd", "MobileNet (300) — lightest"],
-  ["mobilenet_ssd@512", "MobileNet (512)"],
-  ["mobilenet_ssd@768", "MobileNet (768)"],
 ];
 
 // Load the canonical model list and build every model dropdown from it (the Test card's
@@ -136,7 +133,7 @@ function cameraCardHTML(cam) {
         <label class="checkbox" title="count a 'dog' as the cat — for a no-dog household where the model mislabels the cat"><input type="checkbox" data-dog ${(cam.locator_classes || []).includes("dog") ? "checked" : ""}/> Count dogs as the cat</label>
         <label>Motion sensitivity <select data-f="motion_sensitivity">${optsHTML(SENS_OPTS, cam.motion_sensitivity)}</select></label>
         <label title="still-cat scan: tile the frame so a small/distant cat fills more of the net">Cat tiling <select data-f="cat_scan_tiling">${optsHTML(TILING_OPTS, cam.cat_scan_tiling)}</select></label>
-        <label title="still-cat scan input size (YOLO needs a matching exported model; MobileNet resizes freely)">Cat input size <select data-f="cat_scan_imgsz">${optsHTML(IMGSZ_OPTS, cam.cat_scan_imgsz)}</select></label>
+        <label title="still-cat scan input size (YOLO needs a matching exported model, e.g. yolo11m_960)">Cat input size <select data-f="cat_scan_imgsz">${optsHTML(IMGSZ_OPTS, cam.cat_scan_imgsz)}</select></label>
       </div>
       <div class="row">
         <button type="button" class="ghost" data-roi>📷 Set region…</button>
@@ -399,7 +396,7 @@ async function loadConfig() {
   camDefaults = {
     model: cfg.detector_model, accelerator: cfg.accelerator,
     person_confidence: cfg.person_confidence, confirm_frames: cfg.confirm_frames,
-    detect_size: cfg.detect_size, scan_fps: cfg.scan_fps, label_floor: cfg.label_floor,
+    scan_fps: cfg.scan_fps, label_floor: cfg.label_floor,
     motion_sensitivity: cfg.motion_sensitivity,
     gamma: cfg.gamma, brightness: cfg.brightness,
     contrast: cfg.contrast, saturation: cfg.saturation,
@@ -803,8 +800,8 @@ async function runBenchmark() {
   renderBenchTable(body.runs, body.meta);
 }
 
-// Drop the @size suffix from a model name for display — the size column carries it
-// (so SSD variants don't read "mobilenet_ssd@512" next to size 512). #31
+// Model name for display. (Models are all YOLO variants whose size is their export,
+// so the name stands on its own; the legacy "@size" split is a harmless no-op now.)
 function displayModel(model) { return String(model).split("@")[0]; }
 
 // Enlarge a thumbnail in-page. Navigating a new tab to a data: URL is blocked by

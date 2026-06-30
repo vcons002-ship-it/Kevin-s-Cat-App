@@ -60,7 +60,7 @@ class DyingCap:
 
 
 def _detector_with_fake_cap(monkeypatch, **kw):
-    det = PersonDetector(source="usb:0", confidence=0.4, model="mobilenet_ssd", **kw)
+    det = PersonDetector(source="usb:0", confidence=0.4, model="yolo11n", **kw)
     cap = FakeCap()
     # _ensure_cap returns our fake instead of opening a real device.
     monkeypatch.setattr(det, "_ensure_cap", lambda: cap)
@@ -115,7 +115,7 @@ def test_toggle_on_then_off_is_reconciled_on_the_loop_thread(monkeypatch):
 
 def test_smooth_mode_surfaces_a_grab_error_to_the_loop(monkeypatch):
     det = PersonDetector(source="usb:0", confidence=0.4,
-                         model="mobilenet_ssd", smooth_feed=True)
+                         model="yolo11n", smooth_feed=True)
     monkeypatch.setattr(det, "_ensure_cap",
                         lambda: (_ for _ in ()).throw(CameraError("camera gone")))
     try:
@@ -139,7 +139,7 @@ def test_smooth_mode_surfaces_a_camera_that_dies_after_a_good_frame(monkeypatch)
     # Regression: the grab thread holds the last good frame, so the loop must still
     # learn the camera died (otherwise detection silently freezes on a stale frame).
     det = PersonDetector(source="usb:0", confidence=0.4,
-                         model="mobilenet_ssd", smooth_feed=True)
+                         model="yolo11n", smooth_feed=True)
     cap = DyingCap(good=2)
     monkeypatch.setattr(det, "_ensure_cap", lambda: cap)
     monkeypatch.setattr(det, "_GRAB_STALE_SECONDS", 0.3)   # don't wait the full 2s

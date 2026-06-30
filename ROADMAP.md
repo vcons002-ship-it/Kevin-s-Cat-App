@@ -8,11 +8,14 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 ## ✅ Implemented
 
 ### Detection
-- **Person detection** on CPU via MobileNet-SSD (OpenCV `cv2.dnn`) — no GPU, no
-  cloud, no extra services. **~99% recall** on 170 real pedestrian images.
+- **Person detection** on CPU via **YOLO11** (OpenCV `cv2.dnn`, ONNX) — no GPU, no
+  cloud, no extra services. Detects every clear person in the bundled fixtures.
+  (MobileNet-SSD was the original backend; removed in 0.25.0 — it lost every
+  benchmark to YOLO. No silent fallback: a model that can't load raises a clear error.)
 - **Cats ignored** — `person` and `cat` are separate classes; only people roll.
-- **Configurable detail** — net input size (300 / 512 / 768); **300 default**
-  for reliable person detection; 512 recovers distant cats.
+- **Model = resolution** — a YOLO ONNX is a fixed-shape export, so the model name
+  carries its input size (`yolo11n` 320 → `yolo11m` 640 → `yolo11m_960` 960); pick a
+  bigger model for distant subjects at more CPU.
 - **Motion pre-filter** — median blur + morphological opening + a solid-blob
   check, so sensor noise, compression grain, a ticking timestamp overlay, and
   **thin decode-artifact lines** don't register as motion.
@@ -62,10 +65,11 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **213 automated tests**, including a detection-accuracy regression guard over
+- **205 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
-  CPU fallback), the live MJPEG feed (frame publish + box-TTL + stream route) and
+  CPU fallback, and a clear error — no silent fallback — when a model can't load),
+  the live MJPEG feed (frame publish + box-TTL + stream route) and
   the smooth-feed capture thread (toggle reconcile, version gating, error
   surfacing, watchdog respawn, camera-death detection), multi-camera (per-camera
   specs/roles, role-gated rolling/tracking, one shared cooldown across cameras,
@@ -111,9 +115,9 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [x] **"Animal present" locator classes** — a no-dog household can count a **dog** as
       the cat (`locator_classes: ["cat","dog"]`), since the model often mislabels a cat
       as a dog and resolution raises "dog", not "cat" (0.17.0, #22).
-- [x] **Resolution in the model dropdown** — removed the YOLO-no-op "Net input size"
-      control; MobileNet sizes are named variants (`mobilenet_ssd@512`), YOLO size is
-      its export (0.17.0, #20).
+- [x] **Resolution in the model dropdown** — removed the "Net input size" control; the
+      model name carries the resolution (YOLO size is its export) (0.17.0, #20). With
+      MobileNet-SSD's removal (0.25.0, #57) every model is a YOLO variant.
 - [x] **"Benchmark this image"** — one-click sweep of models × tiling on an uploaded
       frame, emitting a shareable **self-contained HTML** report (+ optional XLSX) with
       best cat / dog / combined score, found?, and inference time per run (0.18.0, #21).

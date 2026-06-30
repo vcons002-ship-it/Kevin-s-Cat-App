@@ -52,11 +52,11 @@ class Config:
     cooldown_seconds: int = 600      # frequency interval between rolls
 
     # --- Detection tuning ---
-    detector_model: str = "yolo11n"  # "yolo11n" (better low-light/odd-pose, ~1.4x CPU; default), "yolo11m" (medium, bigger/slower, ~5-18x CPU), or "mobilenet_ssd" (lightest, bundled); falls back to mobilenet_ssd if YOLO can't load
+    detector_model: str = "yolo11n"  # "yolo11n" (better low-light/odd-pose, default) or a heavier YOLO variant (yolo11m / yolo11m_960 / yolo26m / ...). MobileNet-SSD was removed in 0.25.0 (YOLO won every benchmark); a model that can't load now raises a clear error rather than silently falling back.
     accelerator: str = "cpu"         # where the YOLO model runs: "cpu" (default), "opencl" (iGPU via OpenCL, no extra deps), or "openvino-gpu"/"openvino-auto" (Intel OpenVINO, needs the optional 'openvino' pkg + Intel GPU drivers); auto-falls back to CPU if a GPU backend can't start
     person_confidence: float = 0.5   # min DNN confidence to count as a person (0.5: clean person/cat split on stills, keeps hard poses ≥0.71)
     confirm_frames: int = 4          # require a person in this many frames in a row (4 guards against a moving cat's transient high-confidence spike)
-    detect_size: int = 300           # net input size; 300 = reliable for people (512 = distant cats, heavier)
+    detect_size: int = 300           # legacy MobileNet-SSD net input size — ignored since 0.25.0 (YOLO uses its exported size). Kept so old configs still load; pick model resolution via the model name (e.g. yolo11m_960).
     scan_fps: float = 10.0           # frames/sec to read from the camera (lower = less CPU)
     smooth_live_feed: bool = False   # dedicated capture thread so the live feed runs at camera rate (decoupled from inference); costs a little extra CPU/bandwidth
     roi: list | None = None          # optional [x, y, w, h] crop of the frame (set in the GUI)
@@ -86,7 +86,7 @@ class Config:
     # and/or a larger input give the locator scan more effective resolution. ---
     cat_scan_tiling: str = "4x4"     # "off" | "2x2" | "3x3" | "4x4" — split the frame into an overlapping grid, detect per tile, merge (more tiles = catches smaller cats, more CPU). Default 4x4 (what actually resolves a small/sleeping cat in testing).
     cat_scan_tile_overlap: float = 0.2   # fraction each tile overlaps its neighbour so a cat on a seam still lands whole in one tile
-    cat_scan_imgsz: int = 0          # locator input size: 0 = native model size. MobileNet resizes freely; YOLO needs a matching exported model (e.g. yolo11m_960.onnx) or this falls back to native + tiling
+    cat_scan_imgsz: int = 0          # locator input size: 0 = native model size. YOLO needs a matching exported model (e.g. yolo11m_960.onnx) or this falls back to native + tiling
 
     # --- CPU saving ---
     pause_during_cooldown: bool = True   # skip the neural net while in the between-rolls cooldown (nothing it sees can trigger anyway); resumes just before the window reopens
@@ -133,7 +133,7 @@ _CAMERA_BASE = {
 _CAMERA_FROM_CFG = {
     "model": "detector_model", "accelerator": "accelerator",
     "person_confidence": "person_confidence", "confirm_frames": "confirm_frames",
-    "detect_size": "detect_size", "scan_fps": "scan_fps", "label_floor": "label_floor",
+    "scan_fps": "scan_fps", "label_floor": "label_floor",
     "smooth_feed": "smooth_live_feed", "roi": "roi",
     "gamma": "gamma", "brightness": "brightness",
     "contrast": "contrast", "saturation": "saturation",

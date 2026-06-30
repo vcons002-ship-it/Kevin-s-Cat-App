@@ -23,8 +23,6 @@ import cv2  # noqa: E402
 
 from d20app import config as config_mod
 from d20app.detector import (
-    CLASSES,
-    PERSON_CLASS_ID,
     PersonDetector,
     _quiet_cv2_logs,
     mask_credentials,
@@ -71,22 +69,18 @@ def main() -> int:
     print("   Wrote snapshot.jpg — open it to check framing and lighting.")
 
     # Run the actual detector on the last frame and report the best person score.
-    det = PersonDetector(source=source, confidence=cfg.person_confidence)
-    blob = cv2.dnn.blobFromImage(
-        cv2.resize(last, (300, 300)), 0.007843, (300, 300), 127.5
-    )
-    net = det._ensure_net()
-    net.setInput(blob)
-    detections = net.forward()
+    # Goes through the same YOLO box path the app uses (model from config); a model
+    # that can't load raises a clear error here, exactly as it would in the app.
+    det = PersonDetector(source=source, confidence=cfg.person_confidence,
+                         model=cfg.detector_model, accelerator=cfg.accelerator)
+    try:
+        boxes = det._detect_boxes(last, floor=0.30)   # [(label, score, box)]
+    except Exception as exc:                            # pragma: no cover - diagnostic
+        print(f"❌ Detection model failed to load: {exc}")
+        return 4
 
-    best_person, seen = 0.0, []
-    for k in range(detections.shape[2]):
-        score = float(detections[0, 0, k, 2])
-        cid = int(detections[0, 0, k, 1])
-        if cid == PERSON_CLASS_ID:
-            best_person = max(best_person, score)
-        if score >= 0.30 and 0 <= cid < len(CLASSES):
-            seen.append(f"{CLASSES[cid]} {score:.2f}")
+    best_person = max((s for lab, s, _ in boxes if lab == "person"), default=0.0)
+    seen = [f"{lab} {s:.2f}" for lab, s, _ in boxes]
 
     print(
         f"\nPerson detector: best person score = {best_person:.2f} "

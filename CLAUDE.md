@@ -8,16 +8,17 @@ Flask single-page GUI configures and runs it. CPU-only, no Docker, no cloud, no 
 
 ## Run / test
 - Python 3.11+. Virtualenv at `./venv`.
-- Tests: `./venv/bin/python -m pytest -q` (currently ~213 tests; keep them green).
+- Tests: `./venv/bin/python -m pytest -q` (currently ~205 tests; keep them green).
 - Launch: `./venv/bin/python run.py` → prints a `http://<lan-ip>:8080` GUI URL.
 - Setup: `setup.sh` (Linux/apt) or `setup.ps1` / `setup.bat` (Windows), `start.bat`
   to launch on Windows.
 
 ## Layout
-- `d20app/detector.py` — motion pre-filter + person detection. Two backends via
-  `cv2.dnn` (CPU): MobileNet-SSD (`models/mobilenet_ssd.caffemodel`) and YOLO
-  (`d20app/yolo.py`, `models/*.onnx`). `_open_capture` opens an RTSP/HTTP URL
-  (FFmpeg) **or** a local `usb:N` webcam (device index, platform backend).
+- `d20app/detector.py` — motion pre-filter + person detection. Backend: **YOLO**
+  via `cv2.dnn` (CPU) — `d20app/yolo.py`, `models/*.onnx`. (MobileNet-SSD was
+  removed in 0.25.0; no silent fallback — a model that can't load raises a clear
+  error.) `_open_capture` opens an RTSP/HTTP URL (FFmpeg) **or** a local `usb:N`
+  webcam (device index, platform backend).
 - `d20app/caster.py` — Google Cast playback (held connections, optional silent
   keep-alive to avoid the "connecting" chime) **and** local PC audio via the
   `LOCAL_SPEAKER = "__local__"` sentinel (optional `playsound3`).

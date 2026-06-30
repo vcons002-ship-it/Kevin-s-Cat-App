@@ -143,7 +143,7 @@ def test_detection_batch_vlm_toggle_off_by_default():
     up = _upload(c)
     body = c.post("/api/test/benchmark/batch", json={
         "items": [{"id": up["id"], "name": "c.jpg", "has_cat": True}],
-        "models": ["mobilenet_ssd"], "tilings": ["off"]}).get_json()
+        "models": ["yolo11n"], "tilings": ["off"]}).get_json()
     assert body["vlm"] is None              # no VLM cost unless asked
 
 
@@ -153,7 +153,7 @@ def test_detection_batch_vlm_toggle_flags_disagreements(monkeypatch):
     blank = _blank_upload(c)                      # YOLO finds no cat here
     body = c.post("/api/test/benchmark/batch", json={
         "items": [{"id": blank["id"], "name": "empty.jpg", "has_cat": False}],
-        "models": ["mobilenet_ssd"], "tilings": ["off"], "run_vlm": True}).get_json()
+        "models": ["yolo11n"], "tilings": ["off"], "run_vlm": True}).get_json()
     assert body["vlm"] and body["vlm"]["summary"]["fp"] == 1   # VLM false-fired on no-cat
     dis = body["vlm"]["disagreements"]
     assert any(d["vlm"] == "yes" and d["yolo"] == "miss" for d in dis)
@@ -168,6 +168,6 @@ def test_detection_batch_vlm_unavailable_still_runs_sweep(monkeypatch):
     up = _upload(c)
     body = c.post("/api/test/benchmark/batch", json={
         "items": [{"id": up["id"], "name": "c.jpg", "has_cat": True}],
-        "models": ["mobilenet_ssd"], "tilings": ["off"], "run_vlm": True}).get_json()
+        "models": ["yolo11n"], "tilings": ["off"], "run_vlm": True}).get_json()
     assert body["configs"]                     # the YOLO sweep still ran
     assert body["vlm"] and "no GPU here" in body["vlm"]["error"]

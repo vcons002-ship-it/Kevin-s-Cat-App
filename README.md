@@ -101,7 +101,7 @@ the **same WiFi**, then:
 ```
  Kitchen IP camera ──▶ OpenCV reads the stream
                           │
-                          ▼  motion? then run person-detection (MobileNet-SSD)
+                          ▼  motion? then run person-detection (YOLO11)
                   person detected (cats ignored)
                           │
                           ▼  roll a d{sides}; treat if roll ≥ DC; rate-limited
@@ -116,24 +116,29 @@ there's a **Clear** button to wipe it.
 
 ### Person vs. cat
 
-Detection uses a small **MobileNet-SSD** neural network (bundled in
-`d20app/models/`, runs on CPU via OpenCV — no GPU, no extra services). It knows
-`person` and `cat` as separate categories, so it triggers on people and
-**ignores the cats**. A cheap motion check runs first so the network only fires
-when something actually moves, keeping CPU low — and when that motion turns out
-**not** to be a person, it's noted in the Activity log (e.g. "*cat moved*").
+Detection uses a small **YOLO11** neural network (bundled in `d20app/models/`,
+runs on CPU via OpenCV — no GPU, no extra services). It knows `person` and `cat`
+as separate categories, so it triggers on people and **ignores the cats**. A
+cheap motion check runs first so the network only fires when something actually
+moves, keeping CPU low — and when that motion turns out **not** to be a person,
+it's noted in the Activity log (e.g. "*cat moved*").
 
-Measured on 170 real pedestrian images it detects a person **99.4%** of the time
-at the default confidence, with **no** cats mistaken for people. (See
-`tests/test_detection_accuracy.py`, which guards this with bundled sample
-photos.)
+> MobileNet-SSD was the original backend; it was **removed in 0.25.0** (#57) after
+> losing every benchmark to YOLO (it scored 0.00 on a dim night frame YOLO cleared
+> at ~0.87). There's no silent fallback any more — if the chosen model can't load,
+> the app raises a clear, actionable error instead of quietly running a worse one.
 
-**Detection detail (`detect_size`).** The net input size defaults to **300px**,
-the model's native size — most reliable for **people** (measured 99–100% recall,
-slightly better than 512) and lighter on CPU. A small cat across the room can
-vanish at 300; raise the setting to **512** ("High") to recover across-the-room
-cats, at more CPU and a small hit to some person poses. People in hats, helmets,
-and headgear, and people with their back to the camera, all detect reliably.
+On the bundled fixtures YOLO11n detects every clear person and reads no single cat
+as a person except two honestly-documented frames (one of which actually contains
+a person's hand). See `tests/test_detection_accuracy.py`, which guards this with
+bundled sample photos.
+
+**Model = resolution.** A YOLO ONNX is a fixed-shape export, so the **model name
+carries its input size** (`yolo11n` = 320, `yolo11m` = 640, `yolo11m_960` = 960,
+…) — pick a bigger model from the dropdown to resolve a small/distant subject, at
+more CPU. (The old `detect_size` knob was a MobileNet-only control and is gone.)
+People in hats, helmets, and headgear, and people with their back to the camera,
+all detect reliably.
 
 ### Live detection feed
 
@@ -188,8 +193,8 @@ click any frame to test it.
 The card surfaces the settings that actually change whether things are identified
 correctly, as live sliders that **re-run detection as you drag**:
 
-- **Model** (which carries the resolution — YOLO sizes are fixed by the export;
-  MobileNet offers `@300/@512/@768`), **person confidence**, **cat confidence**
+- **Model** (which carries the resolution — a YOLO size is fixed by its export, so
+  pick `yolo11m_960` for more detail), **person confidence**, **cat confidence**
   (the cat has its **own** threshold, separate from people), **notify floor** — what
   counts as a detection.
 - **Count dogs as the cat** — the model often calls a cat a **dog** with high
@@ -248,10 +253,10 @@ person/treat path untouched:
   and detects per tile, so a small/distant cat fills more of the net's input. 4×4 is
   what actually resolved a sleeping cat in testing; drop to 2×2/off to save CPU. Works
   with the bundled models — no extra downloads.
-- **Larger input** (`Cat input size`) runs the locator scan at 960/1280. MobileNet
-  resizes freely; for YOLO a **`yolo11m_960`** model is bundled (export more sizes
-  with `scripts/export_yolo.py`). If a size's model isn't present it falls back to
-  the native size + tiling.
+- **Larger input** (`Cat input size`) runs the locator scan at 960/1280. A
+  **`yolo11m_960`** model is bundled (export more sizes with
+  `scripts/export_yolo.py`). If a size's model isn't present it falls back to the
+  native size + tiling.
 
 Tune both in the **Test detection** card against a real screenshot, then save to the
 camera.
@@ -299,9 +304,10 @@ All tunable from the GUI (no config-file editing):
 - **Camera feed (main vs sub):** paste whichever stream URL you want in the
   Camera box. The high-res **main** feed spots distant cats better; the **sub**
   feed is lighter on CPU.
-- **Detection detail** (`detect_size`): how big a frame the neural net sees —
-  *Fast (300)*, *Balanced (512, default)*, or *Detailed (768)*. Bigger sees
-  smaller/farther subjects at more CPU.
+- **Model = detection detail:** how big a frame the net sees is set by the model
+  you pick (`yolo11n` 320 → `yolo11m` 640 → `yolo11m_960` 960). A bigger model
+  sees smaller/farther subjects at more CPU. (The old separate `detect_size`
+  control was MobileNet-only and was removed in 0.25.0.)
 - **Scan rate** (`scan_fps`): frames read per second (default 10). Lower it to
   reclaim CPU when using the main feed.
 - **Region of interest:** click **Grab frame** to pull a still, then **drag a

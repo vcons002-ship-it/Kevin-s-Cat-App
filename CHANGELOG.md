@@ -11,6 +11,40 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.25.0] — 2026-06-30
+
+### Removed
+- **MobileNet-SSD is gone** (#57). It was the original detection backend and the
+  automatic fallback when a YOLO model couldn't load, but it lost every benchmark to
+  YOLO (notably it scored **0.00** on a dim night frame YOLO11n cleared at ~0.87), and
+  keeping a second backend purely as a fallback meant the app could **silently run a
+  worse detector**. Deleted: the `mobilenet_ssd.caffemodel` (~23 MB) + `deploy.prototxt`
+  weights, the SSD blob path and the `CLASSES`/`PERSON_CLASS_ID`/`person_in_detections`
+  helpers in `detector.py`, the `mobilenet_ssd@{300,512,768}` dropdown/benchmark
+  variants, and the now-dead `_ssd_size()` / `@size` plumbing.
+
+### Changed
+- **No silent fallback — a model that can't load now raises a clear, actionable error**
+  (#57, the option chosen for this change). If the selected YOLO ONNX is missing or
+  fails to load on CPU, the detector raises a `RuntimeError` naming the model and
+  pointing at `d20app/models/` / `models/README.md`, instead of quietly downgrading.
+  A **GPU `accelerator`** that can't start still retries the **same** model on CPU first
+  (that path is unchanged) — only the cross-*model* fallback is removed.
+- **Every detection model is now a YOLO variant**; the model name carries the input size
+  (`yolo11n` 320 → `yolo11m` 640 → `yolo11m_960` 960 → `yolo26m`/`yolo26x`). The legacy
+  `detect_size` config field is **kept but ignored** so old `config.yaml`s still load.
+- `check_camera.py` now runs the configured YOLO model through the normal box path
+  (it previously poked the raw SSD blob), so the diagnostic matches what the app does.
+
+### Notes
+- Honest fixture finding (verified by eye while re-pointing the accuracy guard at
+  yolo11n): two single-cat frames yield a person box — `cat15.jpg` **genuinely contains
+  a person** (a hand holding a camera) that SSD had missed, and `cat23.jpg` is a true
+  top-down misread, the YOLO analogue of the old cat-cluster misreads (neutralised live
+  by the `confirm_frames` temporal gate). Both are documented and excluded by name in
+  `tests/test_detection_accuracy.py`, so a *new* cat starting to trigger still fails.
+- Suite: **205 tests** (down from 213 — SSD-specific tests removed), all green.
+
 ## [0.24.0] — 2026-06-29
 
 ### Added
