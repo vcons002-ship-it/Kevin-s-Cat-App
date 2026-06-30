@@ -12,6 +12,7 @@ camera, speaker, sound, and game rules, and to Start/Stop detection.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 if sys.version_info < (3, 11):
@@ -28,12 +29,38 @@ from d20app.loop import DetectionLoop
 from d20app.webapp import create_app
 
 
+def _maybe_reexec_for_cuda(cfg) -> None:
+    """If the NVIDIA CUDA accelerator is selected, make the CUDA runtime libs
+    discoverable *before* anything dlopens them — otherwise onnxruntime-gpu silently
+    degrades to CPU (~37× slower). glibc caches ``LD_LIBRARY_PATH`` at process start,
+    so the only reliable in-process fix is to set it and re-exec once. Guarded by an
+    env flag so we re-exec at most once, and a no-op unless ``accelerator`` is
+    ``onnx-cuda`` (so the default CPU launch is completely unaffected)."""
+    if getattr(cfg, "accelerator", "cpu") != "onnx-cuda":
+        return
+    if os.environ.get("_D20_CUDA_REEXEC"):       # already re-exec'd once
+        return
+    from d20app import yolo
+
+    lib = yolo._torch_cuda_lib_dir()
+    if not lib:
+        return                                    # no torch → runner will error clearly
+    cur = os.environ.get("LD_LIBRARY_PATH", "")
+    if lib in cur.split(os.pathsep):
+        return                                    # already discoverable, nothing to do
+    os.environ["LD_LIBRARY_PATH"] = lib + (os.pathsep + cur if cur else "")
+    os.environ["_D20_CUDA_REEXEC"] = "1"
+    print(f"  (onnx-cuda) added torch's CUDA libs to LD_LIBRARY_PATH; reloading…")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     cfg = config_mod.load()
+    _maybe_reexec_for_cuda(cfg)
     loop = DetectionLoop()
     app = create_app(loop)
 

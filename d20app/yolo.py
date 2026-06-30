@@ -85,7 +85,10 @@ MODELS = {
 DEFAULT_VARIANT = "yolo11n"
 
 # Where each accelerator runs the conv layers.
-ACCELERATORS = ("cpu", "opencl", "openvino-gpu", "openvino-auto")
+#   cpu / opencl                 — OpenCV cv2.dnn (CPU, or an OpenCL iGPU target)
+#   openvino-gpu / openvino-auto — Intel OpenVINO runtime (iGPU)
+#   onnx-cuda                    — onnxruntime-gpu on an NVIDIA GPU (CUDAExecutionProvider)
+ACCELERATORS = ("cpu", "opencl", "openvino-gpu", "openvino-auto", "onnx-cuda")
 
 # Back-compat aliases for the single-model era (some tests/callers import these).
 ONNX_PATH = os.path.join(_MODELS_DIR, MODELS[DEFAULT_VARIANT]["file"])
@@ -133,6 +136,79 @@ class _OpenVinoRunner:
         return self._compiled([blob])[self._out]     # (1, 84, N)
 
 
+def _torch_cuda_lib_dir():
+    """torch's bundled ``lib/`` dir, or ``None``. torch ships a complete, compatible
+    CUDA 12 / cuDNN 9 runtime there; pointing the loader at it is the clean single fix
+    for onnxruntime-gpu's CUDA provider (which otherwise can't find libcublasLt/cudnn
+    and *silently* degrades to CPU — 37× slower). torch is already a moondream dep."""
+    try:
+        import torch
+    except Exception:       # noqa: BLE001 — torch is optional
+        return None
+    lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+    return lib if os.path.isdir(lib) else None
+
+
+def _ensure_cuda_libs_on_path():
+    """Best-effort: prepend torch's CUDA lib dir to ``LD_LIBRARY_PATH`` so onnxruntime's
+    CUDA provider can load its runtime deps. Note: glibc may have cached the path at
+    process start, so the launch scripts also export it — this is belt-and-braces, and
+    importing torch (below, in the runner) pre-loads the same libs into the process."""
+    lib = _torch_cuda_lib_dir()
+    if not lib:
+        return
+    cur = os.environ.get("LD_LIBRARY_PATH", "")
+    if lib not in cur.split(os.pathsep):
+        os.environ["LD_LIBRARY_PATH"] = lib + (os.pathsep + cur if cur else "")
+
+
+class _OnnxRuntimeRunner:
+    """Wraps an onnxruntime ``InferenceSession`` on the NVIDIA CUDA provider.
+
+    onnxruntime-gpu's CUDA provider **silently falls back to CPU** if its CUDA runtime
+    libs aren't discoverable — which looks like it works but runs ~37× slower. So we:
+      1. put torch's bundled CUDA libs on the loader path and import torch to pre-load
+         them into the process, then
+      2. after the session is built, check which provider it actually selected and
+         raise loudly if CUDA was requested but CPU was chosen — never run slow silently.
+    The decode in :func:`detect_boxes` is unchanged: ``infer`` returns the same
+    ``(1, 84, N)`` tensor the cv2.dnn / OpenVINO runners do.
+    """
+
+    def __init__(self, onnx_path: str):
+        _ensure_cuda_libs_on_path()
+        try:
+            import torch  # noqa: F401 — pre-load torch's CUDA libs into the process
+        except Exception:           # noqa: BLE001 — not fatal; libs may be elsewhere
+            pass
+        import onnxruntime as ort    # optional dep; import only when asked
+
+        avail = ort.get_available_providers()
+        if "CUDAExecutionProvider" not in avail:
+            raise RuntimeError(
+                "onnx-cuda needs onnxruntime-gpu with a working CUDAExecutionProvider, "
+                f"but only {avail} are available. Install the CUDA-12 build of "
+                "onnxruntime-gpu (the default pip build targets CUDA 13 and fails with "
+                "'libcudart.so.13 not found' on a CUDA-12 system)."
+            )
+        self._sess = ort.InferenceSession(
+            onnx_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+        active = self._sess.get_providers()[0]
+        if active != "CUDAExecutionProvider":
+            raise RuntimeError(
+                f"onnx-cuda requested but onnxruntime is running on {active}, not CUDA "
+                "— that's the silent ~37× slowdown trap. The CUDA runtime libs likely "
+                "aren't on LD_LIBRARY_PATH; export torch's lib dir before launch:\n"
+                "  export LD_LIBRARY_PATH=$(python -c \"import os,torch;"
+                "print(os.path.dirname(torch.__file__)+'/lib')\"):$LD_LIBRARY_PATH"
+            )
+        self._input = self._sess.get_inputs()[0].name
+
+    def infer(self, blob):
+        # blob is the cv2.dnn (1,3,S,S) float32 NCHW tensor — exactly the ONNX input.
+        return self._sess.run(None, {self._input: blob})[0]     # (1, 84, N)
+
+
 def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
     """Build an inference runner for a YOLO11 variant on the chosen accelerator.
 
@@ -166,6 +242,17 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
                 "'openvino' package and the Intel GPU compute drivers, or use the CPU "
                 "accelerator."
             ) from exc
+
+    if accel == "onnx-cuda":
+        try:
+            return _OnnxRuntimeRunner(path)
+        except ImportError as exc:          # onnxruntime not installed at all
+            raise RuntimeError(
+                "onnx-cuda needs the optional 'onnxruntime-gpu' package (CUDA-12 build). "
+                "Install it on the NVIDIA host, or use the CPU accelerator."
+            ) from exc
+        # other failures (no CUDA / silent-CPU) already raise a clear RuntimeError above;
+        # the caller (PersonDetector._ensure_net) retries the same model on CPU.
 
     net = cv2.dnn.readNetFromONNX(path)
     if accel == "opencl":

@@ -65,10 +65,11 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **205 automated tests**, including a detection-accuracy regression guard over
+- **211 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
-  YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO accelerators with
-  CPU fallback, and a clear error — no silent fallback — when a model can't load),
+  YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO/CUDA accelerators with
+  CPU fallback, a clear error — no silent fallback — when a model can't load, the
+  onnxruntime CUDA path's silent-CPU-fallback guard + decode parity with cv2.dnn),
   the live MJPEG feed (frame publish + box-TTL + stream route) and
   the smooth-feed capture thread (toggle reconcile, version gating, error
   surfacing, watchdog respawn, camera-death detection), multi-camera (per-camera
@@ -154,6 +155,12 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
 - [x] **GPU / Intel iGPU acceleration** for YOLO — an `accelerator` setting with
       OpenCL and Intel **OpenVINO** (GPU/AUTO) backends, falling back to CPU
       (0.8.0). Frees the CPU and makes `yolo11m` practical on Intel hardware.
+- [x] **NVIDIA GPU acceleration** — an `onnx-cuda` accelerator that runs the YOLO ONNX
+      through **onnxruntime-gpu** (CUDAExecutionProvider). Measured **~37× faster** on
+      an RTX 3070 (~23 ms vs ~485–855 ms CPU), which makes the heavyweight `yolo26x`
+      runnable continuously (0.26.0, #58). Guards the silent-CPU-fallback trap: prepends
+      torch's CUDA libs to `LD_LIBRARY_PATH` and errors loudly if it lands on CPU.
+      TensorRT EP left as a future "max speed" tier.
 - [ ] Optional **Coral TPU** for hardware-accelerated inference and better
       small-object / low-light accuracy at low CPU.
 - [ ] Day/night profiles (different confidence or ROI by time of day).

@@ -89,6 +89,18 @@ if confirm "Install Intel OpenVINO GPU acceleration (optional, Intel iGPU only)?
     || echo "    (openvino install failed — the OpenVINO accelerator options will fall back to CPU)"
 fi
 
+# Optional: run YOLO on an NVIDIA GPU via onnxruntime-gpu (the "NVIDIA CUDA" accelerator,
+# ~37x faster than CPU). Needs the CUDA-12 build to match a CUDA 12.x host — the default
+# pip build targets CUDA 13 and fails with 'libcudart.so.13 not found'.
+if confirm "Install NVIDIA CUDA GPU acceleration for YOLO (optional, NVIDIA GPU only)?"; then
+  ./venv/bin/python -m pip install 'onnxruntime-gpu>=1.20' \
+      --extra-index-url 'https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/' \
+    || echo "    (onnxruntime-gpu install failed — the NVIDIA CUDA accelerator will fall back to CPU)"
+  echo "    Note: the CUDA runtime libs must be on LD_LIBRARY_PATH at launch. run.py prepends"
+  echo "    torch's lib dir automatically; if you launch another way, export it first:"
+  echo "      export LD_LIBRARY_PATH=\$(./venv/bin/python -c \"import os,torch;print(os.path.dirname(torch.__file__)+'/lib')\"):\$LD_LIBRARY_PATH"
+fi
+
 # Optional: export the "Benchmark this image" results to XLSX (the HTML report
 # works without it). Small, pure-Python.
 if confirm "Install XLSX export for the benchmark tool (optional)?"; then

@@ -11,6 +11,41 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.26.0] — 2026-06-30
+
+### Added
+- **NVIDIA GPU acceleration for YOLO** via a new `onnx-cuda` accelerator (#58). It runs
+  the YOLO ONNX through **onnxruntime-gpu** (CUDAExecutionProvider) instead of `cv2.dnn`.
+  On the NAS's RTX 3070 this is **~37× faster** (~23 ms/inference vs ~485–855 ms on CPU) —
+  fast enough to run the heavyweight `yolo26x` continuously (≈93 ms/frame at 2×2,
+  ≈210 ms at 3×3). Selectable in the GUI (Detection card + per-camera editor + Test
+  tool) and as `accelerator: onnx-cuda` in `config.yaml`.
+  - New `_OnnxRuntimeRunner` in `d20app/yolo.py` — same `infer(blob) → (1,84,N)` contract
+    as the cv2.dnn / OpenVINO runners, so the letterbox + NMS decode is unchanged
+    (verified: onnxruntime's output decodes to **identical boxes** to cv2.dnn).
+  - **Silent-CPU-fallback guard.** onnxruntime-gpu's CUDA provider quietly degrades to
+    CPU (37× slower, but looks like it works) if its CUDA runtime libs aren't
+    discoverable. The app (a) prepends **torch's bundled CUDA-12 / cuDNN-9 lib dir** to
+    `LD_LIBRARY_PATH` — `run.py` does this and re-execs once when `onnx-cuda` is selected;
+    `setup.sh`/`setup.ps1`/`models/README.md` document the manual export — and (b) checks
+    the session's **active provider** after creation and **raises loudly** if CUDA was
+    requested but CPU was chosen, instead of running slow in silence.
+  - **Graceful fallback.** If `onnx-cuda` can't start (no onnxruntime-gpu, no CUDA, or the
+    silent-CPU trap), the detector retries the **same** model on CPU with a clear warning.
+  - Optional dependency: `onnxruntime-gpu` (use the **CUDA-12** build to match a CUDA 12.x
+    host; the default pip build targets CUDA 13 and fails with `libcudart.so.13 not found`).
+    Not installed by default — `setup.sh`/`setup.ps1` offer it.
+  - `check_accelerator.py` now reports the CUDA/onnxruntime status and whether a session
+    actually lands on the GPU vs a silent CPU fallback.
+- TensorRT EP is intentionally **not** wired up (it needs separate TensorRT libs); CUDA at
+  ~23 ms is already plenty. Left as a future "max speed" tier.
+
+### Notes
+- Suite: **211 tests** (+6 for the onnx-cuda runner — accelerator registration, the
+  no-CUDA-provider error, the silent-CPU-fallback detection, decode parity with cv2.dnn,
+  and the detector's CPU fallback), all green. The GPU speedup itself is NAS-only; the
+  decode + fallback + error paths are verified here on CPU.
+
 ## [0.25.0] — 2026-06-30
 
 ### Removed

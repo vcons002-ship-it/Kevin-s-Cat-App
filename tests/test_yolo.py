@@ -137,3 +137,81 @@ def test_raises_clear_error_when_yolo_cannot_load(monkeypatch):
     msg = str(exc.value)
     assert "yolo11n" in msg and "models" in msg          # names the model + where to look
     assert det.model == "yolo11n"                         # no silent model swap
+
+
+# --- onnx-cuda accelerator (NVIDIA GPU via onnxruntime-gpu, #58) ---------------
+
+def test_onnx_cuda_is_a_registered_accelerator():
+    assert "onnx-cuda" in yolo.ACCELERATORS
+
+
+def test_onnx_cuda_errors_clearly_without_a_cuda_provider():
+    # On a box without onnxruntime-gpu's CUDA provider (CI, dev), onnx-cuda must
+    # raise a clear, actionable error — not silently run on CPU.
+    ort = pytest.importorskip("onnxruntime")
+    if "CUDAExecutionProvider" in ort.get_available_providers():
+        pytest.skip("this box has a real CUDA provider")
+    with pytest.raises(RuntimeError) as exc:
+        yolo.load_net("yolo11n", "onnx-cuda")
+    msg = str(exc.value)
+    assert "onnxruntime-gpu" in msg and "CUDA" in msg
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")   # ORT warns when CUDA EP is absent
+def test_onnx_cuda_detects_silent_cpu_fallback(monkeypatch):
+    # The silent-failure trap: the CUDA provider is "available" but the session
+    # actually lands on CPU (missing CUDA runtime libs). The runner must notice the
+    # active provider isn't CUDA and raise loudly rather than run ~37x slow silently.
+    ort = pytest.importorskip("onnxruntime")
+    if "CUDAExecutionProvider" in ort.get_available_providers():
+        pytest.skip("this box has a real CUDA provider")
+    # Pretend CUDA is available so we get past the availability guard; the real CPU
+    # build then drops CUDA and the session reports CPU as its active provider.
+    monkeypatch.setattr(ort, "get_available_providers",
+                        lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"])
+    with pytest.raises(RuntimeError) as exc:
+        yolo.load_net("yolo11n", "onnx-cuda")
+    msg = str(exc.value)
+    assert "running on" in msg and "LD_LIBRARY_PATH" in msg
+
+
+def test_onnx_output_decodes_identically_to_cv2dnn():
+    # The whole premise of the onnx path is that onnxruntime returns the same
+    # (1, 84, N) tensor cv2.dnn does, so detect_boxes decodes it unchanged. Prove it
+    # with a CPU onnxruntime session (provider-agnostic — the decode is what matters).
+    ort = pytest.importorskip("onnxruntime")
+    sess = ort.InferenceSession(yolo.model_path("yolo11n"),
+                                providers=["CPUExecutionProvider"])
+    name = sess.get_inputs()[0].name
+
+    class _OrtCpu:
+        def infer(self, blob):
+            return sess.run(None, {name: blob})[0]
+
+    frame = cv2.imread(PEOPLE[0])
+    b_cv = yolo.detect_boxes(yolo.load_net("yolo11n", "cpu"), frame, 0.3, size=320)
+    b_ort = yolo.detect_boxes(_OrtCpu(), frame, 0.3, size=320)
+    # same labels, and scores match to 3 dp (same weights, same decode)
+    assert [l for l, _, _ in b_cv] == [l for l, _, _ in b_ort]
+    assert [round(s, 3) for _, s, _ in b_cv] == [round(s, 3) for _, s, _ in b_ort]
+
+
+def test_detector_falls_back_to_cpu_when_onnx_cuda_unavailable():
+    # No CUDA here, so onnx-cuda fails to load → _ensure_net retries the SAME model
+    # on CPU (cv2.dnn). Detection still works; accelerator downgrades to cpu.
+    pytest.importorskip("onnxruntime")
+    import onnxruntime as ort
+    if "CUDAExecutionProvider" in ort.get_available_providers():
+        pytest.skip("this box has a real CUDA provider")
+    det = PersonDetector(source="unused", confidence=0.4,
+                         model="yolo11n", accelerator="onnx-cuda")
+    assert det.detect_in_frame(cv2.imread(PEOPLE[0])) is True
+    assert det.accelerator == "cpu" and det.model == "yolo11n"
+
+
+def test_torch_cuda_lib_dir_points_at_a_real_dir_when_torch_present():
+    # The LD_LIBRARY_PATH fix relies on torch's bundled lib/ dir; if torch is here,
+    # the helper must return an existing directory (or None when torch is absent).
+    lib = yolo._torch_cuda_lib_dir()
+    if lib is not None:
+        assert os.path.isdir(lib)
