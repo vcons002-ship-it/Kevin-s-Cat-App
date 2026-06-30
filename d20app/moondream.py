@@ -55,6 +55,13 @@ DEFAULT_MODEL = "moondream2"
 MODES = ("local", "cloud")
 DEFAULT_MODE = "local"
 
+# Moondream's yes/no is non-deterministic — the same frame can flip run-to-run, and the
+# frames that wobble are the genuinely-hard ones (#60). Running N passes and taking the
+# majority vote averages the wobble out, and the **vote ratio is the honest confidence**
+# (agreement across passes) that replaces the model's meaningless self-report.
+DEFAULT_PASSES = 3
+MAX_PASSES = 9          # a sane ceiling so one request can't run forever
+
 # Validated local-load params for an 8 GB RTX 3070 (#59). The default auto-sized KV cache
 # (kv_cache_pages=None) OOMs even at batch 2 (CUBLAS_STATUS_ALLOC_FAILED); 256 pages loads
 # but can't serve ("insufficient KV cache capacity"); 2048 loads (~4.6 GB) AND serves at
@@ -82,6 +89,29 @@ def is_available() -> bool:
     import importlib.util
 
     return importlib.util.find_spec("moondream") is not None
+
+
+def majority_vote(answers: list) -> dict:
+    """Pure majority vote over a list of ``"yes"``/``"no"``/``None`` pass answers (#60).
+
+    Returns ``{"verdict", "yes", "no", "decisive", "parsed", "unanimous", "borderline"}``:
+    ``verdict`` is the winning side (``None`` on a tie or no parsed answers — both
+    genuinely ambiguous), ``decisive`` is the winning vote count, ``parsed`` the number of
+    yes/no answers, ``unanimous`` True only when every pass agreed, and ``borderline`` True
+    whenever the verdict isn't unanimous (a split worth a human look)."""
+    yes = sum(1 for a in answers if a == "yes")
+    no = sum(1 for a in answers if a == "no")
+    parsed = yes + no
+    total = len(answers)
+    if parsed == 0 or yes == no:
+        verdict, decisive = None, max(yes, no)
+    else:
+        verdict = "yes" if yes > no else "no"
+        decisive = max(yes, no)
+    return {"verdict": verdict, "yes": yes, "no": no, "decisive": decisive,
+            "parsed": parsed,
+            "unanimous": verdict is not None and decisive == total and parsed == total,
+            "borderline": verdict is None or decisive < total}
 
 
 def parse_vlm_response(text: str) -> dict:
@@ -228,4 +258,38 @@ def query_image(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MO
         "raw": raw, "load_ms": load_ms, "query_ms": query_ms,
         "prompt": prompt or DEFAULT_PROMPT, "model": name, "mode": mode, "device": device,
         **parsed,
+    }
+
+
+def query_image_voted(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MODEL,
+                      api_key: str | None = None, mode: str = DEFAULT_MODE,
+                      passes: int = DEFAULT_PASSES) -> dict:
+    """Query the same frame ``passes`` times and take the **majority vote** (#60).
+
+    moondream's yes/no wobbles run-to-run on hard frames, so a single pass is unreliable.
+    Returns the single-pass result shape (so callers/UI keep working) with ``answer`` set
+    to the majority verdict, plus voting fields: ``votes`` (``{"yes","no"}`` counts),
+    ``passes``, ``ratio`` (e.g. ``"4/5"`` — the **honest confidence**, agreement across
+    passes), ``unanimous`` and ``borderline`` flags, and ``per_pass`` (each pass's answer).
+    ``reason``/``raw`` are taken from a pass that matched the verdict, so the shown
+    reasoning explains the verdict. ``passes <= 1`` is exactly the single-pass behaviour."""
+    n = max(1, min(int(passes or 1), MAX_PASSES))
+    results = [query_image(frame_bgr, prompt=prompt, model=model, api_key=api_key, mode=mode)
+               for _ in range(n)]
+    answers = [r["answer"] for r in results]
+    vote = majority_vote(answers)
+
+    # Show the reasoning from a pass that agrees with the verdict (or the first pass).
+    rep = next((r for r in results if r.get("answer") == vote["verdict"]), results[0])
+    total_ms = round(sum(r.get("query_ms", 0.0) for r in results), 1)
+    return {
+        "raw": rep.get("raw", ""), "answer": vote["verdict"], "reason": rep.get("reason", ""),
+        "parsed": vote["verdict"] is not None,
+        "votes": {"yes": vote["yes"], "no": vote["no"]},
+        "passes": n, "ratio": f"{vote['decisive']}/{n}",
+        "unanimous": vote["unanimous"], "borderline": vote["borderline"],
+        "per_pass": answers,
+        "load_ms": results[0].get("load_ms", 0.0), "query_ms": total_ms,
+        "prompt": prompt or DEFAULT_PROMPT, "model": model or DEFAULT_MODEL,
+        "mode": mode if mode in MODES else DEFAULT_MODE, "device": results[0].get("device", ""),
     }

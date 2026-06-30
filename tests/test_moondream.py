@@ -149,6 +149,60 @@ def test_friendly_error_maps_oom_and_kv_cache(monkeypatch):
     assert "KV cache" in str(kv) and "kv_cache_pages" in str(kv)
 
 
+# ---- #60: multi-pass majority vote -----------------------------------------
+def test_majority_vote_pure():
+    # Clear majority, tie (ambiguous → no verdict), and unanimous.
+    win = vlm.majority_vote(["yes", "yes", "no", "yes", "no"])
+    assert win["verdict"] == "yes" and win["decisive"] == 3 and win["borderline"] is True
+    tie = vlm.majority_vote(["yes", "no"])
+    assert tie["verdict"] is None and tie["borderline"] is True   # genuine ambiguity
+    uni = vlm.majority_vote(["no", "no", "no"])
+    assert uni["verdict"] == "no" and uni["unanimous"] is True and uni["borderline"] is False
+    assert vlm.majority_vote([])["verdict"] is None               # nothing parsed
+
+
+def test_query_image_voted_takes_majority_and_reports_ratio(monkeypatch):
+    import numpy as np
+    seq = iter(["yes", "yes", "no", "yes", "no"])   # 3 yes / 2 no → yes, 3/5, borderline
+
+    def _q(frame, **kw):
+        a = next(seq)
+        return {"answer": a, "reason": f"r-{a}", "raw": f"raw-{a}", "query_ms": 10.0,
+                "load_ms": 0.0, "device": "cuda"}
+    monkeypatch.setattr(vlm, "query_image", _q)
+    out = vlm.query_image_voted(np.zeros((8, 8, 3), np.uint8), passes=5)
+    assert out["answer"] == "yes" and out["ratio"] == "3/5"
+    assert out["votes"] == {"yes": 3, "no": 2} and out["borderline"] is True
+    assert out["unanimous"] is False and out["per_pass"] == ["yes", "yes", "no", "yes", "no"]
+    assert out["reason"] == "r-yes"                  # reason taken from a verdict-matching pass
+    assert out["query_ms"] == 50.0                   # summed across passes
+
+
+def test_query_image_voted_single_pass_is_plain(monkeypatch):
+    import numpy as np
+    monkeypatch.setattr(vlm, "query_image",
+                        lambda f, **k: {"answer": "no", "reason": "x", "raw": "x",
+                                        "query_ms": 7.0, "load_ms": 0.0, "device": "cuda"})
+    out = vlm.query_image_voted(np.zeros((8, 8, 3), np.uint8), passes=1)
+    assert out["answer"] == "no" and out["ratio"] == "1/1" and out["unanimous"] is True
+
+
+def test_vlm_batch_carries_vote_ratio(monkeypatch):
+    # 3 passes, mock always "yes" → unanimous 3/3 on the cat frame.
+    monkeypatch.setattr(vlm, "preflight", lambda *a, **k: None)
+    monkeypatch.setattr(vlm, "query_image",
+                        lambda f, **k: {"answer": "yes", "reason": "cat", "raw": "cat",
+                                        "query_ms": 5.0, "load_ms": 0.0, "device": "cuda"})
+    c = _client()
+    cat = _upload(c)
+    body = c.post("/api/vlm/batch", json={
+        "items": [{"id": cat["id"], "name": "cat.jpg", "has_cat": True}],
+        "passes": 3}).get_json()
+    assert body["passes"] == 3
+    v = body["verdicts"][0]
+    assert v["answer"] == "yes" and v["ratio"] == "3/3" and v["unanimous"] is True
+
+
 def test_query_passes_mode_through(monkeypatch):
     import numpy as np
     seen = {}

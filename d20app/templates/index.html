@@ -265,6 +265,9 @@
       </label>
       <div class="row">
         <label class="inline">Mode <select id="vlm-choice"></select></label>
+        <label class="inline" title="moondream's yes/no wobbles run-to-run; N passes + a majority vote averages it out. The vote ratio (e.g. 4/5) is the honest confidence.">
+          Passes <input id="vlm-passes" type="number" min="1" max="9" step="1" value="3" style="width:3.5em" />
+        </label>
         <button id="vlm-run" class="primary" type="button" disabled>Ask “is there a cat?”</button>
         <span id="vlm-note" class="muted"></span>
       </div>
@@ -307,7 +310,10 @@
         detectors, good on hard frames they miss and on decoys they false-fire on. The
         <strong>full response is shown</strong> because the reasoning is the tool: it
         reveals <em>why</em> it answered (e.g. “the round fuzzy object looks like a cat”).
-        No confidence number is shown — moondream’s self-report proved meaningless.
+        moondream’s self-reported confidence is meaningless, so instead the answer is a
+        <strong>majority vote over N passes</strong> (its yes/no wobbles run-to-run) and the
+        <strong>vote ratio</strong> (e.g. 4/5) is the honest confidence — split votes are
+        flagged “borderline” for review.
         Paste your <strong>API key</strong> above (stored locally, never logged); it
         authenticates the one-time weight download and cloud inference. <strong>Local
         (Moondream 2)</strong> needs a supported GPU (CUDA/Ampere or Apple Silicon — no CPU

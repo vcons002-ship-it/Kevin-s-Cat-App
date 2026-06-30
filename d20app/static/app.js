@@ -887,7 +887,7 @@ async function runBatchOf(items, noteEl) {
   const { ok, body } = await api("/api/test/benchmark/batch", postJSON({
     items, models, tilings, batch_id: batchId, ...benchControls(),
     run_vlm: !!(vlmEl && vlmEl.checked),
-    vlm_model: vlmCurrent().model, vlm_mode: vlmCurrent().mode,
+    vlm_model: vlmCurrent().model, vlm_mode: vlmCurrent().mode, vlm_passes: vlmPasses(),
   }));
   activeBatchId = null;
   $("bench-batch-run").disabled = false;
@@ -941,6 +941,12 @@ function vlmCurrent() {
   return { mode: c.mode || "local", model: c.model || "moondream2", off_device: !!c.off_device };
 }
 
+// Passes per image for the majority vote (#60); clamped to the input's 1–9 range.
+function vlmPasses() {
+  const n = Number($("vlm-passes") && $("vlm-passes").value) || 3;
+  return Math.max(1, Math.min(9, Math.round(n)));
+}
+
 // Show/hide the "cloud sends images off-device" warning for the current choice.
 function updateVlmOffDevice() {
   const w = $("vlm-offdevice");
@@ -959,6 +965,12 @@ async function loadVlmStatus() {
     sel.onchange = updateVlmOffDevice;
   }
   updateVlmOffDevice();
+  const pin = $("vlm-passes");
+  if (pin) {
+    if (body.max_passes) pin.max = body.max_passes;
+    if (body.default_passes && !pin.dataset.touched) pin.value = body.default_passes;
+    pin.onchange = () => { pin.dataset.touched = "1"; };
+  }
   // API-key status: a missing key is the field's own documentation, never a cryptic 401.
   const ks = $("vlm-key-status");
   if (ks) ks.textContent = body.has_api_key ? "✅ key set" : "⚠ no key set — paste yours to enable the VLM";
@@ -1006,7 +1018,7 @@ async function runVlm() {
   const cur = vlmCurrent();
   const { ok, body } = await api("/api/vlm/query", postJSON({
     id: vlmSession.id, frame_index: Number($("vlm-frame").value) || 0,
-    prompt: $("vlm-prompt").value, model: cur.model, mode: cur.mode,
+    prompt: $("vlm-prompt").value, model: cur.model, mode: cur.mode, passes: vlmPasses(),
   }));
   $("vlm-run").disabled = false;
   if (!ok || !body || body.error) { $("vlm-note").textContent = (body && body.error) || "Query failed."; return; }
@@ -1023,8 +1035,14 @@ function renderVlm(b) {
     badge.textContent = b.answer === "yes" ? "CAT: yes" : "CAT: no";
     badge.className = "vlm-badge " + (b.answer === "yes" ? "vlm-yes" : "vlm-no");
   }
+  // With multiple passes, append the vote ratio (the honest confidence) + a borderline flag.
+  if (b.passes > 1 && b.ratio) {
+    const vote = ` · vote ${b.ratio}${b.borderline ? " ⚠ borderline" : " (unanimous)"}`;
+    badge.textContent += vote;
+  }
   const load = b.load_ms ? ` · model load ${Math.round(b.load_ms)} ms` : "";
-  $("vlm-latency").textContent = `query ${Math.round(b.query_ms)} ms${load}`;
+  const passInfo = b.passes > 1 ? ` over ${b.passes} passes` : "";
+  $("vlm-latency").textContent = `query ${Math.round(b.query_ms)} ms${passInfo}${load}`;
   $("vlm-raw").textContent = b.raw || "(empty response)";
   $("vlm-meta").textContent = `model: ${b.model} · mode: ${b.mode || "local"} · device: ${b.device}`;
 }
@@ -1035,10 +1053,14 @@ function vlmSummaryLine(v) {
   const s = v.summary;
   const pct = (r, n, d) => r == null ? "—" : `${Math.round(r * 100)}% (${n}/${d})`;
   const dis = (v.disagreements || []).map((d) =>
-    `<a href="/api/test/benchmark/${d.slug}.html" target="_blank" rel="noopener">${esc(d.name)}</a> (VLM ${d.vlm} / YOLO ${d.yolo})`).join(" · ");
-  return `<p class="muted"><strong>VLM (${esc(v.model)}):</strong> recall ${pct(s.recall, s.found, s.n_cat)} · false-positive ${pct(s.fp_rate, s.fp, s.n_nocat)}</p>`
+    `<a href="/api/test/benchmark/${d.slug}.html" target="_blank" rel="noopener">${esc(d.name)}</a> (VLM ${d.vlm}${d.ratio ? " " + esc(d.ratio) : ""} / YOLO ${d.yolo})`).join(" · ");
+  const bl = (v.borderline || []).map((b) =>
+    `<a href="/api/test/benchmark/${b.slug}.html" target="_blank" rel="noopener">${esc(b.name)}</a> (${esc(b.answer || "tie")} ${esc(b.ratio || "")})`).join(" · ");
+  const passNote = (v.passes || 1) > 1 ? ` <span style="font-size:12px">· ${v.passes} passes, majority vote</span>` : "";
+  return `<p class="muted"><strong>VLM (${esc(v.model)}):</strong> recall ${pct(s.recall, s.found, s.n_cat)} · false-positive ${pct(s.fp_rate, s.fp, s.n_nocat)}${passNote}</p>`
     + (dis ? `<p class="muted" style="font-size:12px">Disagreements vs best YOLO: ${dis}</p>`
-           : (v.summary && (v.disagreements || []).length === 0 ? `<p class="muted" style="font-size:12px">VLM and YOLO agree on every frame.</p>` : ""));
+           : (v.summary && (v.disagreements || []).length === 0 ? `<p class="muted" style="font-size:12px">VLM and YOLO agree on every frame.</p>` : ""))
+    + (bl ? `<p class="muted" style="font-size:12px">Borderline (split vote — review): ${bl}</p>` : "");
 }
 
 function renderBatchSummary(configs, meta, images, vlm) {
@@ -1097,7 +1119,7 @@ async function runVlmBatch() {
   $("vlm-batch-note").textContent = `Running the VLM on ${vlmBatchItems.length} images… you can abort.`;
   const cur = vlmCurrent();
   const { ok, body } = await api("/api/vlm/batch", postJSON({
-    items: vlmBatchItems, batch_id: vlmBatchId, model: cur.model, mode: cur.mode,
+    items: vlmBatchItems, batch_id: vlmBatchId, model: cur.model, mode: cur.mode, passes: vlmPasses(),
   }));
   vlmBatchId = null;
   $("vlm-batch-run").disabled = false;
@@ -1118,18 +1140,23 @@ async function abortVlmBatch() {
 function renderVlmBatch(b) {
   const s = b.summary;
   const pct = (r, n, d) => r == null ? "—" : `${Math.round(r * 100)}% (${n}/${d})`;
+  const multi = (b.passes || 1) > 1;
   const rows = (b.verdicts || []).map((v) => {
     const a = v.error ? `<span class="vlm-badge vlm-unparsed">error</span>`
       : (v.answer === "yes" ? `<span class="vlm-badge vlm-yes">yes</span>`
         : v.answer === "no" ? `<span class="vlm-badge vlm-no">no</span>`
           : `<span class="vlm-badge vlm-unparsed">?</span>`);
+    const voteCell = multi
+      ? `<td>${v.ratio ? esc(v.ratio) + (v.borderline ? " ⚠" : "") : "—"}</td>` : "";
     return `<tr><td style="text-align:left">${esc(v.name)}${v.has_cat ? "" : " ∅"}</td>
-      <td>${a}</td><td style="text-align:left">${esc(v.error || v.reason || "")}</td>
+      <td>${a}</td>${voteCell}<td style="text-align:left">${esc(v.error || v.reason || "")}</td>
       <td>${Math.round(v.query_ms)} ms</td></tr>`;
   }).join("");
+  const voteHdr = multi ? "<th>vote</th>" : "";
+  const passNote = multi ? ` · ${b.passes} passes/image (majority vote; ⚠ = split)` : "";
   $("vlm-batch-results").innerHTML =
-    `<p class="muted"><strong>${esc(b.model)}:</strong> recall ${pct(s.recall, s.found, s.n_cat)} · false-positive ${pct(s.fp_rate, s.fp, s.n_nocat)}${s.errors ? ` · ${s.errors} error(s)` : ""}</p>
-     <table class="bench-tbl"><tr><th>image</th><th>cat?</th><th>reason</th><th>latency</th></tr>${rows}</table>`;
+    `<p class="muted"><strong>${esc(b.model)}:</strong> recall ${pct(s.recall, s.found, s.n_cat)} · false-positive ${pct(s.fp_rate, s.fp, s.n_nocat)}${s.errors ? ` · ${s.errors} error(s)` : ""}${passNote}</p>
+     <table class="bench-tbl"><tr><th>image</th><th>cat?</th>${voteHdr}<th>reason</th><th>latency</th></tr>${rows}</table>`;
 }
 
 // ---- activity log ----------------------------------------------------------

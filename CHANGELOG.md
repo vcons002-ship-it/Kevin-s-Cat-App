@@ -11,6 +11,32 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.28.0] — 2026-06-30
+
+### Added
+- **VLM multi-pass majority vote** (#60). moondream's yes/no isn't deterministic — the same
+  frame can flip run-to-run, and the frames that wobble are the genuinely-hard ones (a black
+  cat as a dark blob, a decoy). So each image is now queried **N times** (configurable,
+  default **3**, max 9) and the verdict is the **majority vote**:
+  - **Vote ratio is the honest confidence** — "4/5 yes" means strong agreement; "3/2" is
+    genuinely ambiguous. This is the real number that replaces moondream's meaningless
+    self-report (the confidence we'd already dropped). A tie yields no verdict (ambiguous).
+  - **Borderline (non-unanimous) frames are flagged** — "split vote — review" — in the
+    single tester, the batch table, and the cross-image summary report. Split votes are
+    exactly the hard frames worth a human look or a YOLO cross-check, so they're surfaced,
+    not buried.
+  - Applies to all three paths: the single-image tester, the batch VLM tester, and the
+    "also run VLM" toggle in the detection batch. The batch "VLM accuracy" (recall + FP) is
+    computed from the **majority-vote** verdicts. A **Passes** control sits next to the
+    mode selector; `passes=1` is exactly the old single-pass behaviour.
+  - Affordable because queries are fast (~0.3 s on the GPU): 5 passes ≈ 1.5 s/frame, and
+    this is a verification tool, not an every-frame live path.
+
+### Notes
+- Suite: **222 tests** (+4: the pure `majority_vote` over clear/tie/unanimous/empty inputs,
+  the voted query's ratio + borderline + summed latency + verdict-matching reason, the
+  single-pass passthrough, and the batch carrying the vote ratio), all green.
+
 ## [0.27.0] — 2026-06-30
 
 ### Added
