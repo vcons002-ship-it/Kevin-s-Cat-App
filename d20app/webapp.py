@@ -523,26 +523,43 @@ def _vlm_block_html(vlm_info: dict, per_image: list) -> str:
     rec = "—" if s["recall"] is None else f"{s['recall'] * 100:.0f}% ({s['found']}/{s['n_cat']})"
     fpr = "—" if s["fp_rate"] is None else f"{s['fp_rate'] * 100:.0f}% ({s['fp']}/{s['n_nocat']})"
     dis = vlm_info.get("disagreements") or []
+    passes = vlm_info.get("passes") or 1
     rows = ""
     for d in dis:
         im = by_slug.get(d["slug"], {})
         thumb = (f"<img src='{im.get('orig_thumb', '')}' onclick='zoom(this.src)' "
                  "title='click to enlarge'>") if im.get("orig_thumb") else ""
         gt = "cat" if d["has_cat"] else "no-cat"
+        ratio = f" ({esc(d['ratio'])})" if d.get("ratio") else ""
         rows += (f"<tr><td>{thumb}</td><td style='text-align:left'>"
                  f"<a href='{d['slug']}.html' target='_blank'>{esc(d['name'])}</a></td>"
-                 f"<td>{esc(gt)}</td><td>VLM {esc(d['vlm'])}</td>"
+                 f"<td>{esc(gt)}</td><td>VLM {esc(d['vlm'])}{ratio}</td>"
                  f"<td>YOLO {esc(d['yolo'])}</td></tr>")
     dis_html = ("<p class='muted' style='font-size:13px'>VLM and the best YOLO config "
                 "agree on every frame.</p>" if not dis else
                 "<table><tr><th>frame</th><th>image</th><th>truth</th><th></th><th></th>"
                 f"</tr>{rows}</table>")
+    # Borderline (non-unanimous across the N passes) — the genuinely hard frames (#60).
+    bl = vlm_info.get("borderline") or []
+    bl_html = ("" if passes <= 1 else
+               ("<p class='muted' style='font-size:13px'>Every frame's vote was "
+                "unanimous across the passes.</p>" if not bl else
+                "<table><tr><th>image</th><th>verdict</th><th>vote</th></tr>" +
+                "".join(f"<tr><td style='text-align:left'>"
+                        f"<a href='{b['slug']}.html' target='_blank'>{esc(b['name'])}</a></td>"
+                        f"<td>{esc(b['answer'] or 'tie')}</td><td>{esc(b['ratio'])}</td></tr>"
+                        for b in bl) + "</table>"))
+    passes_note = "" if passes <= 1 else (
+        f" <span class='muted'>· {passes} passes/image, majority vote (the vote ratio is "
+        "the confidence)</span>")
+    bl_section = "" if passes <= 1 else (
+        "<h3>Borderline frames (split vote — review)</h3>" + bl_html)
     return (
         f"<div class='fixed'><b>VLM ({esc(vlm_info['model'])}) accuracy for batch:</b> "
         f"recall <b>{rec}</b> · false-positive rate <b>{fpr}</b> "
-        "<span class='muted'>(one query per image; recall on cat frames, FP on no-cat "
-        "frames — reported separately)</span></div>"
-        "<h3>VLM ⇄ YOLO disagreements</h3>" + dis_html)
+        "<span class='muted'>(recall on cat frames, FP on no-cat frames — reported "
+        f"separately)</span>{passes_note}</div>"
+        "<h3>VLM ⇄ YOLO disagreements</h3>" + dis_html + bl_section)
 
 
 def _benchmark_summary_html(per_image: list, configs: list, meta: dict, vlm=None) -> str:
@@ -713,9 +730,11 @@ def _vlm_summary(verdicts: list) -> dict:
     }
 
 
-def _run_vlm_items(items: list, model: str, batch_id=None, mode="local", api_key=None):
-    """Run one VLM query per uploaded item; return ``(verdicts, skipped, cancelled)``.
-    Each verdict carries ``name``/``has_cat``/``answer``/``reason``/``query_ms``/``error``.
+def _run_vlm_items(items: list, model: str, batch_id=None, mode="local", api_key=None,
+                   passes=1):
+    """Run a majority-voted VLM query per uploaded item; return ``(verdicts, skipped,
+    cancelled)``. Each verdict carries ``name``/``has_cat``/``answer`` (the majority
+    verdict)/``reason``/``ratio``/``unanimous``/``borderline``/``query_ms``/``error``.
     Cancel- and skip-aware, mirroring the detection batch. Caller should ``preflight``
     first so a setup error (no package/key/GPU) fails fast rather than once per image."""
     verdicts, skipped = [], []
@@ -740,12 +759,16 @@ def _run_vlm_items(items: list, model: str, batch_id=None, mode="local", api_key
         except (TypeError, ValueError):
             idx = 0
         try:
-            r = vlm.query_image(frames[idx], model=model, mode=mode, api_key=api_key)
+            r = vlm.query_image_voted(frames[idx], model=model, mode=mode,
+                                      api_key=api_key, passes=passes)
             verdicts.append({"name": name, "has_cat": has_cat, "answer": r["answer"],
-                             "reason": r["reason"], "query_ms": r["query_ms"], "error": None})
+                             "reason": r["reason"], "ratio": r["ratio"],
+                             "unanimous": r["unanimous"], "borderline": r["borderline"],
+                             "query_ms": r["query_ms"], "error": None})
         except RuntimeError as exc:     # a per-image query failure — keep going
             verdicts.append({"name": name, "has_cat": has_cat, "answer": None,
-                             "reason": "", "query_ms": 0.0, "error": str(exc)})
+                             "reason": "", "ratio": "", "unanimous": False,
+                             "borderline": True, "query_ms": 0.0, "error": str(exc)})
     return verdicts, skipped, cancelled
 
 
@@ -1203,6 +1226,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         run_vlm = bool(body.get("run_vlm"))
         vlm_model = body.get("vlm_model") or vlm.DEFAULT_MODEL
         vlm_mode = body.get("vlm_mode") or vlm.DEFAULT_MODE
+        vlm_passes = body.get("vlm_passes") or vlm.DEFAULT_PASSES
         vlm_key = _vlm_key(body)
         vlm_error = None
         if run_vlm:
@@ -1255,14 +1279,18 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             entry = {"idx": len(per_image), "name": name, "report_id": rid,
                      "slug": slug, "has_cat": has_cat,
                      "orig_thumb": _orig_thumb_data_url(frame), "runs": light}
-            if run_vlm:        # one VLM query per image, alongside the sweep (#54)
+            if run_vlm:        # majority-voted VLM query per image, alongside the sweep (#54/#60)
                 try:
-                    vr = vlm.query_image(frame, model=vlm_model, mode=vlm_mode, api_key=vlm_key)
+                    vr = vlm.query_image_voted(frame, model=vlm_model, mode=vlm_mode,
+                                               api_key=vlm_key, passes=vlm_passes)
                     entry["vlm"] = {"answer": vr["answer"], "reason": vr["reason"],
+                                    "ratio": vr["ratio"], "unanimous": vr["unanimous"],
+                                    "borderline": vr["borderline"],
                                     "query_ms": vr["query_ms"], "error": None}
                 except RuntimeError as exc:
-                    entry["vlm"] = {"answer": None, "reason": "", "query_ms": 0.0,
-                                    "error": str(exc)}
+                    entry["vlm"] = {"answer": None, "reason": "", "ratio": "",
+                                    "unanimous": False, "borderline": True,
+                                    "query_ms": 0.0, "error": str(exc)}
             per_image.append(entry)
             # Link by slug so the link matches the per-image download filename (#35).
             images.append({"name": name, "has_cat": has_cat, "slug": slug,
@@ -1296,10 +1324,16 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 if vlm_yes != yolo_found:
                     disagreements.append(
                         {"name": im["name"], "slug": im["slug"], "has_cat": im["has_cat"],
-                         "vlm": "yes" if vlm_yes else "no",
+                         "vlm": "yes" if vlm_yes else "no", "ratio": v.get("ratio", ""),
                          "yolo": "found" if yolo_found else "miss"})
+            # Borderline (non-unanimous) frames — the genuinely-hard ones worth review (#60).
+            borderline = [{"name": im["name"], "slug": im["slug"],
+                           "answer": im["vlm"].get("answer"), "ratio": im["vlm"].get("ratio", "")}
+                          for im in graded
+                          if not im["vlm"].get("error") and im["vlm"].get("borderline")]
             vlm_info = {"summary": _vlm_summary(verdicts), "model": vlm_model,
-                        "disagreements": disagreements}
+                        "passes": vlm_passes, "disagreements": disagreements,
+                        "borderline": borderline}
         elif vlm_error:
             vlm_info = {"error": vlm_error}
         summary_html = _benchmark_summary_html(per_image, configs, smeta, vlm=vlm_info)
@@ -1350,7 +1384,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                                             or os.environ.get("MOONDREAM_API_KEY")),
                         "default_prompt": vlm.DEFAULT_PROMPT,
                         "choices": vlm.VLM_CHOICES, "default_choice": vlm.DEFAULT_CHOICE,
-                        "models": list(vlm.MODELS), "default_model": vlm.DEFAULT_MODEL})
+                        "models": list(vlm.MODELS), "default_model": vlm.DEFAULT_MODEL,
+                        "default_passes": vlm.DEFAULT_PASSES, "max_passes": vlm.MAX_PASSES})
 
     def _vlm_key(body) -> str | None:
         # Per-request key wins (e.g. a paste before saving); else the stored config key;
@@ -1373,10 +1408,11 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         except (TypeError, ValueError):
             idx = 0
         try:
-            result = vlm.query_image(
+            result = vlm.query_image_voted(
                 frames[idx], prompt=body.get("prompt") or vlm.DEFAULT_PROMPT,
                 model=body.get("model") or vlm.DEFAULT_MODEL,
-                mode=body.get("mode") or vlm.DEFAULT_MODE, api_key=_vlm_key(body))
+                mode=body.get("mode") or vlm.DEFAULT_MODE, api_key=_vlm_key(body),
+                passes=body.get("passes") or vlm.DEFAULT_PASSES)
         except RuntimeError as exc:         # optional dep / no GPU / no key / query failure
             return jsonify({"error": str(exc)}), 503
         return jsonify(result)
@@ -1401,7 +1437,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         except RuntimeError as exc:
             return jsonify({"error": str(exc)}), 503
         batch_id = body.get("batch_id")
-        verdicts, skipped, cancelled = _run_vlm_items(items, model, batch_id, mode, key)
+        passes = body.get("passes") or vlm.DEFAULT_PASSES
+        verdicts, skipped, cancelled = _run_vlm_items(items, model, batch_id, mode, key, passes)
         if batch_id:
             with _BENCH_CANCEL_LOCK:
                 _BENCH_CANCEL.discard(batch_id)
@@ -1409,9 +1446,9 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             return jsonify({"error": "All uploads expired — re-select the images.",
                             "cancelled": cancelled}), 404
         return jsonify({
-            "model": model, "summary": _vlm_summary(verdicts), "verdicts": verdicts,
-            "cancelled": cancelled, "requested": len(items), "ran": len(verdicts),
-            "skipped": len(skipped), "skipped_names": skipped[:20],
+            "model": model, "passes": passes, "summary": _vlm_summary(verdicts),
+            "verdicts": verdicts, "cancelled": cancelled, "requested": len(items),
+            "ran": len(verdicts), "skipped": len(skipped), "skipped_names": skipped[:20],
         })
 
     @app.get("/api/test/benchmark/<rid>.html")

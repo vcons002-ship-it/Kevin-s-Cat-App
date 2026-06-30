@@ -65,7 +65,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **218 automated tests**, including a detection-accuracy regression guard over
+- **222 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO/CUDA accelerators with
   CPU fallback, a clear error — no silent fallback — when a model can't load, the
@@ -146,8 +146,10 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       local load params (`max_batch_size=4`, `kv_cache_pages=2048` — the auto cache OOMs),
       an **API-key GUI field** (stored, masked, never logged), and a **local M2 / cloud M3
       mode selector** (cloud sends images off-device; M3 is cloud-only on 8 GB). Friendly
-      OOM/KV-cache errors. Optional dep, model runs on the NAS. Next: `detect`-mode
-      VLM-guided cropping → YOLO escalation.
+      OOM/KV-cache errors, and a **multi-pass majority vote** (default 3 passes; the vote
+      ratio is the honest confidence and non-unanimous frames are flagged for review) since
+      moondream's yes/no wobbles run-to-run (0.28.0, #60). Optional dep, model runs on the
+      NAS. Next: `detect`-mode VLM-guided cropping → YOLO escalation.
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on
