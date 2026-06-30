@@ -53,7 +53,7 @@ class Config:
 
     # --- Detection tuning ---
     detector_model: str = "yolo11n"  # "yolo11n" (better low-light/odd-pose, default) or a heavier YOLO variant (yolo11m / yolo11m_960 / yolo26m / ...). MobileNet-SSD was removed in 0.25.0 (YOLO won every benchmark); a model that can't load now raises a clear error rather than silently falling back.
-    accelerator: str = "cpu"         # where the YOLO model runs: "cpu" (default), "opencl" (iGPU via OpenCL, no extra deps), or "openvino-gpu"/"openvino-auto" (Intel OpenVINO, needs the optional 'openvino' pkg + Intel GPU drivers); auto-falls back to CPU if a GPU backend can't start
+    accelerator: str = "cpu"         # where the YOLO model runs: "cpu" (default), "opencl" (iGPU via OpenCL, no extra deps), "openvino-gpu"/"openvino-auto" (Intel OpenVINO, needs the optional 'openvino' pkg + Intel GPU drivers), or "onnx-cuda" (NVIDIA GPU via the optional 'onnxruntime-gpu' CUDA-12 build; ~37x faster than CPU). Auto-falls back to CPU if a GPU backend can't start — and onnx-cuda raises loudly rather than silently running on CPU.
     person_confidence: float = 0.5   # min DNN confidence to count as a person (0.5: clean person/cat split on stills, keeps hard poses ≥0.71)
     confirm_frames: int = 4          # require a person in this many frames in a row (4 guards against a moving cat's transient high-confidence spike)
     detect_size: int = 300           # legacy MobileNet-SSD net input size — ignored since 0.25.0 (YOLO uses its exported size). Kept so old configs still load; pick model resolution via the model name (e.g. yolo11m_960).

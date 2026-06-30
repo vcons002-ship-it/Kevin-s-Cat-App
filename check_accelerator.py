@@ -85,6 +85,40 @@ def _report_openvino() -> bool:
     return has_gpu
 
 
+def _report_cuda() -> bool:
+    """Print onnxruntime CUDA status; return True if CUDAExecutionProvider is usable."""
+    print("\nNVIDIA CUDA  (the 'onnx-cuda' accelerator):")
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        print("  ⚠ 'onnxruntime' not installed — re-run setup, or install the CUDA-12")
+        print("    build: pip install onnxruntime-gpu (CUDA-12 index, see models/README.md)")
+        return False
+    providers = ort.get_available_providers()
+    print(f"  ✅ onnxruntime {ort.__version__} installed — providers: {providers}")
+    if "CUDAExecutionProvider" not in providers:
+        print("  ⚠ CUDAExecutionProvider NOT available — this is the CPU-only build of")
+        print("    onnxruntime. Install 'onnxruntime-gpu' (CUDA-12) on an NVIDIA host.")
+        return False
+    lib = yolo._torch_cuda_lib_dir()
+    print(f"  torch CUDA lib dir (for LD_LIBRARY_PATH): {lib or 'torch not installed'}")
+    # Actually building a CUDA session is the real test (it exposes the silent-CPU trap).
+    try:
+        model = cfg_model_for_demo()
+        runner = yolo.load_net(model, "onnx-cuda")   # raises loudly if it lands on CPU
+        del runner
+        print("  ✅ CUDAExecutionProvider is live (a session ran on the GPU, not CPU).")
+        return True
+    except Exception as exc:                          # noqa: BLE001
+        print(f"  ⚠ onnx-cuda could not start on the GPU: {exc}")
+        return False
+
+
+def cfg_model_for_demo() -> str:
+    cfg = config_mod.load()
+    return cfg.detector_model if cfg.detector_model.startswith("yolo") else "yolo11n"
+
+
 def main() -> int:
     cfg = config_mod.load()
     print(f"Configured: detector_model={cfg.detector_model}  "
@@ -94,6 +128,7 @@ def main() -> int:
     have_opencl = cv2.ocl.haveOpenCL()
     _report_opencl()
     has_gpu = _report_openvino()
+    _report_cuda()
 
     # All detection models are YOLO now; fall back to yolo11n only if the config
     # somehow carries a non-YOLO name (e.g. an old MobileNet value, removed in 0.25.0).
@@ -118,18 +153,21 @@ def main() -> int:
         print(f"  → CPU: {ms:.0f} ms/frame")
 
     if used == "cpu":
-        print("\n  Running on CPU. Pick an 'openvino-*' or 'opencl' accelerator in the")
-        print("  GUI (Detection card) to offload onto an Intel iGPU.")
+        print("\n  Running on CPU. Pick an 'openvino-*'/'opencl' accelerator (Intel iGPU)")
+        print("  or 'onnx-cuda' (NVIDIA GPU) in the GUI (Detection card) to offload.")
         return 0
 
     # Is the chosen backend *actually* on a GPU, or just a faster CPU runtime?
-    # openvino-gpu only loads if a GPU compiled; AUTO/opencl depend on a device.
+    # openvino-gpu only loads if a GPU compiled; AUTO/opencl depend on a device;
+    # onnx-cuda raises (caught above) unless it's genuinely on CUDAExecutionProvider.
     if used == "openvino-gpu":
         on_gpu = True                         # GPU compile would have raised otherwise
     elif used == "openvino-auto":
         on_gpu = has_gpu
     elif used == "opencl":
         on_gpu = have_opencl
+    elif used == "onnx-cuda":
+        on_gpu = True                         # the runner raises if it landed on CPU
     else:
         on_gpu = False
 

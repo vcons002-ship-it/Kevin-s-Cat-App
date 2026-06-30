@@ -46,13 +46,35 @@ card in the GUI, or `accelerator:` in `config.yaml`) can offload it:
   runtime (optional `openvino` package; `setup.sh`/`setup.ps1` offer it) on the
   `GPU` device, or `AUTO` (GPU with a built-in CPU fallback). Typically 2–4× CPU
   on Intel hardware and the thing that makes `yolo11m` practical.
+- `onnx-cuda` — run the ONNX through **onnxruntime-gpu** on an **NVIDIA GPU**
+  (CUDAExecutionProvider). Measured **~23 ms/inference on an RTX 3070 vs
+  ~485–855 ms on CPU — a ~37× speedup**, which is what makes the heavyweight
+  `yolo26x` runnable continuously (≈93 ms/frame at 2×2, ≈210 ms at 3×3). Optional
+  `onnxruntime-gpu` package; `setup.sh`/`setup.ps1` offer it. **Use the CUDA-12
+  build** to match a CUDA 12.x host — the default pip build targets CUDA 13 and
+  fails with `libcudart.so.13 not found`.
 
-**Caveats, honestly:** OpenVINO's GPU plugin is **Intel-only** — it does nothing
-on AMD/ARM and needs the host Intel GPU compute drivers installed. Whatever you
-pick, the app retries the same model on CPU if the accelerator can't start, so a
-missing driver won't break detection. The OpenVINO path is verified
-end-to-end on the CPU device in the test suite; the real **iGPU** speed-ups are
-from Intel's published figures and should be confirmed on your own hardware.
+**Caveats, honestly:**
+- **OpenVINO's GPU plugin is Intel-only** — it does nothing on AMD/ARM and needs
+  the host Intel GPU compute drivers installed.
+- **`onnx-cuda` is NVIDIA-only, and has a silent-failure trap:** onnxruntime-gpu's
+  CUDA provider **silently falls back to CPU** (37× slower, but *looks* like it
+  works) unless the CUDA runtime libs (`libcublasLt.so.12`, `libcudnn.so.9`, …) are
+  discoverable. The clean fix is torch's bundled `lib/` dir, which already has a
+  compatible CUDA 12 / cuDNN 9 set — `run.py` prepends it to `LD_LIBRARY_PATH`
+  automatically (and re-execs once) when `onnx-cuda` is selected. If you launch
+  another way, export it yourself:
+  ```
+  export LD_LIBRARY_PATH=$(./venv/bin/python -c "import os,torch;print(os.path.dirname(torch.__file__)+'/lib')"):$LD_LIBRARY_PATH
+  ```
+  The app **detects the silent CPU fallback** (it checks the session's active
+  provider) and **errors loudly** rather than running 37× slow without telling you.
+  TensorRT EP isn't wired up — CUDA at ~23 ms is already plenty.
+
+Whatever you pick, the app retries the same model on CPU if the accelerator can't
+start, so a missing driver won't break detection. The OpenVINO and onnxruntime
+decode paths are verified end-to-end on the CPU in the test suite (identical boxes
+to `cv2.dnn`); the real **GPU** speed-ups should be confirmed on your own hardware.
 
 To check what your box actually does, run the diagnostic — it lists the detected
 devices, resolves your `accelerator` to a real GPU vs a silent CPU fallback, and

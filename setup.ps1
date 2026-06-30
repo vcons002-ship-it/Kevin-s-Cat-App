@@ -143,6 +143,21 @@ if ($wantOpenvino) {
     }
 }
 
+# Optional: run YOLO on an NVIDIA GPU via onnxruntime-gpu (the "NVIDIA CUDA" accelerator,
+# ~37x faster than CPU). Use the CUDA-12 build to match a CUDA 12.x install.
+$wantCuda = $false
+if ([Environment]::UserInteractive) {
+    $a = Read-Host "Install NVIDIA CUDA GPU acceleration for YOLO (optional, NVIDIA GPU only)? [y/N]"
+    if ($a -and $a.Trim().ToLower().StartsWith('y')) { $wantCuda = $true }
+}
+if ($wantCuda) {
+    & $vpy -m pip install 'onnxruntime-gpu>=1.20' `
+        --extra-index-url 'https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/'
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "    (onnxruntime-gpu install failed - the NVIDIA CUDA accelerator will fall back to CPU)"
+    }
+}
+
 # Optional: XLSX export for the benchmark tool (the HTML report works without it).
 $wantXlsx = $false
 if ([Environment]::UserInteractive) {

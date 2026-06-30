@@ -21,6 +21,16 @@ onvif-zeep>=0.2.12
 #   pip install openvino
 # openvino>=2024.0
 
+# Optional: run the YOLO detector on an NVIDIA GPU via onnxruntime (the "NVIDIA CUDA"
+# accelerator, ~37x faster than CPU on an RTX 3070). Install the CUDA-12 build to match
+# a CUDA 12.x host — the default pip build targets CUDA 13 and fails with
+# 'libcudart.so.13 not found'. The CUDA runtime libs must be discoverable at launch
+# (the app prepends torch's bundled lib dir to LD_LIBRARY_PATH, and run.py does too);
+# otherwise onnxruntime SILENTLY runs on CPU — the app detects that and errors loudly.
+# Not installed by default — setup.sh / setup.ps1 offer it, or:
+#   pip install onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+# onnxruntime-gpu>=1.20
+
 # XLSX export for the "Benchmark this image" tool (the HTML report needs nothing
 # extra). Small and pure-Python, and there's a button for it in the GUI, so it ships
 # by default now — a visible control shouldn't need a manual install to work (#53).
