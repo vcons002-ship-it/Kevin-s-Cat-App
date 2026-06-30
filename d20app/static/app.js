@@ -887,7 +887,7 @@ async function runBatchOf(items, noteEl) {
   const { ok, body } = await api("/api/test/benchmark/batch", postJSON({
     items, models, tilings, batch_id: batchId, ...benchControls(),
     run_vlm: !!(vlmEl && vlmEl.checked),
-    vlm_model: $("vlm-model") ? $("vlm-model").value : undefined,
+    vlm_model: vlmCurrent().model, vlm_mode: vlmCurrent().mode,
   }));
   activeBatchId = null;
   $("bench-batch-run").disabled = false;
@@ -932,19 +932,53 @@ function benchmarkAllFrames() {
 // ---- Cat-presence (VLM / moondream) tester (#48) ---------------------------
 let vlmSession = null;
 
+let VLM_CHOICES = [];   // [{value, mode, model, label, off_device}] — from /api/vlm/status
+
+// The selected (mode, model) pair from the choice dropdown.
+function vlmCurrent() {
+  const sel = $("vlm-choice");
+  const c = VLM_CHOICES.find((x) => x.value === (sel && sel.value)) || VLM_CHOICES[0] || {};
+  return { mode: c.mode || "local", model: c.model || "moondream2", off_device: !!c.off_device };
+}
+
+// Show/hide the "cloud sends images off-device" warning for the current choice.
+function updateVlmOffDevice() {
+  const w = $("vlm-offdevice");
+  if (w) w.classList.toggle("hidden", !vlmCurrent().off_device);
+}
+
 async function loadVlmStatus() {
   const { body } = await api("/api/vlm/status");
   if (!body) return;
   if ($("vlm-prompt") && !$("vlm-prompt").value) $("vlm-prompt").value = body.default_prompt || "";
-  const sel = $("vlm-model");
-  if (sel && Array.isArray(body.models)) {
-    sel.innerHTML = body.models.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
-    if (body.default_model) sel.value = body.default_model;
+  VLM_CHOICES = Array.isArray(body.choices) ? body.choices : [];
+  const sel = $("vlm-choice");
+  if (sel && VLM_CHOICES.length) {
+    sel.innerHTML = VLM_CHOICES.map((c) => `<option value="${esc(c.value)}">${esc(c.label)}</option>`).join("");
+    if (body.default_choice) sel.value = body.default_choice;
+    sel.onchange = updateVlmOffDevice;
   }
+  updateVlmOffDevice();
+  // API-key status: a missing key is the field's own documentation, never a cryptic 401.
+  const ks = $("vlm-key-status");
+  if (ks) ks.textContent = body.has_api_key ? "✅ key set" : "⚠ no key set — paste yours to enable the VLM";
   if (!body.available) {
     const note = $("vlm-unavailable");
-    note.textContent = "moondream isn’t installed — the tester is ready, but Run needs: pip install moondream, a supported GPU (CUDA/Ampere or Apple Silicon), and MOONDREAM_API_KEY. It’ll work once that’s in place.";
+    note.textContent = "moondream isn’t installed — the tester is ready, but local Run needs: pip install moondream, a supported GPU (CUDA/Ampere or Apple Silicon), and an API key. Cloud mode needs only the package + key. It’ll work once that’s in place.";
     note.classList.remove("hidden");
+  }
+}
+
+async function saveVlmKey() {
+  const inp = $("vlm-key");
+  const key = (inp && inp.value || "").trim();
+  if (!key) { $("vlm-key-status").textContent = "Paste a key first."; return; }
+  const { ok, body } = await api("/api/config", postJSON({ moondream_api_key: key }));
+  if (ok && body) {
+    inp.value = "";
+    $("vlm-key-status").textContent = "✅ key saved";
+  } else {
+    $("vlm-key-status").textContent = "Save failed.";
   }
 }
 
@@ -968,10 +1002,11 @@ async function uploadVlm(file) {
 async function runVlm() {
   if (!vlmSession) { $("vlm-note").textContent = "Upload a photo or video first."; return; }
   $("vlm-run").disabled = true;
-  $("vlm-note").textContent = "Asking moondream… (multi-second to a minute on CPU)";
+  $("vlm-note").textContent = "Asking moondream…";
+  const cur = vlmCurrent();
   const { ok, body } = await api("/api/vlm/query", postJSON({
     id: vlmSession.id, frame_index: Number($("vlm-frame").value) || 0,
-    prompt: $("vlm-prompt").value, model: $("vlm-model").value,
+    prompt: $("vlm-prompt").value, model: cur.model, mode: cur.mode,
   }));
   $("vlm-run").disabled = false;
   if (!ok || !body || body.error) { $("vlm-note").textContent = (body && body.error) || "Query failed."; return; }
@@ -991,7 +1026,7 @@ function renderVlm(b) {
   const load = b.load_ms ? ` · model load ${Math.round(b.load_ms)} ms` : "";
   $("vlm-latency").textContent = `query ${Math.round(b.query_ms)} ms${load}`;
   $("vlm-raw").textContent = b.raw || "(empty response)";
-  $("vlm-meta").textContent = `model: ${b.model} · device: ${b.device}`;
+  $("vlm-meta").textContent = `model: ${b.model} · mode: ${b.mode || "local"} · device: ${b.device}`;
 }
 
 function vlmSummaryLine(v) {
@@ -1060,8 +1095,9 @@ async function runVlmBatch() {
   $("vlm-batch-run").disabled = true;
   $("vlm-batch-abort").classList.remove("hidden");
   $("vlm-batch-note").textContent = `Running the VLM on ${vlmBatchItems.length} images… you can abort.`;
+  const cur = vlmCurrent();
   const { ok, body } = await api("/api/vlm/batch", postJSON({
-    items: vlmBatchItems, batch_id: vlmBatchId, model: $("vlm-model").value,
+    items: vlmBatchItems, batch_id: vlmBatchId, model: cur.model, mode: cur.mode,
   }));
   vlmBatchId = null;
   $("vlm-batch-run").disabled = false;
@@ -1250,6 +1286,8 @@ function wire() {
   if (ba) ba.onclick = benchmarkAllFrames;
   const vf = $("vlm-file");
   if (vf) vf.onchange = (e) => uploadVlm(e.target.files[0]);
+  const vks = $("vlm-key-save");
+  if (vks) vks.onclick = saveVlmKey;
   const vr = $("vlm-run");
   if (vr) vr.onclick = runVlm;
   const vbf = $("vlm-batch-files");

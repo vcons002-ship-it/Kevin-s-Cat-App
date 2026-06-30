@@ -713,7 +713,7 @@ def _vlm_summary(verdicts: list) -> dict:
     }
 
 
-def _run_vlm_items(items: list, model: str, batch_id=None):
+def _run_vlm_items(items: list, model: str, batch_id=None, mode="local", api_key=None):
     """Run one VLM query per uploaded item; return ``(verdicts, skipped, cancelled)``.
     Each verdict carries ``name``/``has_cat``/``answer``/``reason``/``query_ms``/``error``.
     Cancel- and skip-aware, mirroring the detection batch. Caller should ``preflight``
@@ -740,7 +740,7 @@ def _run_vlm_items(items: list, model: str, batch_id=None):
         except (TypeError, ValueError):
             idx = 0
         try:
-            r = vlm.query_image(frames[idx], model=model)
+            r = vlm.query_image(frames[idx], model=model, mode=mode, api_key=api_key)
             verdicts.append({"name": name, "has_cat": has_cat, "answer": r["answer"],
                              "reason": r["reason"], "query_ms": r["query_ms"], "error": None})
         except RuntimeError as exc:     # a per-image query failure — keep going
@@ -771,6 +771,10 @@ def _public_config(cfg) -> dict:
     """Config as a browser-safe dict: strip passwords, expand the camera list."""
     d = cfg.asdict()
     d.pop("camera_password", None)
+    # The Moondream API key is a secret: never send it to the browser — expose only
+    # whether one is set (the GUI shows "key set" / a paste field accordingly). #59
+    d.pop("moondream_api_key", None)
+    d["has_moondream_api_key"] = bool(cfg.moondream_api_key or os.environ.get("MOONDREAM_API_KEY"))
     d["cameras"] = _mask_cameras(d.get("cameras"), cfg)
     return d
 
@@ -911,6 +915,10 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         # Don't overwrite a stored password with an empty form field.
         if not values.get("camera_password"):
             values.pop("camera_password", None)
+        # Same for the Moondream API key: a blank field on save keeps the stored key
+        # (the GUI only sends it when the user actually types a new one). #59
+        if not (values.get("moondream_api_key") or "").strip():
+            values.pop("moondream_api_key", None)
         # The saved-camera store is managed only via the /api/cameras/saved
         # endpoints, so the main settings save can't clobber it (or its passwords).
         values.pop("cameras", None)
@@ -1194,10 +1202,12 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         # If the VLM can't run, don't fail the whole sweep: note it and carry on.
         run_vlm = bool(body.get("run_vlm"))
         vlm_model = body.get("vlm_model") or vlm.DEFAULT_MODEL
+        vlm_mode = body.get("vlm_mode") or vlm.DEFAULT_MODE
+        vlm_key = _vlm_key(body)
         vlm_error = None
         if run_vlm:
             try:
-                vlm.preflight(body.get("api_key"))
+                vlm.preflight(vlm_key, vlm_mode)
             except RuntimeError as exc:
                 run_vlm, vlm_error = False, str(exc)
 
@@ -1247,7 +1257,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                      "orig_thumb": _orig_thumb_data_url(frame), "runs": light}
             if run_vlm:        # one VLM query per image, alongside the sweep (#54)
                 try:
-                    vr = vlm.query_image(frame, model=vlm_model)
+                    vr = vlm.query_image(frame, model=vlm_model, mode=vlm_mode, api_key=vlm_key)
                     entry["vlm"] = {"answer": vr["answer"], "reason": vr["reason"],
                                     "query_ms": vr["query_ms"], "error": None}
                 except RuntimeError as exc:
@@ -1331,18 +1341,28 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     # -- local VLM (moondream) cat-presence tester (#48) ----------------------
     @app.get("/api/vlm/status")
     def api_vlm_status():
-        # Tells the GUI whether the optional 'moondream' package is installed, so it
-        # can hint how to enable the tester instead of failing on Run.
+        # Tells the GUI whether the optional 'moondream' package is installed and whether
+        # an API key is set, plus the coherent (mode, model) choices it should offer (#59),
+        # so it can hint how to enable the tester instead of failing on Run.
+        cfg = config_mod.load()
         return jsonify({"available": vlm.is_available(),
+                        "has_api_key": bool(cfg.moondream_api_key
+                                            or os.environ.get("MOONDREAM_API_KEY")),
                         "default_prompt": vlm.DEFAULT_PROMPT,
+                        "choices": vlm.VLM_CHOICES, "default_choice": vlm.DEFAULT_CHOICE,
                         "models": list(vlm.MODELS), "default_model": vlm.DEFAULT_MODEL})
+
+    def _vlm_key(body) -> str | None:
+        # Per-request key wins (e.g. a paste before saving); else the stored config key;
+        # else the module falls back to MOONDREAM_API_KEY. Never logged. #59
+        return (body.get("api_key") or "").strip() or config_mod.load().moondream_api_key or None
 
     @app.post("/api/vlm/query")
     def api_vlm_query():
         # One moondream 'query' pass on an uploaded/extracted frame. Runs on this
-        # request's worker thread (Flask is threaded) — a slow CPU query blocks only
-        # this request, not the app; the GUI shows a "working…" state. Degrades with a
-        # clear message when moondream or the model is absent (never a 500).
+        # request's worker thread (Flask is threaded) — a slow query blocks only this
+        # request, not the app; the GUI shows a "working…" state. Degrades with a clear
+        # message when moondream, a GPU/VRAM, or the key is absent (never a 500).
         body = request.get_json(silent=True) or {}
         with _TEST_SESSIONS_LOCK:
             frames = _TEST_SESSIONS.get(body.get("id"))
@@ -1355,7 +1375,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         try:
             result = vlm.query_image(
                 frames[idx], prompt=body.get("prompt") or vlm.DEFAULT_PROMPT,
-                model=body.get("model") or vlm.DEFAULT_MODEL, api_key=body.get("api_key"))
+                model=body.get("model") or vlm.DEFAULT_MODEL,
+                mode=body.get("mode") or vlm.DEFAULT_MODE, api_key=_vlm_key(body))
         except RuntimeError as exc:         # optional dep / no GPU / no key / query failure
             return jsonify({"error": str(exc)}), 503
         return jsonify(result)
@@ -1373,12 +1394,14 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             return jsonify({"error": f"Too many images ({len(items)}); ceiling is "
                             f"{_BENCH_MAX_IMAGES_HARD}."}), 400
         model = body.get("model") or vlm.DEFAULT_MODEL
+        mode = body.get("mode") or vlm.DEFAULT_MODE
+        key = _vlm_key(body)
         try:                                # fail fast on a setup error, not per image
-            vlm.preflight(body.get("api_key"))
+            vlm.preflight(key, mode)
         except RuntimeError as exc:
             return jsonify({"error": str(exc)}), 503
         batch_id = body.get("batch_id")
-        verdicts, skipped, cancelled = _run_vlm_items(items, model, batch_id)
+        verdicts, skipped, cancelled = _run_vlm_items(items, model, batch_id, mode, key)
         if batch_id:
             with _BENCH_CANCEL_LOCK:
                 _BENCH_CANCEL.discard(batch_id)

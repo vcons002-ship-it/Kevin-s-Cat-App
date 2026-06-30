@@ -11,6 +11,39 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.27.0] — 2026-06-30
+
+### Added
+- **Moondream VLM tester: validated load params, an API-key field, and a local/cloud mode
+  selector** (#59) — the complete, hardware-validated picture from bringing moondream up on
+  an 8 GB RTX 3070.
+  - **Validated local load.** Local inference now uses the params that actually work on
+    8 GB: `md.vl(api_key=…, local=True, model="moondream2", max_batch_size=4,
+    kv_cache_pages=2048)`. The default auto-sized KV cache OOMs (`CUBLAS_STATUS_ALLOC_FAILED`)
+    and `kv_cache_pages=256` loads but can't serve; **2048** loads (~4.6 GB) **and** serves.
+  - **API key in the GUI.** A password field in the VLM card stores the key in config
+    (`moondream_api_key`) — **never logged, never sent back to the browser** (`/api/config`
+    exposes only a `has_moondream_api_key` flag), and a **blank field on save keeps the
+    stored key**. A missing key shows a clear "⚠ no key set — paste yours" message instead
+    of a cryptic 401. `MOONDREAM_API_KEY` still works for headless use.
+  - **Mode selector.** Two coherent choices, same `md.vl()` interface:
+    *Moondream 2 — local* (default; private, ~0.3 s, fits 8 GB) and *Moondream 3 — cloud
+    API* (most accurate, but **sends images off-device** — the UI says so, and shows a
+    warning when cloud is picked). Cloud mode needs **no GPU**; only local does.
+  - **moondream3 local is not offered** — Photon has no weight quantisation, so the ~9B M3
+    loads at bf16 and needs >8 GB; on a small card it's cloud-only (the selector reflects this).
+  - **Friendly GPU errors.** CUDA OOM, the "insufficient KV cache" stall, and cuBLAS alloc
+    failures map to actionable messages ("lower max_batch_size", "raise kv_cache_pages",
+    "this model doesn't fit this GPU's VRAM") instead of a raw traceback.
+  - Mode is threaded through every VLM path: single query, the batch tester, and the
+    detection-batch "also run VLM" toggle.
+
+### Notes
+- Suite: **218 tests** (+7 for the mode selector, the validated local params, the masked
+  config key + blank-keeps-stored behaviour, the local-needs-GPU/cloud-doesn't split, and
+  the friendly OOM/KV error mapping), all green. The model itself runs on the NAS; here the
+  load-call shape, mode plumbing, key masking, and error mapping are verified with mocks.
+
 ## [0.26.0] — 2026-06-30
 
 ### Added

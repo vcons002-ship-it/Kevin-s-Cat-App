@@ -249,6 +249,13 @@
         </label>
       </div>
       <p id="vlm-unavailable" class="muted hidden"></p>
+      <div class="row vlm-key-row">
+        <label class="inline" title="Authenticates the one-time local weight download AND cloud inference. Stored in config, never logged, never sent back to the browser.">
+          API key <input id="vlm-key" type="password" placeholder="paste your Moondream key" autocomplete="off" />
+        </label>
+        <button id="vlm-key-save" class="ghost" type="button">Save key</button>
+        <span id="vlm-key-status" class="muted"></span>
+      </div>
       <div id="vlm-frame-pick" class="test-video-tools hidden">
         <label class="inline">Frame <input id="vlm-frame" type="number" min="0" step="1" value="0" /></label>
         <span id="vlm-frame-count" class="muted"></span>
@@ -257,10 +264,11 @@
         <textarea id="vlm-prompt" rows="3"></textarea>
       </label>
       <div class="row">
-        <label class="inline">Model <select id="vlm-model"></select></label>
+        <label class="inline">Mode <select id="vlm-choice"></select></label>
         <button id="vlm-run" class="primary" type="button" disabled>Ask “is there a cat?”</button>
         <span id="vlm-note" class="muted"></span>
       </div>
+      <p id="vlm-offdevice" class="muted hidden">⚠ Cloud mode sends the image off-device to Moondream’s API.</p>
       <div id="vlm-result" class="vlm-result hidden">
         <div class="row vlm-verdict">
           <span id="vlm-answer" class="vlm-badge"></span>
@@ -299,10 +307,13 @@
         detectors, good on hard frames they miss and on decoys they false-fire on. The
         <strong>full response is shown</strong> because the reasoning is the tool: it
         reveals <em>why</em> it answered (e.g. “the round fuzzy object looks like a cat”).
-        No confidence number is shown — moondream’s self-report proved meaningless. Local
-        inference <strong>needs a supported GPU</strong> (CUDA/Ampere or Apple Silicon —
-        there’s no CPU path) and an <code>MOONDREAM_API_KEY</code> for the one-time weight
-        download; it’s an occasional evaluation tool, not an every-frame path.
+        No confidence number is shown — moondream’s self-report proved meaningless.
+        Paste your <strong>API key</strong> above (stored locally, never logged); it
+        authenticates the one-time weight download and cloud inference. <strong>Local
+        (Moondream 2)</strong> needs a supported GPU (CUDA/Ampere or Apple Silicon — no CPU
+        path) and keeps frames on the box; <strong>cloud (Moondream 3)</strong> is the most
+        accurate on hard frames but <strong>sends the image off-device</strong>. It’s an
+        occasional evaluation tool, not an every-frame path.
       </p>
     </section>
 

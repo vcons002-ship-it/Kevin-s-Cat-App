@@ -171,11 +171,12 @@ if ($wantXlsx) {
     }
 }
 
-# Optional: the local VLM "Cat-presence" tester (moondream). Model is multi-GB and
-# downloaded separately - set MOONDREAM_MODEL to its path.
+# Optional: the local VLM "Cat-presence" tester (moondream). The package is small; the
+# weights download on first use (authenticated by the API key you paste in the GUI).
+# Local inference needs an Ampere+ NVIDIA GPU or Apple Silicon; cloud mode needs neither.
 $wantVlm = $false
 if ([Environment]::UserInteractive) {
-    $a = Read-Host "Install the moondream VLM cat-presence tester (optional, large model)? [y/N]"
+    $a = Read-Host "Install the moondream VLM cat-presence tester (optional)? [y/N]"
     if ($a -and $a.Trim().ToLower().StartsWith('y')) { $wantVlm = $true }
 }
 if ($wantVlm) {
@@ -183,6 +184,7 @@ if ($wantVlm) {
     if ($LASTEXITCODE -ne 0) {
         Write-Host "    (moondream install failed - the Cat-presence (VLM) tester will be unavailable)"
     }
+    Write-Host "    Paste your Moondream API key in the GUI's Cat-presence card (or set MOONDREAM_API_KEY)."
 }
 
 Write-Host "==> Generating the default treat chime"

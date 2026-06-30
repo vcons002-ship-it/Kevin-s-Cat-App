@@ -79,6 +79,9 @@ quiet_end: ""             # "HH:MM" 24h, e.g. "07:00" (may wrap past midnight)
 # --- Casting behaviour ---
 dont_interrupt_playback: false   # if true, skip the chime when the speaker is already playing
 
+# --- VLM (moondream) cat-presence tester ---
+moondream_api_key: ''     # paste in the GUI instead — authenticates the one-time local weight download AND cloud inference. Never logged; never sent back to the browser. Env MOONDREAM_API_KEY also works.
+
 # --- Servers ---
 web_port: 8080            # the GUI
 file_server_port: 8081    # serves the sound file to the speaker
