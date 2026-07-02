@@ -310,7 +310,7 @@ class PersonDetector:
                  cat_scan_tiling: str = "off", cat_scan_tile_overlap: float = 0.2,
                  cat_scan_imgsz: int = 0, cat_scan_frames: int = 1,
                  cat_confidence: float = 0.5,
-                 locator_classes=None) -> None:
+                 locator_classes=None, track_fusion: bool = True) -> None:
         self.source = source
         self.confidence = confidence
         # The locator ("the cat") path: which classes count, and the confidence they
@@ -325,6 +325,7 @@ class PersonDetector:
         self.cat_scan_imgsz = int(cat_scan_imgsz or 0)
         self.cat_scan_frames = max(1, min(int(cat_scan_frames or 1),
                                           self._AVG_MAX_FRAMES))
+        self.track_fusion = bool(track_fusion)
         self._locator_runner = None     # lazily-loaded larger-input YOLO net (Option A)
         self._locator_size = None
         self._locator_model = None
@@ -400,6 +401,12 @@ class PersonDetector:
         from collections import deque
         self._ring: "deque" = deque(maxlen=self._RING_FRAMES)
         self._ring_last = 0.0
+        # Temporal score fusion (0.37.0): weak locator hits accumulated across
+        # frames — a consistently-moving 0.35-confidence cat becomes one confirmed
+        # sighting no single frame could produce. Pure YOLO evidence (0.33.0 rules).
+        from .fusion import TrackFuser
+        self._fusion = TrackFuser()
+        self._fused_hit = None          # last unclaimed confirmation (see take_fused_hit)
 
     # -- model / stream lifecycle -------------------------------------------
     def _ensure_net(self):
@@ -758,6 +765,19 @@ class PersonDetector:
             items = items[-n:]
         return [(ts, f.copy()) for ts, f in items]
 
+    # Temporal-fusion weak floor: locator-class boxes at [_FUSE_FLOOR, cat_confidence)
+    # are invisible everywhere except the fuser. Below ~0.2 the models false-fire
+    # (#70's measured detection floor was 0.25; 0.2 keeps a little headroom for the
+    # genuinely-weak-but-real hits fusion exists to accumulate).
+    _FUSE_FLOOR = 0.2
+
+    def take_fused_hit(self):
+        """Pop the latest temporal-fusion confirmation (or None). The loop claims it
+        exactly once and records it as an ordinary sighting (source "track")."""
+        with self._live_lock:
+            fused, self._fused_hit = self._fused_hit, None
+        return fused
+
     # Still-scan frame averaging: burst cap, stillness-probe width, and the mean
     # gray diff (on the probe) above which the scene counts as moving. Averaging
     # a still scene drops sensor noise ~√N — real signal recovery, the opposite
@@ -1004,15 +1024,33 @@ class PersonDetector:
         floor = min(self.label_floor, self.confidence, self.cat_confidence)
         # A forced (still-cat) scan uses the higher-resolution locator path; the
         # motion/treat path stays fast at the native size.
-        boxes = self._detect_locator(frame, floor) if force else self._detect_boxes(frame, floor)
+        fused = None
+        if force:
+            boxes = self._detect_locator(frame, floor)
+        elif self.track_fusion:
+            # Temporal fusion (0.37.0): decode down to the weak floor in the SAME
+            # forward pass (the floor is a post-filter, not extra inference). Weak
+            # locator hits feed the fuser only — everything the rest of the app
+            # sees (boxes, live feed, labels) is still thresholded at `floor`, so
+            # nothing weak leaks out except as a fused, movement-checked confirm.
+            raw_boxes = self._detect_boxes(frame, min(floor, self._FUSE_FLOOR))
+            boxes = [b for b in raw_boxes if b[1] >= floor]
+            self._fusion.frame_size = (cropped.shape[1], cropped.shape[0])
+            fused = self._fusion.update(None, [
+                (s, b) for lab, s, b in raw_boxes
+                if lab in self.locator_classes and s >= self._FUSE_FLOOR])
+        else:
+            boxes = self._detect_boxes(frame, floor)
         self._last_frame = cropped             # what the net saw (box coords match)
         now = time.monotonic()
         cat_seen = any(self._is_locator_hit(lab, score) for lab, score, _ in boxes)
         with self._live_lock:
             self._last_boxes = boxes           # fresh detections (possibly empty)
             self._live_boxes_at = now
-            if cat_seen:
+            if cat_seen or fused:
                 self._cat_last_seen = now
+            if fused:
+                self._fused_hit = fused        # claimed (and recorded) by the loop
             self._live_version += 1            # boxes changed → stream re-renders
         person = self._best(boxes, "person") >= self.confidence
         # Identify non-person movers: a locator class (the cat) at cat_confidence,

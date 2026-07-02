@@ -49,9 +49,13 @@ _TEST_SESSIONS: "OrderedDict[str, list]" = OrderedDict()   # id -> [BGR frame, .
 _TEST_SESSIONS_LOCK = threading.Lock()
 # Must hold a whole batch's uploads at once — it's tied to the batch image ceiling
 # (`_BENCH_MAX_IMAGES_HARD`) below so the two can't drift again: the old cap of 4 was
-# sized for single-image testing and silently truncated big batches (#40). Each
-# session is a handful of small frames, trivial in RAM at this size.
-_TEST_MAX_SESSIONS = 100
+# sized for single-image testing and silently truncated big batches (#40), and the
+# later 100 still forced full-set runs (199 cats + 43 nulls) to be split (#73).
+# 1000 lets a whole benchmark set run in one pass; the models process images one at
+# a time regardless, so this is upload-queue RAM only — NOT moondream's
+# max_batch_size/kv_cache_pages VRAM params, which stay untouched (raising those
+# OOMs the 8 GB card).
+_TEST_MAX_SESSIONS = 1000
 _TEST_VIDEO_FRAMES = 8           # fallback when a clip's duration can't be read
 _TEST_MAX_FRAMES = 100           # cap video-frame extraction (#38)
 _test_detectors: dict = {}              # (model, accelerator) -> reusable PersonDetector
@@ -191,29 +195,18 @@ _BENCH_LOCK = threading.Lock()
 _BENCH_MAX_REPORTS = 40         # hold a full batch (per-image reports + summary) at once
 _BENCH_TILINGS = ["off", "2x2", "3x3", "4x4"]
 _BENCH_MAX_RUNS = 24            # cap the matrix so one request can't run forever
-# Selectable detection models with display labels. This is the SINGLE source for the
-# benchmark sweep AND every GUI model dropdown, so a hand-maintained list can't drift
-# from the registry again (#50 — the YOLO26 entries reached the sweep but not the live
-# picker, the mirror of the earlier "SSD variants missing from the sweep" bug).
-_YOLO_OPTIONS = [
-    ("yolo11n", "YOLO11n (320) — low light, rec."),
-    ("yolo11m", "YOLO11m (640) — heavier"),
-    ("yolo11m_960", "YOLO11m (960) — max"),
-    ("yolo11m_1280", "YOLO11m (1280)"),
-    ("yolo26m", "YOLO26m (640) — newer, small-object"),
-    ("yolo26x", "YOLO26x (640) — heaviest"),
-]
-
-
 def _model_options() -> list:
-    """``[{value, label}]`` for every selectable model: the YOLO variants whose ONNX is
-    actually present (export-only ones like yolo26x/yolo11m_1280 appear only once their
-    file exists, so the picker never offers a model that can't load). Order =
-    lightest-to-heaviest."""
+    """``[{value, label}]`` for every selectable model, straight from the registry
+    (labels + the ``selectable`` flag live in ``yolo.MODELS`` — one source, no drift;
+    #50, #71). Only present ONNX files are offered (export-only ones like yolo26x /
+    the fp16 variants appear once their file exists), and #71's dropped models
+    (11m and friends) are registered-but-not-selectable: old configs load, new
+    configs can't pick them. Order = the registry's lightest-to-heaviest."""
     from . import yolo
 
-    return [{"value": v, "label": lbl} for v, lbl in _YOLO_OPTIONS
-            if v in yolo.MODELS and os.path.exists(yolo.model_path(v))]
+    return [{"value": v, "label": m.get("label", v)}
+            for v, m in yolo.MODELS.items()
+            if m.get("selectable", True) and os.path.exists(yolo.model_path(v))]
 
 
 def _benchmark_models():
@@ -754,12 +747,16 @@ def _vlm_summary(verdicts: list) -> dict:
 
 
 def _run_vlm_items(items: list, model: str, batch_id=None, mode="local", api_key=None,
-                   passes=1):
+                   passes=1, prompt=None, reasoning=False):
     """Run a majority-voted VLM query per uploaded item; return ``(verdicts, skipped,
     cancelled)``. Each verdict carries ``name``/``has_cat``/``answer`` (the majority
     verdict)/``reason``/``ratio``/``unanimous``/``borderline``/``query_ms``/``error``.
+    ``prompt`` is the USER'S prompt, threaded through exactly like the single-image
+    path (#72 — the batch used to silently run the baked-in default, making batch
+    prompt-testing impossible); None falls back to the model's validated default.
     Cancel- and skip-aware, mirroring the detection batch. Caller should ``preflight``
     first so a setup error (no package/key/GPU) fails fast rather than once per image."""
+    prompt = (prompt or "").strip() or vlm.default_prompt(model)
     verdicts, skipped = [], []
     cancelled = False
     for i, it in enumerate(items):
@@ -782,8 +779,9 @@ def _run_vlm_items(items: list, model: str, batch_id=None, mode="local", api_key
         except (TypeError, ValueError):
             idx = 0
         try:
-            r = vlm.query_image_voted(frames[idx], model=model, mode=mode,
-                                      api_key=api_key, passes=passes)
+            r = vlm.query_image_voted(frames[idx], prompt=prompt, model=model,
+                                      mode=mode, api_key=api_key, passes=passes,
+                                      reasoning=reasoning)
             verdicts.append({"name": name, "has_cat": has_cat, "answer": r["answer"],
                              "reason": r["reason"], "ratio": r["ratio"],
                              "unanimous": r["unanimous"], "borderline": r["borderline"],
@@ -1458,6 +1456,10 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                         "has_api_key": bool(cfg.moondream_api_key
                                             or os.environ.get("MOONDREAM_API_KEY")),
                         "default_prompt": vlm.DEFAULT_PROMPT,
+                        # Prompts are model-specific (#74): P6 on M3 → ~100% FP. The
+                        # GUI swaps defaults on model change and warns on a carried
+                        # custom prompt.
+                        "model_prompts": vlm.MODEL_PROMPTS,
                         "choices": vlm.VLM_CHOICES, "default_choice": vlm.DEFAULT_CHOICE,
                         "models": list(vlm.MODELS), "default_model": vlm.DEFAULT_MODEL,
                         "default_passes": vlm.DEFAULT_PASSES, "max_passes": vlm.MAX_PASSES,
@@ -1483,15 +1485,61 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             idx = max(0, min(int(body.get("frame_index", 0)), len(frames) - 1))
         except (TypeError, ValueError):
             idx = 0
+        model = body.get("model") or vlm.DEFAULT_MODEL
         try:
             result = vlm.query_image_voted(
-                frames[idx], prompt=body.get("prompt") or vlm.DEFAULT_PROMPT,
-                model=body.get("model") or vlm.DEFAULT_MODEL,
+                frames[idx], prompt=body.get("prompt") or vlm.default_prompt(model),
+                model=model,
                 mode=body.get("mode") or vlm.DEFAULT_MODE, api_key=_vlm_key(body),
-                passes=body.get("passes") or vlm.DEFAULT_PASSES)
+                passes=body.get("passes") or vlm.DEFAULT_PASSES,
+                reasoning=bool(body.get("reasoning")))      # M3's thinking mode (#76)
         except RuntimeError as exc:         # optional dep / no GPU / no key / query failure
             return jsonify({"error": str(exc)}), 503
         return jsonify(result)
+
+    @app.post("/api/vlm/locate")
+    def api_vlm_locate():
+        # moondream 'detect' mode exposed in the tester (#75): "show me WHERE the
+        # model thinks a cat is on this frame". The diagnostic use case is a
+        # false-positive null — the returned region says what feature (a cushion, a
+        # shadow) triggers the phantom, which informs better exclusion prompts.
+        # Purely diagnostic: nothing here records or confirms anything (#69 rules).
+        import cv2
+
+        body = request.get_json(silent=True) or {}
+        with _TEST_SESSIONS_LOCK:
+            frames = _TEST_SESSIONS.get(body.get("id"))
+        if not frames:
+            return jsonify({"error": "Upload a frame first (it may have expired)."}), 404
+        try:
+            idx = max(0, min(int(body.get("frame_index", 0)), len(frames) - 1))
+        except (TypeError, ValueError):
+            idx = 0
+        frame = frames[idx]
+        obj = (body.get("object") or "cat").strip() or "cat"
+        mode = body.get("mode") or vlm.DEFAULT_MODE
+        try:
+            vlm.preflight(_vlm_key(body), mode)
+            det = vlm.detect_regions(frame, obj,
+                                     model=body.get("model") or vlm.DEFAULT_MODEL,
+                                     api_key=_vlm_key(body), mode=mode)
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 503
+        h, w = frame.shape[:2]
+        boxes = [b for b in (escalation.map_normalized_box(r, (w, h))
+                             for r in det.get("objects") or []) if b]
+        annotated = frame.copy()
+        for i, (x1, y1, x2, y2) in enumerate(boxes):
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (60, 120, 255), 2)
+            cv2.putText(annotated, f"{obj} {i + 1}", (x1, max(14, y1 - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (60, 120, 255), 2, cv2.LINE_AA)
+        return jsonify({
+            "object": obj, "n": len(boxes), "boxes": [list(b) for b in boxes],
+            "detect_ms": det.get("detect_ms"), "model": det.get("model"),
+            "mode": det.get("mode"), "device": det.get("device"),
+            "annotated": _full_jpeg_data_url(annotated, quality=80),
+            "note": ("" if boxes else
+                     f"The model proposed no {obj} regions on this frame.")})
 
     @app.post("/api/vlm/batch")
     def api_vlm_batch():
@@ -1514,7 +1562,10 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             return jsonify({"error": str(exc)}), 503
         batch_id = body.get("batch_id")
         passes = body.get("passes") or vlm.DEFAULT_PASSES
-        verdicts, skipped, cancelled = _run_vlm_items(items, model, batch_id, mode, key, passes)
+        verdicts, skipped, cancelled = _run_vlm_items(
+            items, model, batch_id, mode, key, passes,
+            prompt=body.get("prompt"),                      # the user's prompt (#72)
+            reasoning=bool(body.get("reasoning")))
         if batch_id:
             with _BENCH_CANCEL_LOCK:
                 _BENCH_CANCEL.discard(batch_id)

@@ -13,31 +13,50 @@ after `setup.sh`.
 > missing ONNX (see `d20app/detector.py` `_ensure_net`). A GPU `accelerator` that
 > can't start still retries the *same* model on CPU first.
 
-The active model is chosen by `detector_model` in `config.yaml` / the GUI:
+The active model is chosen by `detector_model` in `config.yaml` / the GUI. The
+selectable lineup is **benchmark-settled** (#70/#71 — full 199-cat + 43-null set,
+golden exports, verified on the deployment 3070):
 
-- **`yolo11n`** (default) — `yolo11n.onnx` (~10 MB), Ultralytics YOLO11-nano,
-  COCO-80, exported at **320×320**. Strong in low light / odd poses (~0.87 on a
-  real dim night frame) at modest CPU (~28 ms at the bundled size). Class names
-  live in `d20app/yolo.py` (`COCO_CLASSES`); `person` is index 0, `cat` is 15.
-- **`yolo11m`** — `yolo11m.onnx` (~77 MB), YOLO11-**medium**, exported at
-  **640×640**. More capacity for users with CPU headroom. Be honest about the
-  trade-off: on our own night/day frames it ran ~146 ms @320 / ~500 ms @640
-  (≈5–18× nano) and **did not beat nano on the night case** that motivated it —
-  nano @320 scored ~0.865 vs medium @640 ~0.914, but nano already clears the bar.
-  Try it on genuinely hard scenes; don't assume it's strictly better.
-- **`yolo11m_960` / `yolo11m_1280`** — higher-resolution locator exports (see
-  below). **`yolo26m`** (bundled) / **`yolo26x`** (export-only) — the YOLO26 line.
+- **`yolo26x`** — the **workhorse**: 91% recall / 0% FP at 3×3/0.20 tiling;
+  167 ms warm as FP16 on the 3070. Export-only (~213 MB, over GitHub's limit).
+- **`yolo26m`** (bundled, ~79 MB) — the **lightweight**: 82%/0% at 2×2/0.20,
+  64 ms FP16.
+- **`yolo11n`** (bundled, ~10 MB, 320×320, the default) — the **floor**: 75%/0%
+  at 3×3, tiny and CPU-friendly. Class names live in `d20app/yolo.py`
+  (`COCO_CLASSES`); `person` is index 0, `cat` is 15.
+- **FP16 variants** (`yolo26x_fp16` / `yolo26m_fp16`, export with `--half`) —
+  identical accuracy, up to **2.2×** faster on CUDA (#70 §4). Verified with
+  onnxruntime-CUDA; `cv2.dnn`'s FP16 handling is unverified — pair them with the
+  `auto`/`onnx-cuda` accelerators.
+- **Dropped by #71** (still loadable from old configs, not selectable for new):
+  `yolo11m` and its `_960`/`_1280` locator exports — golden-exported 26m beats
+  11m, and 11x/26n lost their tiers too (the earlier "drop 26m/26n" call was an
+  artifact of the end2end export bug, now guarded against).
 
 The variant → file/size mapping lives in `d20app/yolo.py` (`MODELS`). Pick
-resolution via the **model name** (e.g. `yolo11m_960`); there's no separate "net
-input size" control — a YOLO ONNX is a fixed-shape export.
+resolution via the **model name**; there's no separate "net input size" control —
+a YOLO ONNX is a fixed-shape export.
+
+> **Golden export or it doesn't count** (#70 §2): every deployed model must have
+> the raw `(1, 84, N)` head with **no NMS/TopK ops** (`end2end=False`). A bad
+> export shows `(1, 300, 6)` + a `TopK` op and silently costs 4–9 recall points —
+> the app now **refuses to decode** such a head, with an error naming the fix.
+> Verify a file with:
+> ```
+> python -c "import onnx; m=onnx.load('MODEL.onnx'); print(m.graph.output[0].type.tensor_type.shape); print([n.op_type for n in m.graph.node if n.op_type in ('NonMaxSuppression','TopK')])"
+> ```
 
 ### Running YOLO on a GPU / Intel iGPU (`accelerator`)
 
-By default the YOLO model runs on the CPU. The `accelerator` setting (Detection
-card in the GUI, or `accelerator:` in `config.yaml`) can offload it:
+The `accelerator` setting (Detection card in the GUI, or `accelerator:` in
+`config.yaml`) picks where the net runs:
 
-- `cpu` (default) — OpenCV `cv2.dnn` on the CPU.
+- `auto` (default since #71) — **CUDA when it genuinely binds, else CPU.** The
+  CUDA attempt uses the same verified-provider check as `onnx-cuda` (so "auto"
+  can never silently run slow); if CUDA isn't available the fallback to CPU is
+  logged loudly. NAS-verified: onnxruntime binds `CUDAExecutionProvider` on the
+  3070 at ~2× CPU minimum (up to ~37× on the heavy models).
+- `cpu` — OpenCV `cv2.dnn` on the CPU.
 - `opencl` — the same net with OpenCV's `OPENCL_FP16` target, so the conv layers
   run on an OpenCL device such as an Intel iGPU. **No extra Python install**, but
   the host needs an OpenCL runtime (e.g. `intel-opencl-icd`). OpenCV silently
@@ -136,8 +155,12 @@ unchanged:
 ```
 python scripts/export_yolo.py --model yolo26m --imgsz 640 --out yolo26m
 python scripts/export_yolo.py --model yolo26x --imgsz 640 --out yolo26x
+# FP16 (the deployment picks, #70 §4 — pair with the auto/onnx-cuda accelerator):
+python scripts/export_yolo.py --model yolo26x --imgsz 640 --out yolo26x --half
+python scripts/export_yolo.py --model yolo26m --imgsz 640 --out yolo26m --half
 ```
 
-(If you export by hand instead of the helper, set
-`m.model.model[-1].end2end = False` before `m.export(...)`, or the `cv2.dnn` path
-will silently return garbage.)
+(If you export by hand instead of the helper, use the full golden recipe —
+`m.model.model[-1].end2end = False` before
+`m.export(format="onnx", imgsz=640, opset=12, simplify=True, dynamic=False,
+batch=1, nms=False)` — or the decode guard will refuse the file.)

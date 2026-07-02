@@ -11,6 +11,120 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.37.0] — 2026-07-02
+
+### Added
+- **Temporal score fusion ("track-before-detect")**: YOLO judged every frame
+  independently, so a cat scoring 0.35 in eight consecutive frames — the box
+  gliding smoothly along a plausible path — was discarded eight times. Now
+  weak locator hits (`0.2 ≤ score < cat_confidence`, decoded in the **same
+  forward pass** — the floor is a post-filter, not extra inference) chain
+  across frames by overlap and confirm as **one sighting** when the chain has
+  ≥4 hits inside 5 s **and net-travels ≥3% of the frame diagonal**. The
+  movement requirement is the decoy guard: per the benchmark arc (#69/#70),
+  the thing that separates a decoy from a cat is that the cat *moves* — and
+  its deliberate flip side is that a *stationary* weak cat never fuses (still
+  cats remain the averaging/tiling scan's job). Confirmed tracks are recorded
+  as ordinary sightings tagged `source: "track"` with the honest **mean** weak
+  score, log a "confirmed by track fusion (N weak hits over Ns)" activity
+  line, and count toward cat presence. A per-track 30 s cooldown keeps one
+  walking cat from spamming the log. Weak boxes never reach the live feed,
+  labels, or logs on their own. Pure YOLO evidence — no VLM anywhere in this
+  path (0.33.0's rule holds); this is the recall-raising mirror image of
+  `confirm_frames`' precision-raising streak. Per-camera **Track fusion**
+  checkbox (`track_fusion`, on by default; off = pre-0.37.0 behaviour).
+
+### Notes
+- Suite: **309 tests** (+9: moving weak track confirms exactly once,
+  stationary decoy never confirms, window pruning, reconfirm cooldown,
+  teleporting hits don't chain, detector wires weak hits to the fuser while
+  keeping them out of the live feed, fusion-off preserves single-frame
+  behaviour, the loop records `source="track"`, config/camera inheritance).
+- NAS to verify: the real-footage hit rate on walking cats, and that RTSP
+  compression shimmer doesn't fake smooth chains (the IoU-chaining + travel
+  requirements are the guards; if shimmer slips through, raise
+  `fusion.MIN_TRAVEL_FRAC` or `MIN_HITS`).
+
+## [0.36.0] — 2026-07-02
+
+### Fixed
+- **VLM batch ignored the user's prompt** (#72): the batch path ran a baked-in
+  prompt no matter what the prompt box said (the "rhino?" test failed), making
+  batch prompt-testing impossible. The batch now threads the user's prompt to
+  the model exactly like the single-image path; blank falls back to the model's
+  validated default.
+
+### Changed
+- **Validated default prompt (P6)** (#72): the default is now the bake-off
+  winner — *"Ignore plush toys, statues, paintings, reflections, and empty cat
+  beds. Is a real live cat visible in this image? Answer with exactly Yes or
+  No."* — 97% recall / 2% FP on the full set (prompts without the negative
+  exclusions scored 20–73% FP). Every prompt should end with an explicit
+  yes/no instruction so the verdict parser can vote on the output.
+- **Prompts are model-specific** (#74): per-model defaults live in
+  `MODEL_PROMPTS` (moondream3 gets a deliberately short, *unvalidated* form —
+  P6 on M3 produced ~100% FP). The GUI swaps the default on a model switch and
+  shows a warning when a custom prompt is carried across models.
+- **Upload/test-queue cap 100 → 1000** (#73): a full benchmark set (199 cats +
+  43 nulls) now runs in one pass. This is the app-level upload queue only —
+  moondream's `max_batch_size`/`kv_cache_pages` VRAM params are untouched
+  (raising those OOMs the 8 GB card), and a test asserts they stay put.
+
+### Added
+- **📍 Where? — detect mode in the tester** (#75): `POST /api/vlm/locate` runs
+  moondream's `detect` on the picked frame and draws the proposed regions —
+  the diagnostic for false-positive frames ("what feature is it locking
+  onto?"), which informs better exclusion prompts. Purely informational:
+  nothing is recorded (a bare detect region is never trusted — 0.33.0 rules).
+- **Reasoning toggle for moondream3** (#76): `query()` was always called
+  without `reasoning`, so M3 ran in its weaker non-reasoning mode. A
+  *Reasoning (M3)* checkbox now passes `reasoning=True` through the single,
+  voted, and batch paths; the reasoning text is surfaced with the response.
+  No effect on moondream2; staying compatible with models whose `query()`
+  lacks the kwarg is tested.
+
+### Notes
+- Suite: **300 tests** (+8). The P6 numbers (97%/2%) are the maintainer's
+  full-set measurements (#70 §6, moondream2 local); the M3 default prompt is
+  explicitly unvalidated — M3 remains cloud-only and not the deployment pick.
+
+## [0.35.0] — 2026-07-02
+
+### Changed
+- **Benchmark-settled model lineup** (#71, from the authoritative benchmark #70):
+  the selectable models are now **26x** (workhorse: 91% recall / 0% FP at
+  3×3/0.20), **26m** (lightweight: 82%/0% at 2×2/0.20) and **11n** (floor:
+  75%/0%), plus **FP16 variants** of the 26-series (identical accuracy, up to
+  2.2× faster on CUDA; export with `scripts/export_yolo.py --half`; pair with
+  the auto/CUDA accelerator — `cv2.dnn` FP16 handling is unverified). Dropped:
+  11m (beaten by golden 26m) and its `_960`/`_1280` locator exports — their
+  registry entries survive so **old configs keep loading**; they just can't be
+  picked for new ones. Model labels + the `selectable` flag now live in the
+  `yolo.MODELS` registry — one source for every dropdown and the sweep (#50).
+- **Golden-export guard** (#71/#70 §2): the decoder now **refuses** an end2end
+  (NMS-baked, `(1, 300, 6)`) ONNX head with a clear error naming the fix,
+  instead of silently mis-decoding it and quietly costing 4–9 recall points —
+  the exact failure that skewed the earlier `.pt`-era model decisions.
+  `scripts/export_yolo.py` now passes the full golden recipe explicitly
+  (`end2end=False, nms=False, dynamic=False, batch=1`).
+- **`auto` accelerator, now the default** (#71): CUDA when it genuinely binds —
+  reusing the verified-provider check, so auto can never silently run slow —
+  else CPU with a loud log line. NAS-verified CUDA is what makes the heavier
+  models everyday-runnable; a machine without a GPU still works and says so.
+- **Benchmark-settled scan defaults** (#70 §5): still-cat scan tiling default
+  **4×4 → 3×3**, tile overlap **0.2 → 0.35** — 3×3/0.20-0.35 is the clean
+  recall-per-ms winner; 4×4 adds ~1 cat at 1.7× the latency and high-overlap
+  4×4 buys recall with false positives.
+
+### Notes
+- Suite: **292 tests** (+5: end2end head refused with an actionable error, raw
+  head still decodes, auto-accelerator CPU fallback, dropped models excluded
+  from the picker while their registry entries survive, new defaults).
+- NAS follow-ups: re-export the deployed models with the golden recipe (the
+  guard will catch any bad one at first use), produce the FP16 exports, and let
+  `auto` pick CUDA — `run.py`'s LD_LIBRARY_PATH handling already covers the
+  torch-lib path trick.
+
 ## [0.34.0] — 2026-07-02
 
 ### Added

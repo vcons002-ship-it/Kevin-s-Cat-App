@@ -49,7 +49,7 @@ async function loadModelOptions() {
     if (MODEL_OPTS.some(([v]) => v === prev)) sel.value = prev;
   }
 }
-const ACCEL_OPTS = [["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"], ["onnx-cuda", "NVIDIA CUDA (onnxruntime-gpu)"]];
+const ACCEL_OPTS = [["auto", "Auto — CUDA if available (rec.)"], ["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"], ["onnx-cuda", "NVIDIA CUDA (onnxruntime-gpu)"]];
 const SENS_OPTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"]];
 const TILING_OPTS = [["off", "Off"], ["2x2", "2×2"], ["3x3", "3×3"], ["4x4", "4×4"]];
 const IMGSZ_OPTS = [["0", "Native"], ["640", "640"], ["960", "960"], ["1280", "1280"]];
@@ -135,6 +135,7 @@ function cameraCardHTML(cam) {
         <label title="still-cat scan: tile the frame so a small/distant cat fills more of the net">Cat tiling <select data-f="cat_scan_tiling">${optsHTML(TILING_OPTS, cam.cat_scan_tiling)}</select></label>
         <label title="still-cat scan input size (YOLO needs a matching exported model, e.g. yolo11m_960)">Cat input size <select data-f="cat_scan_imgsz">${optsHTML(IMGSZ_OPTS, cam.cat_scan_imgsz)}</select></label>
         <label title="still-cat scan: average this many back-to-back frames before the net — cuts sensor noise on a still scene (helps dim rooms); any movement mid-burst falls back to a single frame. 1 = off">Scan frames <input type="number" min="1" max="8" data-f="cat_scan_frames" value="${cam.cat_scan_frames}"/></label>
+        <label class="checkbox" title="temporal fusion: a string of weak cat detections that chain smoothly and actually move across the frame is confirmed as one sighting (source 'track') — catches a walking cat no single frame can confirm. The movement requirement keeps cat-shaped decoys out."><input type="checkbox" data-f="track_fusion" ${cam.track_fusion !== false ? "checked" : ""}/> Track fusion</label>
       </div>
       <div class="row">
         <button type="button" class="ghost" data-roi>📷 Set region…</button>
@@ -1010,16 +1011,38 @@ function updateVlmOffDevice() {
   if (w) w.classList.toggle("hidden", !vlmCurrent().off_device);
 }
 
+// Prompts are MODEL-specific (#74): the moondream2 default (P6) produced ~100% FP on
+// moondream3. On a model switch: an untouched (or other-model-default) prompt swaps to
+// the new model's default; a custom prompt is kept but flagged with a warning.
+let VLM_MODEL_PROMPTS = {};
+function onVlmChoiceChange() {
+  updateVlmOffDevice();
+  const p = $("vlm-prompt"), warn = $("vlm-prompt-warn");
+  if (!p) return;
+  const model = vlmCurrent().model;
+  const mine = VLM_MODEL_PROMPTS[model] || "";
+  const others = Object.entries(VLM_MODEL_PROMPTS)
+    .filter(([m]) => m !== model).map(([, v]) => v);
+  const cur = p.value.trim();
+  if (!cur || others.includes(cur)) {
+    p.value = mine;
+    if (warn) warn.classList.add("hidden");
+  } else if (warn) {
+    warn.classList.toggle("hidden", cur === mine);
+  }
+}
+
 async function loadVlmStatus() {
   const { body } = await api("/api/vlm/status");
   if (!body) return;
+  VLM_MODEL_PROMPTS = body.model_prompts || {};
   if ($("vlm-prompt") && !$("vlm-prompt").value) $("vlm-prompt").value = body.default_prompt || "";
   VLM_CHOICES = Array.isArray(body.choices) ? body.choices : [];
   const sel = $("vlm-choice");
   if (sel && VLM_CHOICES.length) {
     sel.innerHTML = VLM_CHOICES.map((c) => `<option value="${esc(c.value)}">${esc(c.label)}</option>`).join("");
     if (body.default_choice) sel.value = body.default_choice;
-    sel.onchange = updateVlmOffDevice;
+    sel.onchange = onVlmChoiceChange;      // off-device + model-specific prompt (#74)
   }
   updateVlmOffDevice();
   const pin = $("vlm-passes");
@@ -1071,9 +1094,36 @@ async function uploadVlm(file) {
   }
   $("vlm-run").disabled = false;
   const er = $("esc-run"); if (er) er.disabled = false;
+  const vl = $("vlm-locate"); if (vl) vl.disabled = false;   // detect-mode diagnostic (#75)
   // Temporal check needs several frames — a sampled video, not a single photo (#68).
   const vt = $("vlm-temporal");
   if (vt) vt.disabled = body.kind !== "video";
+}
+
+// moondream detect mode (#75): draw boxes where the model THINKS a cat is — the
+// diagnostic for false-positive frames (what feature is it locking onto?). Purely
+// informational; nothing is recorded (#69: a bare detect region is never trusted).
+async function runLocate() {
+  if (!vlmSession) { $("vlm-note").textContent = "Upload a photo or video first."; return; }
+  const cur = vlmCurrent();
+  $("vlm-locate").disabled = true;
+  $("vlm-note").textContent = "Asking moondream where…";
+  const { ok, body } = await api("/api/vlm/locate", postJSON({
+    id: vlmSession.id, frame_index: Number($("vlm-frame").value) || 0,
+    model: cur.model, mode: cur.mode,
+  }));
+  $("vlm-locate").disabled = false;
+  if (!ok || !body || body.error) { $("vlm-note").textContent = (body && body.error) || "Locate failed."; return; }
+  $("vlm-note").textContent = body.n
+    ? `${body.n} region(s) in ${Math.round(body.detect_ms || 0)} ms — diagnostic only, nothing recorded.`
+    : (body.note || "");
+  $("vlm-result").classList.remove("hidden");
+  const img = $("vlm-locate-img");
+  if (img) {
+    img.classList.remove("hidden");
+    img.src = body.annotated;
+    img.onclick = () => zoomImg(img.src);
+  }
 }
 
 // Temporal mosaic (#68): the last few frames tiled into one numbered grid, one
@@ -1206,6 +1256,7 @@ async function runVlm() {
   const { ok, body } = await api("/api/vlm/query", postJSON({
     id: vlmSession.id, frame_index: Number($("vlm-frame").value) || 0,
     prompt: $("vlm-prompt").value, model: cur.model, mode: cur.mode, passes: vlmPasses(),
+    reasoning: !!($("vlm-reasoning") && $("vlm-reasoning").checked),   // M3 thinking (#76)
   }));
   $("vlm-run").disabled = false;
   if (!ok || !body || body.error) { $("vlm-note").textContent = (body && body.error) || "Query failed."; return; }
@@ -1217,6 +1268,8 @@ function renderVlm(b) {
   $("vlm-result").classList.remove("hidden");
   const mi = $("vlm-mosaic");            // stale temporal mosaic hides on a plain query
   if (mi && !b.mosaic) mi.classList.add("hidden");
+  const li = $("vlm-locate-img");        // stale locate overlay hides too (#75)
+  if (li) li.classList.add("hidden");
   const badge = $("vlm-answer");
   if (!b.parsed || b.answer == null) {
     badge.textContent = "unparsed"; badge.className = "vlm-badge vlm-unparsed";
@@ -1232,7 +1285,8 @@ function renderVlm(b) {
   const load = b.load_ms ? ` · model load ${Math.round(b.load_ms)} ms` : "";
   const passInfo = b.passes > 1 ? ` over ${b.passes} passes` : "";
   $("vlm-latency").textContent = `query ${Math.round(b.query_ms)} ms${passInfo}${load}`;
-  $("vlm-raw").textContent = b.raw || "(empty response)";
+  $("vlm-raw").textContent = (b.raw || "(empty response)") +
+    (b.reasoning ? `\n\n[reasoning] ${b.reasoning}` : "");             // M3 thinking (#76)
   $("vlm-meta").textContent = `model: ${b.model} · mode: ${b.mode || "local"} · device: ${b.device}`;
 }
 
@@ -1309,6 +1363,8 @@ async function runVlmBatch() {
   const cur = vlmCurrent();
   const { ok, body } = await api("/api/vlm/batch", postJSON({
     items: vlmBatchItems, batch_id: vlmBatchId, model: cur.model, mode: cur.mode, passes: vlmPasses(),
+    prompt: $("vlm-prompt").value,                                     // the batch honours the prompt (#72)
+    reasoning: !!($("vlm-reasoning") && $("vlm-reasoning").checked),
   }));
   vlmBatchId = null;
   $("vlm-batch-run").disabled = false;
@@ -1523,6 +1579,8 @@ function wire() {
   if (vks) vks.onclick = saveVlmKey;
   const vr = $("vlm-run");
   if (vr) vr.onclick = runVlm;
+  const vloc = $("vlm-locate");
+  if (vloc) vloc.onclick = runLocate;
   const er = $("esc-run");
   if (er) er.onclick = () => runEscalation(null);
   const erc = $("esc-run-camera");

@@ -256,12 +256,24 @@ from the mosaic alone.
 - **Secrets:** the moondream API key is accepted per-request or stored in config;
   it is never logged and never sent back to the browser.
 
-## 6. Current state and the open question (as of 2026-07-02)
+## 6. Current state and the open question (as of 2026-07-02, evening)
 
-- **`main`** is at **v0.30.0** (through PR #67, the cat trail).
-- **`Dev`** carries **v0.31.0 + v0.32.0** in **PR #68 — open and deliberately
-  unmerged** at the maintainer's instruction, pending the NAS checklist.
+- **`main`** is at **v0.34.0** (PR #68 — zones/heat maps/prior, temporal mosaic,
+  the VLM demotion, frame averaging — merged at the maintainer's instruction).
+- **`Dev`** carries the benchmark-response arc: **v0.35.0** (the #70/#71
+  benchmark-settled model lineup, the golden-export guard, the `auto`-CUDA
+  default, 3×3/0.35 scan defaults), **v0.36.0** (the VLM tester fixes #72–#76:
+  batch-prompt bug, P6 default, per-model prompts, 1000-image queue, detect
+  mode, M3 reasoning toggle), and **v0.37.0** (temporal score fusion /
+  track-before-detect — weak YOLO hits that chain smoothly AND move confirm as
+  one `source="track"` sighting; movement is the decoy guard).
+- **The authoritative benchmark is issue #70** — model tiers, tiling/overlap
+  optima, FP16, the golden-export recipe, VLM prompt results (P6: 97%/2%), and
+  the complementarity finding (the VLM rescues 12 of 26x's 17 misses). Future
+  detection decisions should start there.
 - **NAS-only validation queue** (nothing below is provable in CI):
+  0. Track fusion on real footage — hit rate on walking cats; compression
+     shimmer must not fake smooth, travelling chains.
   1. The temporal-mosaic premise — can moondream reason over a frame grid at
      all? (Prompt/tile-size iteration expected.)
   2. moondream `detect()` real-world quality and coordinate orientation.

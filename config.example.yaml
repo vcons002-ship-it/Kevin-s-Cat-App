@@ -38,8 +38,8 @@ dc: 20                    # treat when the roll is >= this (DC20 on a D20 = only
 cooldown_seconds: 600     # minimum seconds between rolls (frequency interval)
 
 # --- Detection tuning ---
-detector_model: yolo11n   # yolo11n (better low-light/odd-pose, default), yolo11m (medium, bigger/slower), yolo11m_960 / yolo26m / ... — all YOLO. MobileNet-SSD was removed in 0.25.0; a model that can't load now raises a clear error (no silent fallback).
-accelerator: cpu          # cpu (default), opencl (iGPU via OpenCL, no extra deps), openvino-gpu or openvino-auto (Intel OpenVINO; needs the optional 'openvino' pkg + Intel GPU drivers). Intel iGPU only; auto-falls back to CPU if it can't start
+detector_model: yolo11n   # benchmark-settled lineup (#70/#71): yolo11n (floor, default), yolo26m (lightweight), yolo26x / *_fp16 (workhorse; export-only). Dropped models (yolo11m/...) still load from old configs but aren't selectable. A model that can't load raises a clear error (no silent fallback).
+accelerator: auto         # auto (default, #71: CUDA when it genuinely binds, else CPU — logged loudly, never a silent slow fallback), cpu, opencl (iGPU via OpenCL), openvino-gpu / openvino-auto (Intel OpenVINO; optional 'openvino' pkg), onnx-cuda (NVIDIA; optional 'onnxruntime-gpu', raises if CUDA doesn't bind)
 person_confidence: 0.5    # 0..1; raise to reduce false triggers, lower to catch harder poses
 cat_confidence: 0.5       # 0..1; min confidence for a cat (locator) detection — independent of person_confidence and label_floor. Gates the track_cats/Show-cat path only.
 locator_classes: ["cat"]  # COCO classes that count as "the cat" for the locator. A no-dog household can use ["cat", "dog"] (the model often mislabels a cat as a dog).
@@ -52,10 +52,11 @@ roi: null                 # [x, y, w, h] region of interest — set this visuall
 # --- Locator resolution (the still-cat scan only; the fast treat path is untouched).
 # A sleeping cat shrunk into a 640 frame can be too small to detect; tiling and/or a
 # larger input give the locator scan more effective resolution. ---
-cat_scan_tiling: "4x4"     # "off" | "2x2" | "3x3" | "4x4" — split into an overlapping grid, detect per tile, merge (more tiles catch smaller cats, more CPU). Default 4x4 (resolves a small/sleeping cat).
-cat_scan_tile_overlap: 0.2 # fraction each tile overlaps its neighbour
+cat_scan_tiling: "3x3"     # "off" | "2x2" | "3x3" | "4x4" — split into an overlapping grid, detect per tile, merge. Default 3x3 per the full benchmark (#70): best clean recall per ms; 4x4 adds ~1 cat at 1.7x the cost.
+cat_scan_tile_overlap: 0.35 # fraction each tile overlaps its neighbour (benchmark #70: 3x3 is best at 0.35; 2x2 prefers 0.20)
 cat_scan_imgsz: 0          # locator input size: 0 = native. YOLO needs a matching exported model (e.g. yolo11m_960) or falls back to native + tiling
 cat_scan_frames: 3         # still-cat scan only: average N back-to-back frames before the net (noise drops ~sqrt(N) on a still scene; movement mid-burst falls back to one frame). 1 = off, max 8. The treat path never averages.
+track_fusion: true         # temporal fusion: a string of WEAK cat detections that chain smoothly and actually MOVE is confirmed as one sighting (source "track") — catches a walking cat no single frame can confirm; the movement requirement keeps decoys out. false = judge every frame alone.
 
 # --- Round-robin (cap CPU when watching many cameras: run a few at a time, rotating
 # sets — many cameras at the CPU of a few). Per-camera "always_watch" exempts a camera. ---

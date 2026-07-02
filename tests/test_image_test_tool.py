@@ -337,8 +337,11 @@ def test_benchmark_batch_soft_cap_allows_over_recommended_but_caps_absolute():
     over = {"items": [{"id": "x", "name": str(i)} for i in range(20)],
             "models": ["yolo11n"], "tilings": ["off"]}
     assert c.post("/api/test/benchmark/batch", json=over).status_code == 404
-    # past the absolute ceiling, it's refused outright (400).
-    huge = {"items": [{"id": "x", "name": str(i)} for i in range(101)],
+    # past the absolute ceiling (1000 since #73 — a full benchmark set fits in
+    # one pass now), it's refused outright (400).
+    from d20app import webapp as webapp_mod
+    huge = {"items": [{"id": "x", "name": str(i)}
+                      for i in range(webapp_mod._BENCH_MAX_IMAGES_HARD + 1)],
             "models": ["yolo11n"], "tilings": ["off"]}
     assert c.post("/api/test/benchmark/batch", json=huge).status_code == 400
 

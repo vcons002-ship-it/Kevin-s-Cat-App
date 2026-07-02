@@ -41,10 +41,31 @@ import re
 import threading
 import time
 
-# A plain presence question — yes/no plus a short explanation. moondream's self-reported
-# confidence proved meaningless (it says "0-100%", "not sure but yes"), so we don't ask
-# for or parse a number; the reasoning text is kept purely as information (#54).
-DEFAULT_PROMPT = "Is there a cat in this image? Answer yes or no, then briefly explain."
+# The validated default (P6, #72): a 10-prompt bake-off on the full 199-cat + 43-null
+# set found **negative exclusions** are the lever — listing what NOT to count suppresses
+# moondream2's yes-to-any-cat-context reflex. P6: 97% recall / 2% FP, 99% unanimous
+# (prompts without exclusions scored 20–73% FP). Constraint: every prompt must end with
+# an explicit yes/no instruction, or the verdict parser can't vote on the output.
+DEFAULT_PROMPT = ("Ignore plush toys, statues, paintings, reflections, and empty cat "
+                  "beds. Is a real live cat visible in this image? "
+                  "Answer with exactly Yes or No.")
+
+# Prompts are MODEL-SPECIFIC (#74): P6 on moondream3 produced ~100% FP (the
+# exclusion-heavy phrasing backfires there; with a short prompt M3 answered the same
+# nulls correctly). moondream3's default below is that short form — deliberately
+# minimal and **unvalidated** (no bake-off was run on M3; it's cloud-only and not the
+# deployment pick). The GUI swaps defaults on model change and warns when a prompt
+# tuned for one model is carried to another.
+MODEL_PROMPTS = {
+    "moondream2": DEFAULT_PROMPT,
+    "moondream3-preview": ("Is a real live cat visible in this image? "
+                           "Answer with exactly Yes or No."),
+}
+
+
+def default_prompt(model: str | None = None) -> str:
+    """The validated (or at least sane) default prompt for ``model`` (#74)."""
+    return MODEL_PROMPTS.get(model or DEFAULT_MODEL, DEFAULT_PROMPT)
 
 # The temporal-mosaic question (#68): the "image" is a numbered grid of frames from
 # ONE camera, oldest → newest (built by escalation.frame_mosaic). Untested premise,
@@ -235,14 +256,19 @@ def _to_pil(frame_bgr):
 
 
 def query_image(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MODEL,
-                api_key: str | None = None, mode: str = DEFAULT_MODE) -> dict:
+                api_key: str | None = None, mode: str = DEFAULT_MODE,
+                reasoning: bool = False) -> dict:
     """Run one moondream **query** pass on ``frame_bgr`` and return a result dict:
 
     ``raw`` (full response text — always shown), the parsed ``answer``/``reason``/
     ``parsed`` from :func:`parse_vlm_response`, ``load_ms`` (one-time model load, 0 if
     cached) split from ``query_ms`` (per-frame), and the ``prompt``/``model``/``mode``/
-    ``device`` used. Raises ``RuntimeError`` with an actionable message when moondream, a
-    GPU (local mode), the key, or VRAM is unavailable."""
+    ``device`` used. ``reasoning=True`` (#76) asks the model to think before answering —
+    meaningful on moondream3 (whose ``query()`` otherwise runs in its weaker
+    non-reasoning mode), a no-op on moondream2; the reasoning text, when returned, is
+    surfaced as ``reasoning`` and folded into ``reason``. Raises ``RuntimeError`` with
+    an actionable message when moondream, a GPU (local mode), the key, or VRAM is
+    unavailable."""
     mode = mode if mode in MODES else DEFAULT_MODE
     name = model or DEFAULT_MODEL
     cached = (mode, name) in _MODELS
@@ -255,16 +281,25 @@ def query_image(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MO
     t1 = time.perf_counter()
     try:
         encoded = m.encode_image(img)
-        result = m.query(encoded, prompt or DEFAULT_PROMPT)
+        # Pass reasoning only when asked: query(..., reasoning=False) is the package
+        # default, and omitting it keeps compatibility with any signature drift.
+        result = (m.query(encoded, prompt or DEFAULT_PROMPT, reasoning=True)
+                  if reasoning else m.query(encoded, prompt or DEFAULT_PROMPT))
     except Exception as exc:        # noqa: BLE001 — surface model/runtime errors clearly
         raise _friendly_model_error(exc, name) from exc
     query_ms = round((time.perf_counter() - t1) * 1000.0, 1)
 
     raw = result.get("answer", "") if isinstance(result, dict) else str(result)
     parsed = parse_vlm_response(raw)
+    # moondream3's reasoning mode returns {'answer', 'reasoning': {'text', ...}} (#76).
+    r_text = ""
+    if isinstance(result, dict) and isinstance(result.get("reasoning"), dict):
+        r_text = str(result["reasoning"].get("text") or "")
+    if r_text and not parsed.get("reason"):
+        parsed["reason"] = r_text
     device = "cloud" if mode == "cloud" else _require_gpu()
     return {
-        "raw": raw, "load_ms": load_ms, "query_ms": query_ms,
+        "raw": raw, "load_ms": load_ms, "query_ms": query_ms, "reasoning": r_text,
         "prompt": prompt or DEFAULT_PROMPT, "model": name, "mode": mode, "device": device,
         **parsed,
     }
@@ -310,7 +345,7 @@ def detect_regions(frame_bgr, obj: str = "cat", model: str = DEFAULT_MODEL,
 
 def query_image_voted(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MODEL,
                       api_key: str | None = None, mode: str = DEFAULT_MODE,
-                      passes: int = DEFAULT_PASSES) -> dict:
+                      passes: int = DEFAULT_PASSES, reasoning: bool = False) -> dict:
     """Query the same frame ``passes`` times and take the **majority vote** (#60).
 
     moondream's yes/no wobbles run-to-run on hard frames, so a single pass is unreliable.
@@ -321,7 +356,8 @@ def query_image_voted(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFA
     ``reason``/``raw`` are taken from a pass that matched the verdict, so the shown
     reasoning explains the verdict. ``passes <= 1`` is exactly the single-pass behaviour."""
     n = max(1, min(int(passes or 1), MAX_PASSES))
-    results = [query_image(frame_bgr, prompt=prompt, model=model, api_key=api_key, mode=mode)
+    results = [query_image(frame_bgr, prompt=prompt, model=model, api_key=api_key,
+                           mode=mode, reasoning=reasoning)
                for _ in range(n)]
     answers = [r["answer"] for r in results]
     vote = majority_vote(answers)
@@ -331,6 +367,7 @@ def query_image_voted(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFA
     total_ms = round(sum(r.get("query_ms", 0.0) for r in results), 1)
     return {
         "raw": rep.get("raw", ""), "answer": vote["verdict"], "reason": rep.get("reason", ""),
+        "reasoning": rep.get("reasoning", ""),
         "parsed": vote["verdict"] is not None,
         "votes": {"yes": vote["yes"], "no": vote["no"]},
         "passes": n, "ratio": f"{vote['decisive']}/{n}",

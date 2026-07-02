@@ -263,15 +263,18 @@
         <label class="inline">Frame <input id="vlm-frame" type="number" min="0" step="1" value="0" /></label>
         <span id="vlm-frame-count" class="muted"></span>
       </div>
-      <label class="vlm-prompt-label">Prompt <span class="muted">(editable — VLM results are prompt-sensitive)</span>
+      <label class="vlm-prompt-label">Prompt <span class="muted">(editable — VLM results are prompt-sensitive, prompts are MODEL-specific, and every prompt should end with an explicit “Answer Yes or No”)</span>
         <textarea id="vlm-prompt" rows="3"></textarea>
       </label>
+      <p id="vlm-prompt-warn" class="muted hidden">⚠ This prompt was written for a different model — an unsuitable prompt can cause high false positives (the moondream2 default produced ~100% FP on moondream3). Verify on a few known-empty frames before trusting batch results.</p>
       <div class="row">
         <label class="inline">Mode <select id="vlm-choice"></select></label>
         <label class="inline" title="moondream's yes/no wobbles run-to-run; N passes + a majority vote averages it out. The vote ratio (e.g. 4/5) is the honest confidence.">
           Passes <input id="vlm-passes" type="number" min="1" max="9" step="1" value="3" style="width:3.5em" />
         </label>
+        <label class="checkbox inline" title="moondream3's thinking mode — without it M3's query runs in its weaker non-reasoning path. No effect on moondream2."><input id="vlm-reasoning" type="checkbox" /> Reasoning (M3)</label>
         <button id="vlm-run" class="primary" type="button" disabled>Ask “is there a cat?”</button>
+        <button id="vlm-locate" class="ghost" type="button" disabled title="moondream detect mode: draw boxes where the model thinks a cat is — the diagnostic for false-positive frames (what feature is it locking onto?)">📍 Where?</button>
         <button id="vlm-temporal" class="ghost" type="button" disabled title="tile an uploaded video's frames into one numbered grid and ask 'did a cat pass through?' — the image-only VLM's stand-in for video">🎞 Temporal check</button>
         <span id="vlm-note" class="muted"></span>
       </div>
@@ -287,6 +290,7 @@
         </details>
         <p id="vlm-meta" class="muted"></p>
         <img id="vlm-mosaic" class="hidden" style="max-width:100%;border-radius:6px;cursor:zoom-in" alt="" title="the temporal mosaic the VLM was shown — numbered, oldest first" />
+        <img id="vlm-locate-img" class="hidden" style="max-width:100%;border-radius:6px;cursor:zoom-in" alt="" title="where the model thinks the cat is (detect mode) — diagnostic only, nothing is recorded" />
       </div>
 
       <!-- Batch VLM: run one query per image across many, report recall + FP (#54) -->
