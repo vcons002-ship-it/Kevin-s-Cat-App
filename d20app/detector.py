@@ -308,7 +308,8 @@ class PersonDetector:
                  gamma: float = 1.0, brightness: int = 0,
                  contrast: float = 1.0, saturation: float = 1.0,
                  cat_scan_tiling: str = "off", cat_scan_tile_overlap: float = 0.2,
-                 cat_scan_imgsz: int = 0, cat_confidence: float = 0.5,
+                 cat_scan_imgsz: int = 0, cat_scan_frames: int = 1,
+                 cat_confidence: float = 0.5,
                  locator_classes=None) -> None:
         self.source = source
         self.confidence = confidence
@@ -322,6 +323,8 @@ class PersonDetector:
         self.cat_scan_tiling = cat_scan_tiling or "off"
         self.cat_scan_tile_overlap = float(cat_scan_tile_overlap)
         self.cat_scan_imgsz = int(cat_scan_imgsz or 0)
+        self.cat_scan_frames = max(1, min(int(cat_scan_frames or 1),
+                                          self._AVG_MAX_FRAMES))
         self._locator_runner = None     # lazily-loaded larger-input YOLO net (Option A)
         self._locator_size = None
         self._locator_model = None
@@ -391,6 +394,12 @@ class PersonDetector:
         # every frame read. Cheap (capped working resolution) and thread-safe.
         from .trail import TrailTracker
         self._trail = TrailTracker(diff_threshold=motion_diff_threshold)
+        # Frame ring buffer (#68): the last few seconds of (downscaled) frames for
+        # the temporal VLM mosaic ("did a cat pass through?"). ~8 frames spaced ≥1 s
+        # at ≤480 px ≈ well under 3 MB per camera. Guarded by _live_lock.
+        from collections import deque
+        self._ring: "deque" = deque(maxlen=self._RING_FRAMES)
+        self._ring_last = 0.0
 
     # -- model / stream lifecycle -------------------------------------------
     def _ensure_net(self):
@@ -719,6 +728,79 @@ class PersonDetector:
         """Wall-clock time of the last motion-blob update (0.0 if never)."""
         return self._motion.last_blobs_ts
 
+    # Ring-buffer tuning (#68): frames spaced ≥ _RING_SPACING s, ≤ _RING_MAX_DIM px.
+    _RING_FRAMES = 8
+    _RING_SPACING = 1.0
+    _RING_MAX_DIM = 480
+
+    def _push_ring(self, frame) -> None:
+        import cv2
+
+        now = time.time()
+        if now - self._ring_last < self._RING_SPACING:
+            return
+        h, w = frame.shape[:2]
+        scale = max(h, w) / float(self._RING_MAX_DIM)
+        small = frame if scale <= 1.0 else cv2.resize(
+            frame, (int(round(w / scale)), int(round(h / scale))))
+        with self._live_lock:
+            self._ring.append((now, small.copy()))
+            self._ring_last = now
+
+    def recent_frames(self, n: int | None = None) -> list:
+        """The last ≤n ring-buffer frames, oldest first: ``[(ts, bgr_copy)]``.
+
+        The temporal VLM mosaic's raw material (#68) — a few seconds of history at
+        reduced resolution, copies so callers can't race the worker."""
+        with self._live_lock:
+            items = list(self._ring)
+        if n:
+            items = items[-n:]
+        return [(ts, f.copy()) for ts, f in items]
+
+    # Still-scan frame averaging: burst cap, stillness-probe width, and the mean
+    # gray diff (on the probe) above which the scene counts as moving. Averaging
+    # a still scene drops sensor noise ~√N — real signal recovery, the opposite
+    # of SR's synthesized detail (#69) — but averaging a mover would smear it,
+    # so any movement mid-burst aborts to the single sharp frame.
+    _AVG_MAX_FRAMES = 8
+    _AVG_PROBE_W = 160
+    _AVG_DIFF_MAX = 4.0
+
+    def _read_still_average(self, cap, first):
+        """Average ``cat_scan_frames`` back-to-back frames for the still-cat scan.
+
+        Reads up to ``cat_scan_frames - 1`` extra frames from ``cap`` and returns
+        the per-pixel mean when every extra frame matches ``first`` (cheap
+        downscaled-gray diff ≤ ``_AVG_DIFF_MAX``). A read failure, a size change,
+        or any movement mid-burst returns ``first`` unchanged. Sync path only —
+        in smooth mode the grab thread is the capture's sole reader. The scan
+        path is not latency-sensitive (a sleeping cat waits); the treat path
+        never calls this.
+        """
+        import cv2
+        import numpy as np
+
+        n = self.cat_scan_frames
+        if n <= 1:
+            return first
+        h, w = first.shape[:2]
+        pw = self._AVG_PROBE_W
+        ph = max(1, round(h * pw / float(w)))
+        probe0 = cv2.cvtColor(cv2.resize(first, (pw, ph)), cv2.COLOR_BGR2GRAY)
+        acc = first.astype(np.float32)
+        got = 1
+        for _ in range(n - 1):
+            ok, f = cap.read()
+            if not ok or f is None or f.shape != first.shape:
+                return first
+            probe = cv2.cvtColor(cv2.resize(f, (pw, ph)), cv2.COLOR_BGR2GRAY)
+            if float(cv2.absdiff(probe, probe0).mean()) > self._AVG_DIFF_MAX:
+                return first        # something moved — keep the sharp frame
+            acc += f.astype(np.float32)
+            got += 1
+        return (acc / got).astype(np.uint8)
+
     def trail_endpoint(self):
         """The cat trail's newest silhouette (frame coords + interior flag), or
         None. An interior endpoint means the last movement ended in-view — the
@@ -893,6 +975,12 @@ class PersonDetector:
                     )
                 return FrameOutcome(motion=False, person=False)
             self._read_fails = 0
+            if force and self.cat_scan_frames > 1:
+                # Still-cat scans average a short burst of frames — noise drops
+                # ~√N on a still scene, and the burst aborts to the single frame
+                # the moment anything moves. Forced scans are not
+                # latency-sensitive; the motion/treat path never does this.
+                frame = self._read_still_average(cap, frame)
 
         # Image adjustments are applied to the frame the net analyses; in the
         # synchronous path the live feed shows the adjusted frame too (publish after
@@ -908,6 +996,7 @@ class PersonDetector:
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         moved = self._motion.update(gray)      # keep the baseline fresh even when paused
         self._trail.update(gray, moved)        # cat-trail silhouettes + endpoint (#67)
+        self._push_ring(cropped)               # temporal-mosaic frame history (#68)
         # Run the net on real motion, or when a forced still-cat scan asks for it.
         if not force and (not detect or not moved):
             return FrameOutcome(motion=False, person=False)

@@ -55,6 +55,7 @@ roi: null                 # [x, y, w, h] region of interest — set this visuall
 cat_scan_tiling: "4x4"     # "off" | "2x2" | "3x3" | "4x4" — split into an overlapping grid, detect per tile, merge (more tiles catch smaller cats, more CPU). Default 4x4 (resolves a small/sleeping cat).
 cat_scan_tile_overlap: 0.2 # fraction each tile overlaps its neighbour
 cat_scan_imgsz: 0          # locator input size: 0 = native. YOLO needs a matching exported model (e.g. yolo11m_960) or falls back to native + tiling
+cat_scan_frames: 3         # still-cat scan only: average N back-to-back frames before the net (noise drops ~sqrt(N) on a still scene; movement mid-burst falls back to one frame). 1 = off, max 8. The treat path never averages.
 
 # --- Round-robin (cap CPU when watching many cameras: run a few at a time, rotating
 # sets — many cameras at the CPU of a few). Per-camera "always_watch" exempts a camera. ---

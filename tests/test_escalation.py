@@ -136,15 +136,36 @@ def test_rung2_detect_confirmed_by_yolo():
     assert r["found"] and r["source"] == "vlm+yolo" and r["score"] == 0.8
 
 
-def test_rung2_detect_confirmed_by_voted_query():
+def test_rung2_votes_only_yes_is_a_lead_not_a_find():
+    # YOLO silent, voted query says yes → DEMOTED (#69: decoy FP; voting fixes
+    # variance, not bias): found stays False, the yes comes back as vlm_probable.
     r = esc.escalate(_FRAME, hints=[],
                      run_yolo=lambda img: [],           # YOLO stays silent
                      vlm_detect=lambda img: [{"x_min": 0.4, "y_min": 0.4,
                                               "x_max": 0.6, "y_max": 0.6}],
                      vlm_query=lambda img: {"answer": "yes", "ratio": "2/3",
                                             "passes": 3, "votes": {"yes": 2, "no": 1}})
-    assert r["found"] and r["source"] == "vlm" and r["ratio"] == "2/3"
-    assert 0.6 < r["score"] < 0.7                       # 2/3 as the vote score
+    assert r["found"] is False and r["source"] is None
+    vp = r["vlm_probable"]
+    assert vp and vp["ratio"] == "2/3" and vp["rung"] == "vlm detect"
+    assert 0.6 < vp["score"] < 0.7                      # 2/3 as the vote score
+    assert "unconfirmed" in r["rungs"][1]["note"]
+
+
+def test_rung2_later_yolo_confirm_beats_earlier_vlm_yes():
+    # Region 1: YOLO silent, VLM votes yes (a lead). Region 2: YOLO confirms.
+    # The confirmed find must win — the ladder keeps scanning past a votes-only yes.
+    regions = [{"x_min": 0.1, "y_min": 0.1, "x_max": 0.2, "y_max": 0.2},
+               {"x_min": 0.6, "y_min": 0.6, "x_max": 0.7, "y_max": 0.7}]
+    def yolo(img):
+        yolo.n += 1
+        return [("cat", 0.85, (5, 5, 40, 40))] if yolo.n >= 2 else []
+    yolo.n = 0
+    r = esc.escalate(_FRAME, hints=[], run_yolo=yolo,
+                     vlm_detect=lambda img: regions,
+                     vlm_query=lambda img: {"answer": "yes", "ratio": "3/3",
+                                            "passes": 3, "votes": {"yes": 3}})
+    assert r["found"] and r["source"] == "vlm+yolo" and r["score"] == 0.85
 
 
 def test_bare_detect_region_never_records_alone():
@@ -158,13 +179,14 @@ def test_bare_detect_region_never_records_alone():
     assert r["found"] is False
 
 
-def test_rung3_query_on_hint_crops():
+def test_rung3_query_yes_is_probable_only():
     r = esc.escalate(_FRAME, hints=[(100, 100, 200, 200)],
                      run_yolo=lambda img: [],
                      vlm_detect=lambda img: [],          # no regions proposed
                      vlm_query=lambda img: {"answer": "yes", "ratio": "3/3",
                                             "passes": 3, "votes": {"yes": 3}})
-    assert r["found"] and r["source"] == "vlm"
+    assert r["found"] is False                          # #69 demotion
+    assert r["vlm_probable"] and r["vlm_probable"]["rung"] == "vlm query"
     assert [x["name"] for x in r["rungs"]] == ["zoom+yolo", "vlm detect", "vlm query"]
 
 
@@ -193,7 +215,8 @@ def test_detect_exception_does_not_kill_the_ladder():
                      vlm_detect=boom,
                      vlm_query=lambda img: {"answer": "yes", "passes": 1,
                                             "votes": {"yes": 1}})
-    assert r["found"] and r["source"] == "vlm"          # rung 3 still ran
+    assert r["vlm_probable"] is not None                # rung 3 still ran
+    assert r["found"] is False                          # …but a vote can't confirm
 
 
 # ---- endpoint ---------------------------------------------------------------
@@ -261,6 +284,48 @@ def test_escalate_vlm_detect_path_with_mocks(monkeypatch):
     body = c.post("/api/vlm/escalate", json={"id": up["id"]}).get_json()
     # detect proposed the cat region; the crop is confirmed by real yolo11n
     assert body["found"] and body["source"] == "vlm+yolo"
+
+
+def test_escalate_live_vlm_lead_probable_boosts_and_never_records(monkeypatch, tmp_path):
+    # A votes-only VLM "yes" on a live camera (#69 demotion): the response is the
+    # "probable" tier (kind vlm), NOTHING lands in the sightings log, and detection
+    # is boosted so real YOLO gets the chance to confirm on the next frames.
+    import d20app.config as config_mod
+    from d20app.detector import PersonDetector
+    from d20app.loop import DetectionLoop
+
+    cfgfile = str(tmp_path / "config.yaml")
+    real_load, real_update = config_mod.load, config_mod.update
+    monkeypatch.setattr(config_mod, "load", lambda path=cfgfile: real_load(path))
+    monkeypatch.setattr(config_mod, "update",
+                        lambda values, path=cfgfile: real_update(values, path))
+    config_mod.update({"vlm_escalation": True})
+    loop = DetectionLoop()
+
+    class _Alive:
+        def is_alive(self):
+            return True
+
+    loop._thread = _Alive()
+    det = PersonDetector(source="unused")
+    loop._detectors = {"Room": det}
+    det._publish_frame(np.full((360, 640, 3), 110, np.uint8))   # blank: YOLO silent
+
+    monkeypatch.setattr(vlm, "preflight", lambda *a, **k: None)
+    monkeypatch.setattr(vlm, "detect_regions",
+                        lambda img, obj, **k: {"objects": [
+                            {"x_min": 0.3, "y_min": 0.3, "x_max": 0.6, "y_max": 0.6}]})
+    monkeypatch.setattr(vlm, "query_image_voted",
+                        lambda img, **k: {"answer": "yes", "ratio": "3/3",
+                                          "passes": 3, "votes": {"yes": 3}})
+    before = len(loop.cats.recent(limit=500))
+    c = create_app(loop).test_client()
+    body = c.post("/api/vlm/escalate", json={"camera": "Room"}).get_json()
+    assert body["found"] is False
+    assert body["probable"] and body["probable"]["kind"] == "vlm"
+    assert "3/3" in body["probable"]["note"]
+    assert len(loop.cats.recent(limit=500)) == before   # no sighting recorded
+    assert loop._cat_boost.get("Room")                  # YOLO gets its chance
 
 
 def test_vlm_status_exposes_escalation_flag():

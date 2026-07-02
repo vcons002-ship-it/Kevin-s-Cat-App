@@ -36,6 +36,7 @@ from . import config as config_mod
 from . import discovery
 from . import escalation
 from . import moondream as vlm
+from .cats import box_in_exit_zone, zone_for
 from .detector import PersonDetector, grab_frame_jpeg, sample_video_frames
 from .loop import DetectionLoop, _camera_source
 
@@ -1117,7 +1118,38 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             "present": loop.cat_present(),     # cat on camera right now → flash the button
             "cameras": loop.cats_present_cameras(),   # cameras seeing a cat now → Show-cat rotation
             "recent": loop.cats.recent(limit=limit),
+            # Time-of-day PRIOR (#68): where the cats usually are around this hour —
+            # ranks a Find-My-Cat sweep; a hint from history, never a tracked state.
+            "by_hour": loop.cats.by_hour(),
+            "likely": [{"camera": c, "weight": n} for c, n in loop.cats.likely_cameras()],
         })
+
+    @app.get("/api/cats/heatmap")
+    def api_cats_heatmap():
+        # Sighting-density heat map over the camera's current frame (#68) — the
+        # camera's hot spots (basket / couch arm / sunny patch) from cats.log.
+        from . import heatmap as heatmap_mod
+
+        loop = app.config["loop"]
+        if not loop.is_running():
+            return jsonify({"error": "Start watching to see a heat map."}), 409
+        name = request.args.get("camera")
+        det = loop.get_detector(name) if name else None
+        if det is None:
+            return jsonify({"error": f"Unknown camera {name!r}."}), 404
+        raw = det.latest_frame()
+        if raw is None:
+            return jsonify({"error": "No frame from that camera yet."}), 409
+        frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+        boxes = [s["box"] for s in loop.cats.recent() if s.get("camera") == name]
+        img = heatmap_mod.render_heatmap(frame, boxes)
+        if img is None:
+            return jsonify({"error": "No sightings recorded for this camera yet."}), 404
+        import cv2
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            return jsonify({"error": "Couldn't encode the heat map."}), 500
+        return Response(buf.tobytes(), mimetype="image/jpeg")
 
     @app.post("/api/cats/clear")
     def api_cats_clear():
@@ -1531,7 +1563,13 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # The trail endpoint first — where the last movement ENDED is the
             # strongest "look here" hint (#67) — then motion blobs + last sighting.
             endpoint = det.trail_endpoint()
+            cam_zones = next((c.get("zones") or [] for c in (cfg.cameras or [])
+                              if isinstance(c, dict) and c.get("name") == camera), [])
             if endpoint:
+                # The precise exit check (#68): an endpoint inside a doorway zone
+                # means "may have left the view", whatever the frame-edge test said.
+                if box_in_exit_zone(endpoint["box"], cam_zones, det.roi):
+                    endpoint = {**endpoint, "interior": False}
                 hints.append(tuple(endpoint["box"]))
                 tracks.append((endpoint["ts"], tuple(endpoint["box"])))
             hints += list(det.motion_hint_boxes())
@@ -1594,17 +1632,28 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             vlm_query=vlm_query, locator_classes=locator_classes,
             cat_confidence=cat_conf)
 
-        # "Probable location" (#67): nothing CONFIRMED, but the trail's last
-        # movement ended in-view (interior endpoint) — the cat plausibly didn't
-        # leave. Surfaced as honest inference for the user; NEVER recorded as a
-        # sighting. An endpoint at the frame edge means "may have exited" → no claim.
+        # "Probable location": nothing YOLO-CONFIRMED, but there's an honest lead.
+        # Two kinds, NEVER recorded as a sighting: a votes-only VLM "yes" (#69 —
+        # 37–42% decoy FP; voting fixes variance, not bias, so it can't confirm),
+        # or a trail whose last movement ended in-view (interior endpoint, #67).
+        # An endpoint at the frame edge / in an exit zone means "may have exited"
+        # → no trail claim.
         result["probable"] = None
-        if (not result["found"] and endpoint and endpoint["interior"]):
-            result["probable"] = {
-                "box": list(endpoint["box"]), "age_s": endpoint["age_s"],
-                "note": ("No confirmed detection, but the last movement ended here "
-                         f"{int(endpoint['age_s'])}s ago and no exit was seen — "
-                         "probable location.")}
+        if not result["found"]:
+            if result.get("vlm_probable"):
+                vp = result["vlm_probable"]
+                result["probable"] = {
+                    "box": list(vp["box"]), "kind": "vlm", "ratio": vp.get("ratio"),
+                    "note": (f"The VLM voted yes ({vp.get('ratio') or '?'}) but YOLO "
+                             "could not confirm — treated as a lead only, not a "
+                             "sighting (VLMs false-fire on cat-shaped decoys).")}
+            elif endpoint and endpoint["interior"]:
+                result["probable"] = {
+                    "box": list(endpoint["box"]), "kind": "trail",
+                    "age_s": endpoint["age_s"],
+                    "note": ("No confirmed detection, but the last movement ended here "
+                             f"{int(endpoint['age_s'])}s ago and no exit was seen — "
+                             "probable location.")}
 
         # Annotate: thin gray crop windows, green final box (or orange probable).
         annotated = frame.copy()
@@ -1620,7 +1669,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         elif result["probable"]:
             x1, y1, x2, y2 = result["probable"]["box"]
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 165, 255), 2)
-            cv2.putText(annotated, "probable (trail)", (x1, max(14, y1 - 6)),
+            cv2.putText(annotated, f"probable ({result['probable']['kind']})",
+                        (x1, max(14, y1 - 6)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1, cv2.LINE_AA)
         for c in result["crops"]:
             x1, y1, x2, y2 = c["box"]
@@ -1635,13 +1685,23 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             sighting = loop.cats.record(camera, result["box"], (w, h),
                                         result["score"], image=snap,
                                         label=result["label"] or "cat",
-                                        source=result["source"])
+                                        source=result["source"],
+                                        zone=zone_for(result["box"], cam_zones, det.roi))
             where = f" ({sighting['region']})" if sighting["region"] else ""
             loop.activity.add(
                 "motion",
                 f"🔍 Cat found by escalation ({result['source']}){where} on {camera}.",
                 image=snap)
             loop.boost_detection(camera, 5.0)
+        elif camera and result["probable"] and result["probable"]["kind"] == "vlm":
+            # An unconfirmed VLM lead on a live camera: don't record it — hand it
+            # to the detector that CAN confirm (boost forces YOLO onto the next
+            # frames; a real cat there becomes a normal, recorded sighting).
+            loop.activity.add(
+                "motion",
+                f"🔍 Escalation: VLM suspects a cat on {camera} (unconfirmed) — "
+                "boosting detection so YOLO can confirm.")
+            loop.boost_detection(camera, 10.0)
 
         # Attach the trail image (the probable state's evidence; nice context on any
         # live run). Data URL so the GUI shows it inline next to the rung table.
@@ -1655,6 +1715,70 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                         "trail": trail_url,
                         "frame_size": [w, h], "hints_used": [list(b) for b in hints],
                         "camera": camera or None, "note": vlm_note})
+
+    @app.post("/api/vlm/temporal")
+    def api_vlm_temporal():
+        # Temporal VLM check (#68): tile the last few frames (a camera's ring buffer,
+        # or an uploaded video's sampled frames) into one numbered mosaic and ask the
+        # voted question "did a cat appear or pass through?". moondream is image-only;
+        # the mosaic is the honest 3070-friendly stand-in for video input — whether it
+        # reasons well over grids is exactly what this tester measures.
+        body = request.get_json(silent=True) or {}
+        camera = (body.get("camera") or "").strip()
+        loop = app.config["loop"]
+
+        if camera:                          # live path: same privacy gate as escalate
+            cfg = config_mod.load()
+            if not cfg.vlm_escalation:
+                return jsonify({"error": "Live-camera checks are disabled — enable "
+                                "'VLM escalation' in settings first."}), 403
+            if not loop.is_running():
+                return jsonify({"error": "Detection isn't running."}), 409
+            det = loop.get_detector(camera)
+            if det is None:
+                return jsonify({"error": f"Unknown camera {camera!r}."}), 409
+            frames = det.recent_frames()
+            if len(frames) < 2:
+                return jsonify({"error": "Not enough frame history yet — give the "
+                                "camera a few seconds."}), 409
+        else:                               # uploaded video (or image) session
+            with _TEST_SESSIONS_LOCK:
+                sess = _TEST_SESSIONS.get(body.get("id"))
+            if not sess:
+                return jsonify({"error": "Upload a video first (it may have expired)."}), 404
+            # Sampled frames carry no timestamps; index-spaced stand-ins label the grid.
+            frames = [(float(i), f) for i, f in enumerate(sess)]
+
+        mosaic = escalation.frame_mosaic(frames)
+        if mosaic is None:
+            return jsonify({"error": "No frames to build a mosaic from."}), 409
+        try:
+            vlm.preflight(_vlm_key(body), body.get("mode") or vlm.DEFAULT_MODE)
+            result = vlm.query_image_voted(
+                mosaic, prompt=vlm.TEMPORAL_PROMPT,
+                model=body.get("model") or vlm.DEFAULT_MODEL,
+                mode=body.get("mode") or vlm.DEFAULT_MODE,
+                api_key=_vlm_key(body), passes=body.get("passes") or vlm.DEFAULT_PASSES)
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 503
+        span = round(frames[-1][0] - frames[0][0], 1)
+        # A temporal "yes" is a HINT, not a verdict (#69: VLM decoy FP is high and
+        # nothing here was YOLO-confirmed). On a live camera, act on the hint the
+        # honest way: boost detection so YOLO looks hard at the next frames — a
+        # real cat becomes a normal recorded sighting; a decoy dies quietly.
+        note = None
+        if result.get("answer") == "yes":
+            note = "A temporal 'yes' is an unconfirmed hint, not a sighting."
+            if camera:
+                loop.activity.add(
+                    "motion",
+                    f"⏱️ Temporal check suspects a cat passed on {camera} "
+                    "(unconfirmed) — boosting detection so YOLO can confirm.")
+                loop.boost_detection(camera, 10.0)
+                note += " Detection boosted on the camera so YOLO can confirm."
+        return jsonify({**result, "mosaic": _full_jpeg_data_url(mosaic, quality=80),
+                        "n_frames": min(len(frames), escalation.MOSAIC_MAX_TILES),
+                        "span_s": span, "camera": camera or None, "hint_note": note})
 
     @app.get("/api/test/benchmark/<rid>.html")
     def api_benchmark_html(rid):

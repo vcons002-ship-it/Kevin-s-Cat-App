@@ -65,7 +65,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **262 automated tests**, including a detection-accuracy regression guard over
+- **287 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO/CUDA accelerators with
   CPU fallback, a clear error — no silent fallback — when a model can't load, the
@@ -167,18 +167,163 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       NAS to verify: real-scene ghosting/lighting-drift behaviour + the basket-cat
       recovery end-to-end. v2 ideas: doorway zones for the exit check (below),
       per-sighting trail images in the report card.
-- [ ] **Sighting/motion heat maps + semantic zones** — per-camera accumulated maps from
-      the existing `cats.log` boxes; named GUI-drawn zones ("the couch", doorways) for
-      semantic sightings and trail exit-detection; time-of-day priors to rank the
-      Find-My-Cat sweep (a prior, never a tracked state).
-- [ ] **Temporal VLM analysis** — frame ring buffer → frame-mosaic single query /
-      per-frame voted queries (3070-friendly) before considering true video-LLMs
-      (5090-tier experiment). Ring buffer also unlocks per-sighting event clips.
+- [x] **Sighting heat maps + semantic zones + time-of-day prior** (0.31.0, #68):
+      per-camera density maps from the existing `cats.log` boxes (🔥 Heat map);
+      GUI-drawn named zones ("the couch", doorways) so sightings carry a semantic
+      spot and exit zones sharpen the trail's left-the-view check; `by_hour` /
+      `likely_cameras` rank rooms by historical presence around the current hour
+      (a prior, never a tracked state). NAS to verify: zone-draw UX, heat-map
+      readability on real scenes, prior usefulness after a few days of data.
+- [x] **Temporal VLM analysis — frame mosaic** (0.32.0, #68): each camera keeps a
+      small ring of recent downscaled frames (8 × ~1 s apart, ≤480 px);
+      `POST /api/vlm/temporal` tiles them into one numbered, age-labelled grid and
+      asks moondream a single "did a cat pass through?" voted query (⏱️ button on
+      the Test tool's video uploads and on the escalation camera row). NAS to
+      verify the core premise: whether moondream can actually reason over a grid
+      of frames — the prompt and plumbing are tested, the model's skill is not.
+- [ ] Temporal follow-ups: per-frame voted queries aggregated over the ring;
+      per-sighting event clips from the same buffer; true video-LLMs
+      (5090-tier experiment) only if the mosaic underperforms on the NAS.
 - [ ] **Ideas parked with verdicts**: `caption()` report-card lines; `point()` as a cheap
       presence probe; motion-adaptive tiling; scheduled "cat census" ladder sweeps;
       cat re-ID embeddings (5090 benchmark before judging); **BLE collar tag** = the
       pragmatic per-cat identity (Wi-Fi CSI sensing assessed: people-tuned, new
       hardware — experiment-only, not an app feature).
+- [ ] ~~**Super-resolution before detection**~~ — **tested and rejected** (#69,
+      maintainer benchmark on the 5090): Real-ESRGAN before an unmodified YOLO
+      *reduced* recall 6–8 points at every tiling config and cost ~40× more time.
+      Mechanism: SR beautifies for humans and strips the sensor/compression
+      texture the detector's features key on — the output is out of YOLO's
+      training distribution, and the more SR changed the pixels the more recall
+      fell. The narrow escape hatch (fine-tuning a detector *on* SR'd imagery) is
+      a much larger project nobody is signing up for. Generative SR (SUPIR/InvSR)
+      untested but predicted worse (hallucinated cat texture = false positives).
+      Do not re-propose SR-before-detection; the data is in the issue.
+
+#### Future improvements — assessed 2026-07-02 (after #69's SR + VLM decoy data)
+
+The filter that separates good ideas from bad here, learned from #69: a
+transformation that **recovers real signal** (more samples, more photons, more
+pixels on the cat) can help; one that **synthesizes or beautifies** pushes the
+image out of the detector's training distribution and hurts.
+
+**Image-side:**
+- [x] **Still-scan frame averaging** (0.34.0): the still-cat scan averages a
+      short burst of back-to-back frames (default 3, max 8) before the locator
+      runs — sensor noise drops ~√N on a still scene, and a sleeping cat is
+      exactly the still subject that benefits. Any movement mid-burst falls back
+      to the single sharp frame; the fast treat path never averages. Per-camera
+      **Scan frames** knob. NAS to verify: real night-frame recall gain.
+- [ ] **CLAHE / adaptive contrast for dark frames only** — apply conditionally
+      (mean luminance below a threshold), never globally: on a dark frame it
+      mostly restores what the sensor compressed; on a lit frame it's pure
+      distribution shift. Add as a Test-tool knob first, measure on night
+      frames, only then consider wiring it into the locator path.
+- [ ] **Fine-tune YOLO on our own cameras** — the highest-leverage item on this
+      list; see the step-by-step guide below.
+- Ruled out by the #69 filter: sharpening/unsharp masking, saturation boosts,
+  learned denoisers, and (already tested) SR — all synthesize or beautify.
+
+**Equipment (no-constraints list, ranked by leverage per dollar):**
+- [ ] **Thermal sensor node per key room** (~$50 MLX90640 32×24 on an ESP32;
+      ~$200 FLIR Lepton 160×120): a cat is a ~38 °C blob against a ~21 °C room —
+      visible in total darkness, immune to decoys (a plush cat is room
+      temperature; thermal is structurally immune to the exact failure mode
+      that disqualified the VLMs), and a *still, sleeping* cat radiates heat
+      continuously, closing the no-motion gap at the sensor level. Integration:
+      "warm blob at region X" enters the app as a **hint box** — the escalation
+      ladder already accepts hints from any source. Best first buy.
+- [ ] **More light / better night optics** — a warm nightlight per cat room is
+      the $10 version (more photons beat every algorithm); "full-color night
+      vision" cameras (large sensor, ~f/1.0, ColorVu-class, ~$100–200) are the
+      upgrade: colour night frames stay close to YOLO's training distribution
+      where grayscale IR is marginal.
+- [ ] **BLE collar beacon + room receivers** (~$60 total, espresense-style;
+      already parked above) — the only option that gives **per-cat identity**,
+      which vision provably can't (#65). Enters as a prior/hint (rank the
+      sweep, aim the crops), never a state machine.
+- [ ] **mmWave presence sensors** (~$40–80/room, Aqara FP2 / LD2450-class) —
+      detect micro-motion incl. breathing of a stationary body; famously
+      "false-trigger" on pets, which here is the feature. Another independent,
+      dark-proof hint channel.
+- [ ] **Doorway break-beam sensors** (~$15/doorway, IR beam at cat height) —
+      deterministic "something crossed at time T": the ground-truth version of
+      the exit-zone check the trail approximates from pixels. Timestamped
+      hints only ("last crossing was *into* the study") — #65's rejection of
+      transition state machines applies to the modelling, not the sensor.
+- [ ] **NAS GPU upgrade** (used RTX 3090 24 GB, ~$700) — dissolves the
+      moondream + CUDA-YOLO VRAM co-residency question on the 8 GB 3070 and
+      enables an always-warm VLM for the caption/report-card role. Nice-to-have,
+      not a detection win.
+- **Assessed and skipped**: PTZ cameras (a moving camera breaks the null-frame
+  trail, the zones, and the heat maps — everything assumes fixed POV); Wi-Fi
+  CSI sensing (people-tuned, new firmware, cats are marginal RF targets);
+  microphones/audio (a weak signal thermal delivers better).
+- The pattern: every good option is another **independent hint channel**
+  feeding the same only-YOLO-confirms pipeline (0.33.0) — thermal blobs, BLE
+  presence, mmWave, beam crossings slot in exactly where motion blobs and
+  trail endpoints already do.
+
+#### How to fine-tune YOLO on our own cats (the guide)
+
+The single biggest remaining win: it attacks the residual miss rate *and* decoy
+false positives directly, and it makes our exact cameras/lighting/cats the
+training distribution by construction. Everything runs on the 5090; the output
+is one ONNX file the app already knows how to load.
+
+1. **Assemble the dataset** (the hard 20%, do it well):
+   - Start from what exists: the 199-positive/43-null benchmark set, the decoy
+     set, and the sightings log — `cats.log` + `snapshots/` is a self-labelling
+     pipeline (every YOLO-confirmed sighting has a box already; export as
+     starter labels and hand-verify a sample).
+   - Bootstrap the rest with the current model: run yolo26x at 3×3 tiling over
+     collected frames, take its boxes as **draft labels**, and hand-correct in
+     Label Studio or CVAT (free, local). Correcting drafts is ~5× faster than
+     labelling from scratch. Aim for 500–1500 boxed cat instances to start —
+     small for pretraining, plenty for fine-tuning.
+   - **Deliberately over-sample the failure modes**: night/dim frames, the
+     curled-up-in-basket poses, partial occlusions, each camera's worst angle.
+     A model learns what it sees; the misses are the syllabus.
+   - **Hard negatives are half the value**: add the decoy set and the 43 nulls
+     as *background images* (present in training with no labels) — this is the
+     standard YOLO recipe for "stop firing on the cat-shaped cushion" and it
+     directly targets the FP problem.
+2. **Split honestly**: hold out ~15% for validation, split by **scene/day, not
+   by frame** (two frames of the same nap in train and val is leakage that
+   inflates every metric). Keep at least one full camera out if possible.
+3. **Choose the class recipe**: fine-tune as a **single-class cat locator**
+   (collapse cat/dog into one "cat" class) used *only* for the locator path —
+   the treat path keeps the stock person model, so person detection can't
+   regress. Don't fine-tune a shared person+cat model with cat-only data: it
+   will quietly forget people.
+4. **Train** (ultralytics on the 5090, minutes-to-hours):
+   ```
+   yolo detect train model=yolo26x.pt data=cats.yaml imgsz=1280 epochs=100 \
+        batch=8 lr0=0.001 freeze=10 patience=20 close_mosaic=10
+   ```
+   - `freeze=10` (backbone) + low `lr0`: with a small dataset you're steering,
+     not re-learning; this avoids catastrophic forgetting.
+   - `imgsz=1280`: matches the tiled-crop resolution the locator actually sees.
+   - Keep augmentation mild: default mosaic early (`close_mosaic` turns it off
+     for the final epochs), light HSV; **no heavy colour jitter** (it fights
+     the night-frame distribution you're trying to learn).
+   - `patience=20`: early-stop on the val set; small datasets overfit fast.
+5. **Export for the app**: `yolo export model=best.pt format=onnx imgsz=1280
+   opset=12` → drop into `models/` (e.g. `cat26x_1280.onnx`), add a registry
+   entry in `d20app/yolo.py` — the model-as-resolution convention holds (the
+   name carries the input size).
+6. **Gate on the benchmark, not vibes**: run the in-app batch benchmark on the
+   *held-out* val set + the decoy set, against stock yolo26x at the same
+   tiling. Ship only if it beats 91% recall / 0% FP on data it never saw. Check
+   the night-frame slice separately — that's the gap it was built to close.
+7. **Iterate on misses**: every future miss (frames the still-scan/ladder had
+   to escalate on, or "probable" boxes a human confirmed) goes into the next
+   training round — the sightings log makes hard-example mining free. Expect
+   round 2 to matter more than round 1.
+   - Optional later: once a fine-tuned locator exists, the #69 door reopens a
+     crack — averaged/CLAHE'd night frames *in the training set* make those
+     transforms in-distribution too. Measure, as always.
+
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

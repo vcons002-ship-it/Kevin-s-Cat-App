@@ -257,9 +257,15 @@ person/treat path untouched:
   **`yolo11m_960`** model is bundled (export more sizes with
   `scripts/export_yolo.py`). If a size's model isn't present it falls back to the
   native size + tiling.
+- **Frame averaging** (`Scan frames`, default 3) has the scan average a short burst
+  of back-to-back frames first: on a still scene sensor noise drops by roughly the
+  square root of the count — real signal recovery, which is exactly what a dim room
+  and a sleeping cat need. If anything moves mid-burst it falls back to the single
+  sharp frame, so a walking cat is never smeared. The fast treat path never averages.
 
-Tune both in the **Test detection** card against a real screenshot, then save to the
-camera.
+Tune the resolution knobs in the **Test detection** card against a real screenshot,
+then save to the camera. (Averaging applies to the live scan only — an uploaded
+still has nothing to average.)
 
 ### The escalation ladder — "zoom in and look again"
 
@@ -268,13 +274,19 @@ ladder** (in the Cat-presence card) does what you would: it cuts **full-resoluti
 close-ups** of the places worth checking — where motion just happened, where the cat
 was last seen, and where a CPU predictor says a *moving* cat is headed — and re-runs
 the fast detector on them. Only if that fails does it ask moondream to **point**
-("where are the cats?"), and a VLM answer is **never trusted without confirmation**
-(YOLO on the crop first, the voted yes/no second — open-vocabulary pointing falls for
-cat-shaped decoys). It runs **on demand only**: on an uploaded test frame, or against
-a live camera behind the off-by-default **Live-camera escalation** setting — the
-treat path never touches it. Confirmed finds are logged as sightings tagged with the
-rung that found them, so real use shows whether the free zoom or the VLM earns its
-keep. (VLM rungs need the optional moondream + a GPU/key; the zoom rung is pure CPU.)
+("where are the cats?"), and **only YOLO can confirm a sighting**: the maintainer's
+decoy benchmarks (issue #69) measured VLMs at 37–42% false positives, and majority
+voting fixes run-to-run wobble, not a systematic weakness for cat-shaped decoys. So
+a VLM proposal confirmed by YOLO on the crop is a real find; a votes-only VLM "yes"
+is downgraded to an honest **"probable"** lead — shown in orange, never logged — and
+on a live camera it hands off the right way: detection is briefly boosted so YOLO
+gets a hard look at the next frames (a real cat becomes a normal recorded sighting;
+a decoy dies quietly). It runs **on demand only**: on an uploaded test frame, or
+against a live camera behind the off-by-default **Live-camera escalation** setting —
+the treat path never touches it. Confirmed finds are logged as sightings tagged with
+the rung that found them, so real use shows whether the free zoom or the VLM earns
+its keep. (VLM rungs need the optional moondream + a GPU/key; the zoom rung is pure
+CPU.)
 
 ### The cat trail — where she went, in colour
 
@@ -295,6 +307,21 @@ real sighting. (Known quirk, stated plainly: the "empty room" baseline refreshes
 after a few still seconds — good, it heals lighting drift — so a cat who settles
 becomes part of it, and her later departure briefly lights her old spot as a ghost
 in the trail's oldest colours.)
+
+### The temporal check — eight seconds in one picture
+
+moondream only sees still images, so the app builds it a **film strip**: each
+running camera keeps a small ring of recent frames (~8, a second apart), and the
+⏱️ **Temporal check** button tiles them into one numbered grid — each tile
+labelled with its age — and asks a single voted question: *did a cat appear or
+move through the scene, and in which frame(s)?* Works on the Test tool's video
+uploads too (the sampled frames become the grid). Live cameras sit behind the
+same **Live-camera escalation** toggle. A temporal **"yes" is a hint, never a
+verdict** (same #69 reasoning as the ladder): on a live camera it boosts
+detection so YOLO can confirm on the next frames — nothing is recorded from the
+mosaic alone. Honest caveat: whether the model can truly reason over a grid of
+frames is exactly what the NAS run has to prove — the response includes the
+mosaic so you can judge what it saw.
 
 ### Watching lots of cameras without melting the CPU (round-robin)
 

@@ -11,6 +11,144 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.34.0] — 2026-07-02
+
+### Added
+- **Still-scan frame averaging**: the periodic still-cat scan now averages a
+  short burst of back-to-back frames (config/GUI `cat_scan_frames`, default 3,
+  max 8) before the locator net runs. On a genuinely still scene sensor noise
+  drops ~√N — *real signal recovery* (N samples of the same scene), the
+  opposite of the SR-style synthesized detail #69 rejected — which is exactly
+  what a dim room and a sleeping cat need. Safety valves: any movement
+  mid-burst (cheap downscaled-gray diff) aborts to the single sharp frame, so
+  a mover is never smeared; a read failure or size change aborts too; the
+  **fast treat path never averages** (bursting is confined to the forced scan,
+  which is not latency-sensitive); smooth-feed mode skips it (the grab thread
+  is the capture's sole reader). Per-camera **Scan frames** knob on the camera
+  card; old configs inherit the default via coercion.
+
+### Docs
+- **ROADMAP — future improvements**: recorded the post-#69 assessment as
+  actionable items — the recovers-signal vs synthesizes-detail filter,
+  CLAHE-for-dark-frames (measure first), the ranked equipment list (thermal
+  sensor nodes as hint sources, night lighting/optics, BLE collar, mmWave,
+  doorway break-beams, NAS GPU; PTZ/Wi-Fi-CSI/audio assessed and skipped), and
+  a **step-by-step guide to fine-tuning YOLO on our own cameras** (dataset
+  assembly from the sightings log, hard negatives from the decoy set, honest
+  scene-level splits, single-class locator recipe, 5090 training command,
+  ONNX export into the model registry, benchmark gating, miss-mining).
+
+### Notes
+- Suite: **287 tests** (+6: noise actually drops on a still scene, movement
+  mid-burst aborts, read-failure/size-change aborts, forced scan bursts while
+  the treat path reads exactly one frame, the knob clamps at 8 / disables at 1,
+  new cameras inherit the global knob).
+- NAS to verify: the real night-frame recall gain (CI proves the mechanics and
+  the math, not the camera's noise profile), and that RTSP burst reads don't
+  hiccup on the real streams.
+
+## [0.33.0] — 2026-07-02
+
+### Changed
+- **Only YOLO confirms — VLM-only verdicts demoted** (#69): the maintainer's
+  decoy benchmarks measured VLMs at **37–42% false positives**; majority voting
+  reduces run-to-run *variance*, not that systematic *bias* (three votes just
+  agree wrongly on a cat-shaped decoy). Accordingly:
+  - **Escalation ladder**: a votes-only VLM "yes" (rung 2's query fallback, all
+    of rung 3) can no longer return `found` — it comes back as a `vlm_probable`
+    lead and surfaces in the **"probable"** tier (orange box, honest note,
+    **never recorded** as a sighting). Rung 2 now also keeps scanning past a
+    votes-only "yes": a YOLO confirmation on a later region beats it. A live
+    VLM lead **boosts detection** on that camera so real YOLO gets the chance
+    to confirm on the next frames — a real cat becomes a normal recorded
+    sighting, a decoy dies quietly.
+  - **Temporal mosaic**: a "yes" is now labelled an **unconfirmed hint**
+    (`hint_note` in the response, shown in the GUI); on a live camera it boosts
+    detection instead of standing as a conclusion. Nothing was ever recorded
+    from the mosaic — now the response says so and hands off to YOLO.
+  - The VLM's confirmed roles are unchanged: proposals for YOLO to check
+    (rung 2, decoys filtered by YOLO's 0% FP), and judgment that is already
+    labelled inference (the probable tier).
+
+### Notes
+- Suite: **281 tests** (+2; three ladder tests rewritten for the demotion, new
+  coverage: a later YOLO confirm beats an earlier votes-only yes, a live VLM
+  lead records nothing and boosts, temporal hint notes with/without a camera).
+- The 37–42% figure comes from the maintainer's own extensive decoy testing
+  (issue #69) and was taken as trusted input; the NAS decoy run can still
+  measure the voted-moondream setup specifically.
+
+### Docs
+- **`DESIGN_RATIONALE.md`** — a reviewer-facing document explaining the *why*
+  behind the architecture: the standing invariants (treat path is sacred,
+  cheap-first, never record unconfirmed claims, priors not state), the
+  reasoning behind each smart-detection slice, the ideas assessed and rejected
+  (now including #69's super-resolution verdict), the engineering conventions,
+  and the open NAS-validation queue. Linked from `CLAUDE.md` so any Claude
+  session finds it.
+
+## [0.32.0] — 2026-07-02
+
+### Added
+- **Temporal VLM analysis — frame mosaic** (#68): each running camera now keeps a
+  small ring buffer of recent frames (up to 8, spaced ~1 s apart, downscaled to
+  ≤480 px — a few MB per camera). `POST /api/vlm/temporal` tiles them into one
+  numbered grid image, oldest first, each tile labelled with its age ("1 (-4s)" …
+  "N (now)"), and asks moondream a single voted query: *did a cat appear or move
+  through the scene, and in which frame(s)?* One query covers ~8 s of history —
+  the temporal rung of #65/#68 without any video-LLM dependency. Works on the
+  Test tool's **video uploads** (a ⏱️ **Temporal check** button appears when the
+  upload is a video: the sampled frames become the grid) and on **live cameras**
+  (a ⏱️ button on the escalation ladder's camera row; gated by the same
+  `vlm_escalation` toggle and clear 409s when the loop is off or the ring hasn't
+  filled yet). The response includes the mosaic itself so you can see exactly
+  what the model saw.
+
+### Notes
+- Suite: **279 tests** (+7: ring spacing/cap/copy semantics, `read_and_detect`
+  feeds the ring, mosaic geometry incl. the 9-tile cap and 1×1/empty edges,
+  video-session and live-camera endpoint paths with the privacy gates).
+- **Verified in CI vs NAS**: the ring buffer, grid geometry, endpoint gating and
+  GUI are tested here. The core premise — that moondream can genuinely reason
+  over a grid of numbered frames — is **not** provable with mocks; the
+  `TEMPORAL_PROMPT` and tile size need real-hardware validation on the NAS
+  before this earns a place in any automatic flow.
+
+## [0.31.0] — 2026-07-02
+
+### Added
+- **Semantic zones** (#68): per-camera named rectangles drawn on the preview frame
+  (same drag interaction as the ROI picker — a **🚪 Add zone…** button on each camera
+  card; zones listed as removable chips). Sightings whose box lands in a zone are
+  recorded with its name, and the activity log / Cats card say **"cat seen (the
+  couch)"** instead of a grid cell. Zones marked **exit** (doorways) sharpen the
+  trail's "may have left the view" check: a trail endpoint inside an exit zone
+  suppresses the "probable location" claim even when it isn't at a frame edge.
+  Zones live on the saved camera (config `cameras[].zones`); old configs coerce to
+  `[]`. Zone boxes are in full-preview coordinates; detection boxes are ROI-crop
+  coordinates — `zone_for()` shifts by the ROI origin so the two meet correctly.
+- **Sighting heat maps** (#68): `GET /api/cats/heatmap?camera=` renders the
+  sighting history (the tracker's 500-cap log) as a Gaussian-softened density field
+  colour-mapped over the camera's current frame — the room's hot spots (the basket,
+  the couch arm, the sunny patch) at a glance. A **🔥 Heat map** button sits next to
+  🌈 Show trail. Pure CPU (`d20app/heatmap.py`).
+- **Time-of-day prior** (#68): `CatTracker.by_hour()` + `likely_cameras(hour)` rank
+  cameras by historical presence around the current hour (±1, wrapping midnight) —
+  exposed as `by_hour`/`likely` in `/api/cats` and shown on the Cats card as
+  *"Usually around now: Kitchen (12) · Bedroom (3)"*. Explicitly a **prior** for
+  ordering a Find-My-Cat sweep — a hint from history, never a tracked state (the
+  fragile house-graph tracking #65 rejected stays rejected).
+
+### Notes
+- Suite: **272 tests** (+10: zone naming + ROI shift, exit-zone matching, zone
+  persistence with legacy records, the hour histogram + wrap-around ranking, heat-map
+  hot/cold pixels + degenerate-box rejection, `/api/cats` prior exposure, heat-map
+  endpoint JPEG + 404/409s, exit-zone suppressing "probable", and camera-zone
+  round-trip through the saved-cameras API), all green.
+- **NAS to verify**: zone-drawing UX on the real cameras (drag on the preview),
+  whether the heat map reads well over real scenes, and the prior's usefulness once
+  a few days of sightings accumulate.
+
 ## [0.30.0] — 2026-07-02
 
 ### Added

@@ -10,12 +10,19 @@ The fix is what a human does — **zoom in where it makes sense and look again**
    cat is headed (:func:`predict_hint_box`) — re-checked by the ordinary YOLO net.
    In a crop the cat is big again; most misses should die here.
 2. **vlm detect**: moondream's `detect("cat")` proposes regions on the full frame;
-   each is cropped at full resolution and **confirmed** (YOLO first, voted yes/no
-   query second). A bare detect region is never trusted alone — open-vocabulary
-   detectors false-fire on cat-shaped decoys.
-3. **vlm query**: last resort — the voted yes/no question on the hint crops.
+   each is cropped at full resolution and confirmed by **YOLO** — a bare detect
+   region is never trusted alone (open-vocabulary detectors false-fire on
+   cat-shaped decoys).
+3. **vlm query**: last resort — the voted yes/no question on the crops.
 
-Cheapest rung first; stop at the first confirmed hit. The ladder takes its detectors
+**Only YOLO confirms.** The maintainer's decoy benchmarks (issue #69) measured
+VLMs at 37–42% false positives; majority voting reduces run-to-run *variance*,
+not that systematic *bias* — three votes just agree wrongly. So a votes-only
+"yes" (rung 2's query fallback, all of rung 3) can never produce ``found=True``:
+it is returned as ``vlm_probable`` — a lead for the caller to surface as
+"probable" and to hand YOLO for confirmation — never a recorded fact.
+
+Cheapest rung first; stop at the first YOLO-confirmed hit. The ladder takes its detectors
 as **injected callables**, so every decision here is pure, deterministic, and tested
 without a net or a GPU. All boxes are ``(x1, y1, x2, y2)`` ints in the same
 (adjusted, ROI-cropped) frame coordinates the rest of the app uses; only
@@ -189,6 +196,48 @@ def predict_hint_box(tracks, now: float | None = None, frame_size=None,
     return tuple(int(round(v)) for v in box)
 
 
+MOSAIC_MAX_TILES = 9
+
+
+def frame_mosaic(frames, tile: int = 320):
+    """Tile timestamped frames into one numbered grid image, oldest first (#68).
+
+    moondream reads single images only — no video input — so temporal questions
+    ("did a cat pass through?") are asked over a **mosaic** of the last few frames,
+    each tile numbered and stamped with its age relative to the newest. Returns a
+    BGR grid (≤ :data:`MOSAIC_MAX_TILES` tiles, square-ish layout), or None when
+    there are no frames. ``frames`` is ``[(ts, bgr)]`` in any order.
+    """
+    import cv2
+    import numpy as np
+
+    frames = sorted((f for f in frames or [] if f and f[1] is not None),
+                    key=lambda t: t[0])[-MOSAIC_MAX_TILES:]
+    n = len(frames)
+    if not n:
+        return None
+    cols = int(np.ceil(np.sqrt(n)))
+    rows = int(np.ceil(n / cols))
+    newest = frames[-1][0]
+    tiles = []
+    for i, (ts, f) in enumerate(frames):
+        h, w = f.shape[:2]
+        s = tile / float(max(h, w))
+        r = cv2.resize(f, (max(1, int(w * s)), max(1, int(h * s))))
+        canvas = np.zeros((tile, tile, 3), np.uint8)
+        y, x = (tile - r.shape[0]) // 2, (tile - r.shape[1]) // 2
+        canvas[y:y + r.shape[0], x:x + r.shape[1]] = r
+        age = newest - ts
+        label = f"{i + 1} (now)" if age < 0.5 else f"{i + 1} (-{age:.0f}s)"
+        cv2.putText(canvas, label, (6, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                    (255, 255, 255), 2, cv2.LINE_AA)
+        tiles.append(canvas)
+    while len(tiles) < rows * cols:
+        tiles.append(np.zeros((tile, tile, 3), np.uint8))
+    return np.vstack([np.hstack(tiles[r * cols:(r + 1) * cols])
+                      for r in range(rows)])
+
+
 def _best_locator_box(dets, locator_classes, floor):
     """Strongest locator-class detection ``(label, score, box)`` from a YOLO result
     list, or None. ``dets`` is ``[(label, score, (x1,y1,x2,y2))]``."""
@@ -209,17 +258,24 @@ def escalate(frame, hints=(), *, run_yolo, vlm_detect=None, vlm_query=None,
     ``vlm_detect(img) -> [normalized Region dicts]`` and
     ``vlm_query(img) -> {"answer", "ratio", ...}`` are optional — None marks that
     rung unavailable (moondream absent / disabled) and it is skipped with a note.
-    Bounded: ≤ ``max_crops`` crops per rung and exactly one ``vlm_detect`` call.
+    Bounded: ≤ ``max_crops`` crops per rung, exactly one ``vlm_detect`` call, and
+    voted queries stop after the first "yes" (it can only ever yield one lead).
+
+    ``found=True`` requires a YOLO confirmation (source ``zoom+yolo``/``vlm+yolo``).
+    A votes-only VLM "yes" comes back in ``vlm_probable`` (box/score/ratio) with
+    ``found=False`` — an unconfirmed lead, per #69's decoy false-positive data.
     """
     h, w = frame.shape[:2]
     frame_size = (w, h)
     locator_classes = tuple(locator_classes) or ("cat",)
     rungs, all_crops = [], []
+    vlm_probable = None
 
     def _finish(found, label=None, source=None, box=None, score=0.0, ratio=None):
         return {"found": found, "label": label, "source": source,
                 "box": list(box) if box else None, "score": round(float(score), 3),
-                "ratio": ratio, "rungs": rungs, "crops": all_crops}
+                "ratio": ratio, "vlm_probable": vlm_probable,
+                "rungs": rungs, "crops": all_crops}
 
     # -- rung 1: zoom + yolo on the hint crops (no VLM) -----------------------
     hint_boxes = merge_hint_boxes(hints, max_boxes=max_crops)
@@ -265,14 +321,18 @@ def escalate(frame, hints=(), *, run_yolo, vlm_detect=None, vlm_query=None,
                 found_here = ("vlm+yolo", best[0], best[1],
                               map_box_to_frame(best[2], cb), None)
                 break
-            if vlm_query is not None:
+            # A votes-only "yes" is a LEAD, not a find (#69): remember the first
+            # one and keep going — a YOLO confirm on a later region beats it.
+            if vlm_query is not None and vlm_probable is None:
                 q = vlm_query(crop_img)
                 if q and q.get("answer") == "yes":
                     votes = q.get("votes") or {}
                     n = q.get("passes") or 1
                     score = (votes.get("yes", 0) / n) if n else 0.0
-                    found_here = ("vlm", "cat", score, rb, q.get("ratio"))
-                    break
+                    vlm_probable = {"box": list(rb), "score": round(score, 3),
+                                    "ratio": q.get("ratio"), "rung": "vlm detect"}
+        if vlm_probable and not found_here:
+            note = (note + "; " if note else "") + "VLM voted yes — unconfirmed"
         rungs.append({"name": "vlm detect", "ran": True,
                       "ms": round((time.perf_counter() - t0) * 1000.0, 1),
                       "crops": len(regions), "found": bool(found_here), "note": note})
@@ -281,6 +341,7 @@ def escalate(frame, hints=(), *, run_yolo, vlm_detect=None, vlm_query=None,
             return _finish(True, lab, src, box, score, ratio)
 
     # -- rung 3: vlm query on the hint crops (only when detect had no regions) --
+    # Votes-only, so its best outcome is a LEAD (vlm_probable), never a find (#69).
     t0 = time.perf_counter()
     if vlm_query is None or regions or not crops:
         why = ("VLM unavailable" if vlm_query is None else
@@ -288,19 +349,18 @@ def escalate(frame, hints=(), *, run_yolo, vlm_detect=None, vlm_query=None,
         rungs.append({"name": "vlm query", "ran": False, "ms": 0.0, "crops": 0,
                       "found": False, "note": why})
     else:
-        hit3 = None
         for c in crops:
             q = vlm_query(c["image"])
             if q and q.get("answer") == "yes":
                 votes = q.get("votes") or {}
                 n = q.get("passes") or 1
                 score = (votes.get("yes", 0) / n) if n else 0.0
-                hit3 = ("cat", score, c["box"], q.get("ratio"))
+                vlm_probable = {"box": list(c["box"]), "score": round(score, 3),
+                                "ratio": q.get("ratio"), "rung": "vlm query"}
                 break
         rungs.append({"name": "vlm query", "ran": True,
                       "ms": round((time.perf_counter() - t0) * 1000.0, 1),
-                      "crops": len(crops), "found": bool(hit3), "note": ""})
-        if hit3:
-            return _finish(True, hit3[0], "vlm", hit3[2], hit3[1], hit3[3])
+                      "crops": len(crops), "found": False,
+                      "note": "VLM voted yes — unconfirmed" if vlm_probable else ""})
 
     return _finish(False)

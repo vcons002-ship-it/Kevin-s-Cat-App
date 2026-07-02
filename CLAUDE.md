@@ -1,5 +1,11 @@
 # Kevin's Cat App — notes for Claude
 
+> **Reviewing this repo?** Read [`DESIGN_RATIONALE.md`](DESIGN_RATIONALE.md)
+> first — it explains the *why* behind the architecture, the standing invariants
+> (treat path is sacred, cheap-first, never record unconfirmed claims, priors not
+> state), the rejected ideas, and what is deliberately still unverified on real
+> hardware.
+
 A D20 "treat roller": a background loop watches a camera for a **person** (cats never
 roll, but are **tracked** — see `cats.py` / the "Show cat" feature), rolls a die on
 each allowed detection, and on a winning roll plays a chime (or a spoken message) on a
@@ -8,7 +14,7 @@ Flask single-page GUI configures and runs it. CPU-only, no Docker, no cloud, no 
 
 ## Run / test
 - Python 3.11+. Virtualenv at `./venv`.
-- Tests: `./venv/bin/python -m pytest -q` (currently ~262 tests; keep them green).
+- Tests: `./venv/bin/python -m pytest -q` (currently ~287 tests; keep them green).
 - Launch: `./venv/bin/python run.py` → prints a `http://<lan-ip>:8080` GUI URL.
 - Setup: `setup.sh` (Linux/apt) or `setup.ps1` / `setup.bat` (Windows), `start.bat`
   to launch on Windows.
