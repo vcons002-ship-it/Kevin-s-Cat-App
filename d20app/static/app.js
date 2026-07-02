@@ -1070,6 +1070,30 @@ async function uploadVlm(file) {
   }
   $("vlm-run").disabled = false;
   const er = $("esc-run"); if (er) er.disabled = false;
+  // Temporal check needs several frames — a sampled video, not a single photo (#69).
+  const vt = $("vlm-temporal");
+  if (vt) vt.disabled = body.kind !== "video";
+}
+
+// Temporal mosaic (#69): the last few frames tiled into one numbered grid, one
+// voted question over it. camera=null → the uploaded video session's frames.
+async function runTemporal(camera) {
+  const note = $("esc-note") && camera ? $("esc-note") : $("vlm-note");
+  const cur = vlmCurrent();
+  const payload = { mode: cur.mode, model: cur.model, passes: vlmPasses() };
+  if (camera) payload.camera = camera;
+  else if (vlmSession) payload.id = vlmSession.id;
+  else { note.textContent = "Upload a video first."; return; }
+  note.textContent = "Building the mosaic + asking moondream…";
+  const { ok, body } = await api("/api/vlm/temporal", postJSON(payload));
+  if (!ok || !body || body.error) { note.textContent = (body && body.error) || "Temporal check failed."; return; }
+  note.textContent = `${body.n_frames} frames${body.span_s ? ` over ~${body.span_s}s` : ""}`;
+  renderVlm(body);                       // verdict + ratio + reasoning, as usual
+  const mi = $("vlm-mosaic");
+  if (mi) {
+    mi.classList.remove("hidden");
+    mi.src = body.mosaic; mi.onclick = () => zoomImg(mi.src);
+  }
 }
 
 // ---- escalation ladder (#66): zoom crops -> YOLO -> VLM detect/confirm ------
@@ -1188,6 +1212,8 @@ async function runVlm() {
 
 function renderVlm(b) {
   $("vlm-result").classList.remove("hidden");
+  const mi = $("vlm-mosaic");            // stale temporal mosaic hides on a plain query
+  if (mi && !b.mosaic) mi.classList.add("hidden");
   const badge = $("vlm-answer");
   if (!b.parsed || b.answer == null) {
     badge.textContent = "unparsed"; badge.className = "vlm-badge vlm-unparsed";
@@ -1502,6 +1528,10 @@ function wire() {
   if (etb) etb.onclick = showTrail;
   const ehb = $("esc-heatmap-btn");
   if (ehb) ehb.onclick = showHeatmap;
+  const vtb = $("vlm-temporal");
+  if (vtb) vtb.onclick = () => runTemporal(null);
+  const etp = $("esc-temporal-btn");
+  if (etp) etp.onclick = () => runTemporal($("esc-camera").value);
   const et = $("vlm-escalation-toggle");
   if (et) et.onchange = async () => {
     await api("/api/config", postJSON({ vlm_escalation: et.checked }));

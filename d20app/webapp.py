@@ -1695,6 +1695,56 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                         "frame_size": [w, h], "hints_used": [list(b) for b in hints],
                         "camera": camera or None, "note": vlm_note})
 
+    @app.post("/api/vlm/temporal")
+    def api_vlm_temporal():
+        # Temporal VLM check (#69): tile the last few frames (a camera's ring buffer,
+        # or an uploaded video's sampled frames) into one numbered mosaic and ask the
+        # voted question "did a cat appear or pass through?". moondream is image-only;
+        # the mosaic is the honest 3070-friendly stand-in for video input — whether it
+        # reasons well over grids is exactly what this tester measures.
+        body = request.get_json(silent=True) or {}
+        camera = (body.get("camera") or "").strip()
+        loop = app.config["loop"]
+
+        if camera:                          # live path: same privacy gate as escalate
+            cfg = config_mod.load()
+            if not cfg.vlm_escalation:
+                return jsonify({"error": "Live-camera checks are disabled — enable "
+                                "'VLM escalation' in settings first."}), 403
+            if not loop.is_running():
+                return jsonify({"error": "Detection isn't running."}), 409
+            det = loop.get_detector(camera)
+            if det is None:
+                return jsonify({"error": f"Unknown camera {camera!r}."}), 409
+            frames = det.recent_frames()
+            if len(frames) < 2:
+                return jsonify({"error": "Not enough frame history yet — give the "
+                                "camera a few seconds."}), 409
+        else:                               # uploaded video (or image) session
+            with _TEST_SESSIONS_LOCK:
+                sess = _TEST_SESSIONS.get(body.get("id"))
+            if not sess:
+                return jsonify({"error": "Upload a video first (it may have expired)."}), 404
+            # Sampled frames carry no timestamps; index-spaced stand-ins label the grid.
+            frames = [(float(i), f) for i, f in enumerate(sess)]
+
+        mosaic = escalation.frame_mosaic(frames)
+        if mosaic is None:
+            return jsonify({"error": "No frames to build a mosaic from."}), 409
+        try:
+            vlm.preflight(_vlm_key(body), body.get("mode") or vlm.DEFAULT_MODE)
+            result = vlm.query_image_voted(
+                mosaic, prompt=vlm.TEMPORAL_PROMPT,
+                model=body.get("model") or vlm.DEFAULT_MODEL,
+                mode=body.get("mode") or vlm.DEFAULT_MODE,
+                api_key=_vlm_key(body), passes=body.get("passes") or vlm.DEFAULT_PASSES)
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 503
+        span = round(frames[-1][0] - frames[0][0], 1)
+        return jsonify({**result, "mosaic": _full_jpeg_data_url(mosaic, quality=80),
+                        "n_frames": min(len(frames), escalation.MOSAIC_MAX_TILES),
+                        "span_s": span, "camera": camera or None})
+
     @app.get("/api/test/benchmark/<rid>.html")
     def api_benchmark_html(rid):
         rep = _find_report(rid)

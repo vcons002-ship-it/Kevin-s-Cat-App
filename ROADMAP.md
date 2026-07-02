@@ -65,7 +65,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **272 automated tests**, including a detection-accuracy regression guard over
+- **279 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO/CUDA accelerators with
   CPU fallback, a clear error — no silent fallback — when a model can't load, the
@@ -174,9 +174,16 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       `likely_cameras` rank rooms by historical presence around the current hour
       (a prior, never a tracked state). NAS to verify: zone-draw UX, heat-map
       readability on real scenes, prior usefulness after a few days of data.
-- [ ] **Temporal VLM analysis** — frame ring buffer → frame-mosaic single query /
-      per-frame voted queries (3070-friendly) before considering true video-LLMs
-      (5090-tier experiment). Ring buffer also unlocks per-sighting event clips.
+- [x] **Temporal VLM analysis — frame mosaic** (0.32.0, #69): each camera keeps a
+      small ring of recent downscaled frames (8 × ~1 s apart, ≤480 px);
+      `POST /api/vlm/temporal` tiles them into one numbered, age-labelled grid and
+      asks moondream a single "did a cat pass through?" voted query (⏱️ button on
+      the Test tool's video uploads and on the escalation camera row). NAS to
+      verify the core premise: whether moondream can actually reason over a grid
+      of frames — the prompt and plumbing are tested, the model's skill is not.
+- [ ] Temporal follow-ups: per-frame voted queries aggregated over the ring;
+      per-sighting event clips from the same buffer; true video-LLMs
+      (5090-tier experiment) only if the mosaic underperforms on the NAS.
 - [ ] **Ideas parked with verdicts**: `caption()` report-card lines; `point()` as a cheap
       presence probe; motion-adaptive tiling; scheduled "cat census" ladder sweeps;
       cat re-ID embeddings (5090 benchmark before judging); **BLE collar tag** = the

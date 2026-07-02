@@ -46,6 +46,15 @@ import time
 # for or parse a number; the reasoning text is kept purely as information (#54).
 DEFAULT_PROMPT = "Is there a cat in this image? Answer yes or no, then briefly explain."
 
+# The temporal-mosaic question (#69): the "image" is a numbered grid of frames from
+# ONE camera, oldest → newest (built by escalation.frame_mosaic). Untested premise,
+# honestly: whether moondream reasons well over grid images is exactly what the
+# tester exists to measure — validate on the NAS before trusting it.
+TEMPORAL_PROMPT = (
+    "This image is a grid of numbered frames from one camera, in time order "
+    "(1 = oldest; the newest is marked 'now'). Did a cat appear or move through the "
+    "scene? Answer yes or no, then say in which numbered frame(s) you see it.")
+
 # Local model names Photon can load (not file paths). moondream2 (2B) fits an 8 GB card
 # comfortably; moondream3-preview (9B) does NOT fit 8 GB locally (Photon has no weight
 # quantisation) — so M3 is offered as a **cloud** choice, not local, on small cards (#59).

@@ -11,6 +11,33 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.32.0] — 2026-07-02
+
+### Added
+- **Temporal VLM analysis — frame mosaic** (#69): each running camera now keeps a
+  small ring buffer of recent frames (up to 8, spaced ~1 s apart, downscaled to
+  ≤480 px — a few MB per camera). `POST /api/vlm/temporal` tiles them into one
+  numbered grid image, oldest first, each tile labelled with its age ("1 (-4s)" …
+  "N (now)"), and asks moondream a single voted query: *did a cat appear or move
+  through the scene, and in which frame(s)?* One query covers ~8 s of history —
+  the temporal rung of #65/#69 without any video-LLM dependency. Works on the
+  Test tool's **video uploads** (a ⏱️ **Temporal check** button appears when the
+  upload is a video: the sampled frames become the grid) and on **live cameras**
+  (a ⏱️ button on the escalation ladder's camera row; gated by the same
+  `vlm_escalation` toggle and clear 409s when the loop is off or the ring hasn't
+  filled yet). The response includes the mosaic itself so you can see exactly
+  what the model saw.
+
+### Notes
+- Suite: **279 tests** (+7: ring spacing/cap/copy semantics, `read_and_detect`
+  feeds the ring, mosaic geometry incl. the 9-tile cap and 1×1/empty edges,
+  video-session and live-camera endpoint paths with the privacy gates).
+- **Verified in CI vs NAS**: the ring buffer, grid geometry, endpoint gating and
+  GUI are tested here. The core premise — that moondream can genuinely reason
+  over a grid of numbered frames — is **not** provable with mocks; the
+  `TEMPORAL_PROMPT` and tile size need real-hardware validation on the NAS
+  before this earns a place in any automatic flow.
+
 ## [0.31.0] — 2026-07-02
 
 ### Added

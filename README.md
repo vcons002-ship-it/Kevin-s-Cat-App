@@ -296,6 +296,18 @@ after a few still seconds — good, it heals lighting drift — so a cat who set
 becomes part of it, and her later departure briefly lights her old spot as a ghost
 in the trail's oldest colours.)
 
+### The temporal check — eight seconds in one picture
+
+moondream only sees still images, so the app builds it a **film strip**: each
+running camera keeps a small ring of recent frames (~8, a second apart), and the
+⏱️ **Temporal check** button tiles them into one numbered grid — each tile
+labelled with its age — and asks a single voted question: *did a cat appear or
+move through the scene, and in which frame(s)?* Works on the Test tool's video
+uploads too (the sampled frames become the grid). Live cameras sit behind the
+same **Live-camera escalation** toggle. Honest caveat: whether the model can
+truly reason over a grid of frames is exactly what the NAS run has to prove —
+the response includes the mosaic so you can judge what it saw.
+
 ### Watching lots of cameras without melting the CPU (round-robin)
 
 Each watched camera adds about one camera's load. **Round-robin** (a toggle under the

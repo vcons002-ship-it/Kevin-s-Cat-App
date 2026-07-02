@@ -189,6 +189,48 @@ def predict_hint_box(tracks, now: float | None = None, frame_size=None,
     return tuple(int(round(v)) for v in box)
 
 
+MOSAIC_MAX_TILES = 9
+
+
+def frame_mosaic(frames, tile: int = 320):
+    """Tile timestamped frames into one numbered grid image, oldest first (#69).
+
+    moondream reads single images only — no video input — so temporal questions
+    ("did a cat pass through?") are asked over a **mosaic** of the last few frames,
+    each tile numbered and stamped with its age relative to the newest. Returns a
+    BGR grid (≤ :data:`MOSAIC_MAX_TILES` tiles, square-ish layout), or None when
+    there are no frames. ``frames`` is ``[(ts, bgr)]`` in any order.
+    """
+    import cv2
+    import numpy as np
+
+    frames = sorted((f for f in frames or [] if f and f[1] is not None),
+                    key=lambda t: t[0])[-MOSAIC_MAX_TILES:]
+    n = len(frames)
+    if not n:
+        return None
+    cols = int(np.ceil(np.sqrt(n)))
+    rows = int(np.ceil(n / cols))
+    newest = frames[-1][0]
+    tiles = []
+    for i, (ts, f) in enumerate(frames):
+        h, w = f.shape[:2]
+        s = tile / float(max(h, w))
+        r = cv2.resize(f, (max(1, int(w * s)), max(1, int(h * s))))
+        canvas = np.zeros((tile, tile, 3), np.uint8)
+        y, x = (tile - r.shape[0]) // 2, (tile - r.shape[1]) // 2
+        canvas[y:y + r.shape[0], x:x + r.shape[1]] = r
+        age = newest - ts
+        label = f"{i + 1} (now)" if age < 0.5 else f"{i + 1} (-{age:.0f}s)"
+        cv2.putText(canvas, label, (6, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                    (255, 255, 255), 2, cv2.LINE_AA)
+        tiles.append(canvas)
+    while len(tiles) < rows * cols:
+        tiles.append(np.zeros((tile, tile, 3), np.uint8))
+    return np.vstack([np.hstack(tiles[r * cols:(r + 1) * cols])
+                      for r in range(rows)])
+
+
 def _best_locator_box(dets, locator_classes, floor):
     """Strongest locator-class detection ``(label, score, box)`` from a YOLO result
     list, or None. ``dets`` is ``[(label, score, (x1,y1,x2,y2))]``."""

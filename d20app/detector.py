@@ -391,6 +391,12 @@ class PersonDetector:
         # every frame read. Cheap (capped working resolution) and thread-safe.
         from .trail import TrailTracker
         self._trail = TrailTracker(diff_threshold=motion_diff_threshold)
+        # Frame ring buffer (#69): the last few seconds of (downscaled) frames for
+        # the temporal VLM mosaic ("did a cat pass through?"). ~8 frames spaced ≥1 s
+        # at ≤480 px ≈ well under 3 MB per camera. Guarded by _live_lock.
+        from collections import deque
+        self._ring: "deque" = deque(maxlen=self._RING_FRAMES)
+        self._ring_last = 0.0
 
     # -- model / stream lifecycle -------------------------------------------
     def _ensure_net(self):
@@ -719,6 +725,36 @@ class PersonDetector:
         """Wall-clock time of the last motion-blob update (0.0 if never)."""
         return self._motion.last_blobs_ts
 
+    # Ring-buffer tuning (#69): frames spaced ≥ _RING_SPACING s, ≤ _RING_MAX_DIM px.
+    _RING_FRAMES = 8
+    _RING_SPACING = 1.0
+    _RING_MAX_DIM = 480
+
+    def _push_ring(self, frame) -> None:
+        import cv2
+
+        now = time.time()
+        if now - self._ring_last < self._RING_SPACING:
+            return
+        h, w = frame.shape[:2]
+        scale = max(h, w) / float(self._RING_MAX_DIM)
+        small = frame if scale <= 1.0 else cv2.resize(
+            frame, (int(round(w / scale)), int(round(h / scale))))
+        with self._live_lock:
+            self._ring.append((now, small.copy()))
+            self._ring_last = now
+
+    def recent_frames(self, n: int | None = None) -> list:
+        """The last ≤n ring-buffer frames, oldest first: ``[(ts, bgr_copy)]``.
+
+        The temporal VLM mosaic's raw material (#69) — a few seconds of history at
+        reduced resolution, copies so callers can't race the worker."""
+        with self._live_lock:
+            items = list(self._ring)
+        if n:
+            items = items[-n:]
+        return [(ts, f.copy()) for ts, f in items]
+
     def trail_endpoint(self):
         """The cat trail's newest silhouette (frame coords + interior flag), or
         None. An interior endpoint means the last movement ended in-view — the
@@ -908,6 +944,7 @@ class PersonDetector:
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         moved = self._motion.update(gray)      # keep the baseline fresh even when paused
         self._trail.update(gray, moved)        # cat-trail silhouettes + endpoint (#67)
+        self._push_ring(cropped)               # temporal-mosaic frame history (#69)
         # Run the net on real motion, or when a forced still-cat scan asks for it.
         if not force and (not detect or not moved):
             return FrameOutcome(motion=False, person=False)
