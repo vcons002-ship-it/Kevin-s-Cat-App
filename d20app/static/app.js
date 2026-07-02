@@ -420,9 +420,29 @@ function applySpeechVisibility() {
   $("speech-row").classList.toggle("hidden", !$("use_speech").checked);
 }
 
+// The workflow line (status bar): says what actually runs when the loop is on,
+// so "what is trying to do what" has a one-glance answer. Re-rendered whenever
+// config or the VLM gate changes; every default it shows is benchmark-settled.
+let lastCfg = null;
+function renderWorkflowLine() {
+  const el = $("workflow-line");
+  if (!el || !lastCfg) return;
+  const c = lastCfg;
+  const scan = Number(c.cat_scan_interval);
+  const stillScan = scan < 0 ? "still-cat scan off"
+    : `still-cat scan ${scan === 0 ? "every frame" : `every ${scan}s`} @ ${c.cat_scan_tiling}/${c.cat_scan_tile_overlap}` +
+      (Number(c.cat_scan_frames) > 1 ? ` ×${c.cat_scan_frames}-frame avg` : "");
+  el.textContent = "Workflow: motion gate → " +
+    `${c.detector_model} (${c.accelerator}) → roll on person / log cats · ` +
+    `track fusion ${c.track_fusion === false ? "OFF" : "on"} · ${stillScan} · ` +
+    `VLM ${VLM_ESCALATION_ENABLED ? "on-demand incl. live cameras" : "on-demand, uploads only"}`;
+}
+
 async function loadConfig() {
   const { body: cfg } = await api("/api/config");
   if (!cfg) return;
+  lastCfg = cfg;
+  renderWorkflowLine();
   for (const f of FIELDS) {
     if ($(f) && cfg[f] !== undefined && cfg[f] !== null) $(f).value = cfg[f];
   }
@@ -1058,6 +1078,7 @@ async function loadVlmStatus() {
   VLM_ESCALATION_ENABLED = !!(body.escalation && body.escalation.enabled);
   const et = $("vlm-escalation-toggle");
   if (et) et.checked = VLM_ESCALATION_ENABLED;
+  renderWorkflowLine();                 // the gate is part of the workflow line
   if (!body.available) {
     const note = $("vlm-unavailable");
     note.textContent = "moondream isn’t installed — the tester is ready, but local Run needs: pip install moondream, a supported GPU (CUDA/Ampere or Apple Silicon), and an API key. Cloud mode needs only the package + key. It’ll work once that’s in place.";

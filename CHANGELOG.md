@@ -11,6 +11,38 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.38.0] — 2026-07-02
+
+### Added
+- **User & workflow guide** (`docs/USER_GUIDE.md`, served in-app at **`/guide`**
+  via the ❓ header link): the app grew a lot of buttons fast, and it wasn't
+  clear what runs automatically vs on demand, or what each toggle changes.
+  The guide covers: the app in one minute; **the default (benchmark-proven)
+  workflow** step by step — motion gate → YOLO on auto-CUDA → track fusion →
+  cat trail → still-cat scan at 3×3/0.35 with ×3 averaging — plus the one-time
+  26x-FP16 upgrade; a **GUI map** (every card, every button, when to use it);
+  **every toggle with what it changes** if flipped; **recipes** ("where's my
+  cat", "camera keeps missing", "false-fires on a cushion", night misses,
+  zones, model comparisons); and the **trust ladder** (how a sighting earns its
+  `source` tag, and what is deliberately never recorded). One source: the
+  markdown in the repo *is* the page, rendered by a tiny built-in converter
+  (no new dependency).
+- **Workflow line in the status bar**: a one-glance summary of what actually
+  runs when the loop is on — model, accelerator, track fusion, still-scan
+  cadence/tiling/averaging, and whether VLM tools may touch live cameras.
+  Updates live as settings change.
+- **Card clarity**: the Test-detection and VLM cards now say what they are in
+  the heading ("a sandbox — nothing here touches the live loop until you
+  save"; "the AI second opinion — never confirms a sighting by itself").
+
+### Notes
+- Suite: **313 tests** (+4: /guide serves the rendered markdown with the
+  load-bearing sections intact, the GUI links it and carries the workflow
+  line, converter basics, HTML escaping).
+- The defaults the guide documents ARE the proven workflow from #70/#71 —
+  nothing was re-tuned in this release; it documents and surfaces what
+  0.35.0–0.37.0 made the default.
+
 ## [0.37.0] — 2026-07-02
 
 ### Added

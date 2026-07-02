@@ -4,7 +4,9 @@
 > first — it explains the *why* behind the architecture, the standing invariants
 > (treat path is sacred, cheap-first, never record unconfirmed claims, priors not
 > state), the rejected ideas, and what is deliberately still unverified on real
-> hardware.
+> hardware. For *what the app does and how the features are used* — the default
+> workflow, every button, every toggle — read
+> [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) (served in-app at `/guide`).
 
 A D20 "treat roller": a background loop watches a camera for a **person** (cats never
 roll, but are **tracked** — see `cats.py` / the "Show cat" feature), rolls a die on
@@ -14,7 +16,7 @@ Flask single-page GUI configures and runs it. CPU-only, no Docker, no cloud, no 
 
 ## Run / test
 - Python 3.11+. Virtualenv at `./venv`.
-- Tests: `./venv/bin/python -m pytest -q` (currently ~309 tests; keep them green).
+- Tests: `./venv/bin/python -m pytest -q` (currently ~313 tests; keep them green).
 - Launch: `./venv/bin/python run.py` → prints a `http://<lan-ip>:8080` GUI URL.
 - Setup: `setup.sh` (Linux/apt) or `setup.ps1` / `setup.bat` (Windows), `start.bat`
   to launch on Windows.

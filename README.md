@@ -8,6 +8,9 @@ from a simple web page.
 
 - **No Docker, no Frigate, no cloud, no Google account.** Just Python.
 - **One setup script**, then everything is point-and-click in a browser.
+- **A built-in guide** — the ❓ link in the app (or
+  [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)) explains the default detection
+  workflow, every button, and what each toggle changes.
 - **Plays on one or many speakers**, with an optional **spoken message**
   ("Give the cat a treat!") instead of a sound.
 - **Live activity log** of every roll, treat, error, and **non-human motion**,
