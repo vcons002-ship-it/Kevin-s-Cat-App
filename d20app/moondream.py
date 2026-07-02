@@ -46,7 +46,7 @@ import time
 # for or parse a number; the reasoning text is kept purely as information (#54).
 DEFAULT_PROMPT = "Is there a cat in this image? Answer yes or no, then briefly explain."
 
-# The temporal-mosaic question (#69): the "image" is a numbered grid of frames from
+# The temporal-mosaic question (#68): the "image" is a numbered grid of frames from
 # ONE camera, oldest → newest (built by escalation.frame_mosaic). Untested premise,
 # honestly: whether moondream reasons well over grid images is exactly what the
 # tester exists to measure — validate on the NAS before trusting it.

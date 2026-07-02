@@ -1070,12 +1070,12 @@ async function uploadVlm(file) {
   }
   $("vlm-run").disabled = false;
   const er = $("esc-run"); if (er) er.disabled = false;
-  // Temporal check needs several frames — a sampled video, not a single photo (#69).
+  // Temporal check needs several frames — a sampled video, not a single photo (#68).
   const vt = $("vlm-temporal");
   if (vt) vt.disabled = body.kind !== "video";
 }
 
-// Temporal mosaic (#69): the last few frames tiled into one numbered grid, one
+// Temporal mosaic (#68): the last few frames tiled into one numbered grid, one
 // voted question over it. camera=null → the uploaded video session's frames.
 async function runTemporal(camera) {
   const note = $("esc-note") && camera ? $("esc-note") : $("vlm-note");

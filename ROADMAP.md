@@ -174,7 +174,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       `likely_cameras` rank rooms by historical presence around the current hour
       (a prior, never a tracked state). NAS to verify: zone-draw UX, heat-map
       readability on real scenes, prior usefulness after a few days of data.
-- [x] **Temporal VLM analysis — frame mosaic** (0.32.0, #69): each camera keeps a
+- [x] **Temporal VLM analysis — frame mosaic** (0.32.0, #68): each camera keeps a
       small ring of recent downscaled frames (8 × ~1 s apart, ≤480 px);
       `POST /api/vlm/temporal` tiles them into one numbered, age-labelled grid and
       asks moondream a single "did a cat pass through?" voted query (⏱️ button on

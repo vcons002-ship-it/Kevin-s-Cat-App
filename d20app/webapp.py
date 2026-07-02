@@ -1697,7 +1697,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
 
     @app.post("/api/vlm/temporal")
     def api_vlm_temporal():
-        # Temporal VLM check (#69): tile the last few frames (a camera's ring buffer,
+        # Temporal VLM check (#68): tile the last few frames (a camera's ring buffer,
         # or an uploaded video's sampled frames) into one numbered mosaic and ask the
         # voted question "did a cat appear or pass through?". moondream is image-only;
         # the mosaic is the honest 3070-friendly stand-in for video input — whether it

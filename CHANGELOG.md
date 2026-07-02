@@ -14,13 +14,13 @@ _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 ## [0.32.0] — 2026-07-02
 
 ### Added
-- **Temporal VLM analysis — frame mosaic** (#69): each running camera now keeps a
+- **Temporal VLM analysis — frame mosaic** (#68): each running camera now keeps a
   small ring buffer of recent frames (up to 8, spaced ~1 s apart, downscaled to
   ≤480 px — a few MB per camera). `POST /api/vlm/temporal` tiles them into one
   numbered grid image, oldest first, each tile labelled with its age ("1 (-4s)" …
   "N (now)"), and asks moondream a single voted query: *did a cat appear or move
   through the scene, and in which frame(s)?* One query covers ~8 s of history —
-  the temporal rung of #65/#69 without any video-LLM dependency. Works on the
+  the temporal rung of #65/#68 without any video-LLM dependency. Works on the
   Test tool's **video uploads** (a ⏱️ **Temporal check** button appears when the
   upload is a video: the sampled frames become the grid) and on **live cameras**
   (a ⏱️ button on the escalation ladder's camera row; gated by the same

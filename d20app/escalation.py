@@ -193,7 +193,7 @@ MOSAIC_MAX_TILES = 9
 
 
 def frame_mosaic(frames, tile: int = 320):
-    """Tile timestamped frames into one numbered grid image, oldest first (#69).
+    """Tile timestamped frames into one numbered grid image, oldest first (#68).
 
     moondream reads single images only — no video input — so temporal questions
     ("did a cat pass through?") are asked over a **mosaic** of the last few frames,

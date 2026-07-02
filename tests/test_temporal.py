@@ -1,4 +1,4 @@
-"""Temporal VLM mosaic (#69): the frame ring buffer, the numbered grid builder,
+"""Temporal VLM mosaic (#68): the frame ring buffer, the numbered grid builder,
 and the /api/vlm/temporal endpoint. moondream is mocked as usual; whether the VLM
 actually reasons well over grid images is the NAS's question to answer — this file
 proves the plumbing and the geometry.

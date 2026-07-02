@@ -391,7 +391,7 @@ class PersonDetector:
         # every frame read. Cheap (capped working resolution) and thread-safe.
         from .trail import TrailTracker
         self._trail = TrailTracker(diff_threshold=motion_diff_threshold)
-        # Frame ring buffer (#69): the last few seconds of (downscaled) frames for
+        # Frame ring buffer (#68): the last few seconds of (downscaled) frames for
         # the temporal VLM mosaic ("did a cat pass through?"). ~8 frames spaced ≥1 s
         # at ≤480 px ≈ well under 3 MB per camera. Guarded by _live_lock.
         from collections import deque
@@ -725,7 +725,7 @@ class PersonDetector:
         """Wall-clock time of the last motion-blob update (0.0 if never)."""
         return self._motion.last_blobs_ts
 
-    # Ring-buffer tuning (#69): frames spaced ≥ _RING_SPACING s, ≤ _RING_MAX_DIM px.
+    # Ring-buffer tuning (#68): frames spaced ≥ _RING_SPACING s, ≤ _RING_MAX_DIM px.
     _RING_FRAMES = 8
     _RING_SPACING = 1.0
     _RING_MAX_DIM = 480
@@ -747,7 +747,7 @@ class PersonDetector:
     def recent_frames(self, n: int | None = None) -> list:
         """The last ≤n ring-buffer frames, oldest first: ``[(ts, bgr_copy)]``.
 
-        The temporal VLM mosaic's raw material (#69) — a few seconds of history at
+        The temporal VLM mosaic's raw material (#68) — a few seconds of history at
         reduced resolution, copies so callers can't race the worker."""
         with self._live_lock:
             items = list(self._ring)
@@ -944,7 +944,7 @@ class PersonDetector:
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         moved = self._motion.update(gray)      # keep the baseline fresh even when paused
         self._trail.update(gray, moved)        # cat-trail silhouettes + endpoint (#67)
-        self._push_ring(cropped)               # temporal-mosaic frame history (#69)
+        self._push_ring(cropped)               # temporal-mosaic frame history (#68)
         # Run the net on real motion, or when a forced still-cat scan asks for it.
         if not force and (not detect or not moved):
             return FrameOutcome(motion=False, person=False)
