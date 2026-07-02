@@ -81,12 +81,22 @@ The ladder zooms in like a human would, cheapest look first:
    (motion blobs + last sighting + a predicted-next box), rerun the normal fast
    detector. In a close-up the cat is big. No VLM involved.
 2. **vlm+yolo** — one `detect()` call proposes regions; YOLO confirms on a crop.
-   Falls back to a voted yes/no query on the crop. The proposal alone never wins
-   (principle 3).
-3. **vlm** — voted queries directly on the hint crops, last resort.
+   The proposal alone never wins (principle 3).
+3. **vlm query** — voted yes/no queries on the crops, last resort.
 
-Every find is tagged with its `source` (`zoom+yolo` / `vlm+yolo` / `vlm`) so the
-NAS run can measure which rung actually earns its keep.
+**Only YOLO confirms (tightened in 0.33.0, after #69's decoy data).** The
+maintainer's benchmarks measured VLMs at 37–42% false positives on the decoy
+set; majority voting reduces run-to-run *variance*, not that systematic *bias* —
+three votes agree wrongly on a convincing decoy. So a votes-only VLM "yes"
+(rung 2's query fallback, all of rung 3) can never return `found`: it comes back
+as a `vlm_probable` lead, surfaces in the "probable" tier (orange, never
+recorded), and on a live camera it *boosts detection* so real YOLO gets the next
+frames — a real cat becomes an ordinary recorded sighting, a decoy dies quietly.
+The trust asymmetry is the design: the VLM proposes and suspects; YOLO (0% FP on
+the same benchmark) decides.
+
+Every confirmed find is tagged with its `source` (`zoom+yolo` / `vlm+yolo`) so
+the NAS run can measure which rung actually earns its keep.
 
 **Why injected callables:** `escalate()` takes `run_yolo`/`vlm_detect`/`vlm_query`
 as parameters. The ladder's decision logic is pure math, fully unit-testable with
@@ -186,6 +196,11 @@ with the right prompt — it cannot prove the model's skill. This is the first
 thing the NAS must validate, and the main reason PR #68 is being held unmerged.
 The endpoint returns the mosaic itself so a human can judge what the model saw.
 
+Since 0.33.0 (after #69's decoy data), a temporal "yes" is explicitly a **hint,
+never a verdict**: the response labels it unconfirmed, and on a live camera it
+boosts detection so YOLO decides on the next frames. Nothing is ever recorded
+from the mosaic alone.
+
 ## 4. Ideas assessed and rejected (so they aren't re-proposed blind)
 
 - **House-graph / room-transition tracking** — rejected in #65, stands rejected.
@@ -255,10 +270,12 @@ The endpoint returns the mosaic itself so a human can judge what the model saw.
      decoy set** — versus tuned yolo26x at 91% recall / 0% FP. Majority voting
      reduces run-to-run *variance*, not systematic *bias*: if the model
      reliably thinks a cat-shaped decoy is a cat, three votes agree wrongly.
-     This vindicates the ladder's never-trust-a-bare-VLM-answer rule and means
-     the pure-VLM rung 3's authority to *confirm* a sighting deserves
-     re-examination once the NAS decoy numbers are in — the likely direction
-     is demoting a votes-only "yes" from *confirmed* to *probable*.
+     This vindicated the ladder's never-trust-a-bare-VLM-answer rule, and in
+     **0.33.0** the remaining gap was closed: a votes-only "yes" is demoted
+     from *confirmed* to *probable* everywhere (ladder rungs 2–3, the temporal
+     mosaic), never recorded, and on a live camera it boosts detection so YOLO
+     can confirm. The NAS decoy run can still measure the voted-moondream
+     setup's own FP rate for the record.
   3. VRAM co-residency: moondream2 (~4.6 GB) + CUDA YOLO on the 8 GB 3070 (the
      ladder's confirm rung defaults to CPU YOLO for exactly this reason).
   4. Trail behaviour over hours (ghosting frequency, lighting drift).

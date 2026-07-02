@@ -9,14 +9,47 @@ everything through the latest entry is on `main`.
 
 ## [Unreleased]
 
+_Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
+
+## [0.33.0] — 2026-07-02
+
+### Changed
+- **Only YOLO confirms — VLM-only verdicts demoted** (#69): the maintainer's
+  decoy benchmarks measured VLMs at **37–42% false positives**; majority voting
+  reduces run-to-run *variance*, not that systematic *bias* (three votes just
+  agree wrongly on a cat-shaped decoy). Accordingly:
+  - **Escalation ladder**: a votes-only VLM "yes" (rung 2's query fallback, all
+    of rung 3) can no longer return `found` — it comes back as a `vlm_probable`
+    lead and surfaces in the **"probable"** tier (orange box, honest note,
+    **never recorded** as a sighting). Rung 2 now also keeps scanning past a
+    votes-only "yes": a YOLO confirmation on a later region beats it. A live
+    VLM lead **boosts detection** on that camera so real YOLO gets the chance
+    to confirm on the next frames — a real cat becomes a normal recorded
+    sighting, a decoy dies quietly.
+  - **Temporal mosaic**: a "yes" is now labelled an **unconfirmed hint**
+    (`hint_note` in the response, shown in the GUI); on a live camera it boosts
+    detection instead of standing as a conclusion. Nothing was ever recorded
+    from the mosaic — now the response says so and hands off to YOLO.
+  - The VLM's confirmed roles are unchanged: proposals for YOLO to check
+    (rung 2, decoys filtered by YOLO's 0% FP), and judgment that is already
+    labelled inference (the probable tier).
+
+### Notes
+- Suite: **281 tests** (+2; three ladder tests rewritten for the demotion, new
+  coverage: a later YOLO confirm beats an earlier votes-only yes, a live VLM
+  lead records nothing and boosts, temporal hint notes with/without a camera).
+- The 37–42% figure comes from the maintainer's own extensive decoy testing
+  (issue #69) and was taken as trusted input; the NAS decoy run can still
+  measure the voted-moondream setup specifically.
+
 ### Docs
 - **`DESIGN_RATIONALE.md`** — a reviewer-facing document explaining the *why*
   behind the architecture: the standing invariants (treat path is sacred,
-  cheap-first, never record unconfirmed claims, priors not state), the reasoning
-  behind each smart-detection slice (0.29.0–0.32.0), the ideas assessed and
-  rejected, the engineering conventions, and the open NAS-validation queue.
-  Linked from `CLAUDE.md` so any Claude session finds it. Docs only — no
-  behaviour change, no version bump.
+  cheap-first, never record unconfirmed claims, priors not state), the
+  reasoning behind each smart-detection slice, the ideas assessed and rejected
+  (now including #69's super-resolution verdict), the engineering conventions,
+  and the open NAS-validation queue. Linked from `CLAUDE.md` so any Claude
+  session finds it.
 
 ## [0.32.0] — 2026-07-02
 

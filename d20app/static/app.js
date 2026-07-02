@@ -1087,7 +1087,8 @@ async function runTemporal(camera) {
   note.textContent = "Building the mosaic + asking moondream…";
   const { ok, body } = await api("/api/vlm/temporal", postJSON(payload));
   if (!ok || !body || body.error) { note.textContent = (body && body.error) || "Temporal check failed."; return; }
-  note.textContent = `${body.n_frames} frames${body.span_s ? ` over ~${body.span_s}s` : ""}`;
+  note.textContent = `${body.n_frames} frames${body.span_s ? ` over ~${body.span_s}s` : ""}` +
+    (body.hint_note ? ` — ${body.hint_note}` : "");
   renderVlm(body);                       // verdict + ratio + reasoning, as usual
   const mi = $("vlm-mosaic");
   if (mi) {
@@ -1130,8 +1131,9 @@ function renderEscalation(b) {
     badge.textContent = `CAT found — ${b.source}${b.ratio ? ` (vote ${b.ratio})` : ""}`;
     badge.className = "vlm-badge vlm-yes";
   } else if (b.probable) {
-    // The trail-based inference tier (#67): never a confirmed sighting, always
-    // labelled as "probable" with the evidence (the trail image below).
+    // The inference tier: an unconfirmed VLM lead (#69 demotion) or the trail's
+    // interior endpoint — never a confirmed sighting, always labelled "probable"
+    // with its evidence (server-written note; trail image below).
     badge.textContent = `probably here — ${b.probable.note}`;
     badge.className = "vlm-badge vlm-unparsed";
   } else {

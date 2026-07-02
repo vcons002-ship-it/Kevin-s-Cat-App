@@ -1632,17 +1632,28 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             vlm_query=vlm_query, locator_classes=locator_classes,
             cat_confidence=cat_conf)
 
-        # "Probable location" (#67): nothing CONFIRMED, but the trail's last
-        # movement ended in-view (interior endpoint) — the cat plausibly didn't
-        # leave. Surfaced as honest inference for the user; NEVER recorded as a
-        # sighting. An endpoint at the frame edge means "may have exited" → no claim.
+        # "Probable location": nothing YOLO-CONFIRMED, but there's an honest lead.
+        # Two kinds, NEVER recorded as a sighting: a votes-only VLM "yes" (#69 —
+        # 37–42% decoy FP; voting fixes variance, not bias, so it can't confirm),
+        # or a trail whose last movement ended in-view (interior endpoint, #67).
+        # An endpoint at the frame edge / in an exit zone means "may have exited"
+        # → no trail claim.
         result["probable"] = None
-        if (not result["found"] and endpoint and endpoint["interior"]):
-            result["probable"] = {
-                "box": list(endpoint["box"]), "age_s": endpoint["age_s"],
-                "note": ("No confirmed detection, but the last movement ended here "
-                         f"{int(endpoint['age_s'])}s ago and no exit was seen — "
-                         "probable location.")}
+        if not result["found"]:
+            if result.get("vlm_probable"):
+                vp = result["vlm_probable"]
+                result["probable"] = {
+                    "box": list(vp["box"]), "kind": "vlm", "ratio": vp.get("ratio"),
+                    "note": (f"The VLM voted yes ({vp.get('ratio') or '?'}) but YOLO "
+                             "could not confirm — treated as a lead only, not a "
+                             "sighting (VLMs false-fire on cat-shaped decoys).")}
+            elif endpoint and endpoint["interior"]:
+                result["probable"] = {
+                    "box": list(endpoint["box"]), "kind": "trail",
+                    "age_s": endpoint["age_s"],
+                    "note": ("No confirmed detection, but the last movement ended here "
+                             f"{int(endpoint['age_s'])}s ago and no exit was seen — "
+                             "probable location.")}
 
         # Annotate: thin gray crop windows, green final box (or orange probable).
         annotated = frame.copy()
@@ -1658,7 +1669,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         elif result["probable"]:
             x1, y1, x2, y2 = result["probable"]["box"]
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 165, 255), 2)
-            cv2.putText(annotated, "probable (trail)", (x1, max(14, y1 - 6)),
+            cv2.putText(annotated, f"probable ({result['probable']['kind']})",
+                        (x1, max(14, y1 - 6)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1, cv2.LINE_AA)
         for c in result["crops"]:
             x1, y1, x2, y2 = c["box"]
@@ -1681,6 +1693,15 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 f"🔍 Cat found by escalation ({result['source']}){where} on {camera}.",
                 image=snap)
             loop.boost_detection(camera, 5.0)
+        elif camera and result["probable"] and result["probable"]["kind"] == "vlm":
+            # An unconfirmed VLM lead on a live camera: don't record it — hand it
+            # to the detector that CAN confirm (boost forces YOLO onto the next
+            # frames; a real cat there becomes a normal, recorded sighting).
+            loop.activity.add(
+                "motion",
+                f"🔍 Escalation: VLM suspects a cat on {camera} (unconfirmed) — "
+                "boosting detection so YOLO can confirm.")
+            loop.boost_detection(camera, 10.0)
 
         # Attach the trail image (the probable state's evidence; nice context on any
         # live run). Data URL so the GUI shows it inline next to the rung table.
@@ -1741,9 +1762,23 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         except RuntimeError as exc:
             return jsonify({"error": str(exc)}), 503
         span = round(frames[-1][0] - frames[0][0], 1)
+        # A temporal "yes" is a HINT, not a verdict (#69: VLM decoy FP is high and
+        # nothing here was YOLO-confirmed). On a live camera, act on the hint the
+        # honest way: boost detection so YOLO looks hard at the next frames — a
+        # real cat becomes a normal recorded sighting; a decoy dies quietly.
+        note = None
+        if result.get("answer") == "yes":
+            note = "A temporal 'yes' is an unconfirmed hint, not a sighting."
+            if camera:
+                loop.activity.add(
+                    "motion",
+                    f"⏱️ Temporal check suspects a cat passed on {camera} "
+                    "(unconfirmed) — boosting detection so YOLO can confirm.")
+                loop.boost_detection(camera, 10.0)
+                note += " Detection boosted on the camera so YOLO can confirm."
         return jsonify({**result, "mosaic": _full_jpeg_data_url(mosaic, quality=80),
                         "n_frames": min(len(frames), escalation.MOSAIC_MAX_TILES),
-                        "span_s": span, "camera": camera or None})
+                        "span_s": span, "camera": camera or None, "hint_note": note})
 
     @app.get("/api/test/benchmark/<rid>.html")
     def api_benchmark_html(rid):

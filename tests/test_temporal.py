@@ -111,6 +111,9 @@ def test_temporal_on_video_session(monkeypatch):
     # the VLM was shown ONE mosaic (a 2×2 grid), not per-frame images
     assert seen["shape"][0] == seen["shape"][1] and seen["shape"][0] >= 640
     assert "grid of numbered frames" in seen["prompt"]
+    # a "yes" is labelled an unconfirmed hint (#69); no camera → no boost mention
+    assert "unconfirmed hint" in body["hint_note"]
+    assert "boosted" not in body["hint_note"]
 
 
 def test_temporal_404_and_camera_gates(monkeypatch, tmp_path):
@@ -149,3 +152,6 @@ def test_temporal_live_camera_path(monkeypatch, tmp_path):
     body = c.post("/api/vlm/temporal", json={"camera": "Room"}).get_json()
     assert body["answer"] == "yes" and body["camera"] == "Room"
     assert body["span_s"] == 4.0
+    # the live "yes" hands off to YOLO (#69): flagged as a hint + detection boosted
+    assert "boosted" in body["hint_note"]
+    assert loop._cat_boost.get("Room")
