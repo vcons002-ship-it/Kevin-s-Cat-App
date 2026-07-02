@@ -11,6 +11,42 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.34.0] — 2026-07-02
+
+### Added
+- **Still-scan frame averaging**: the periodic still-cat scan now averages a
+  short burst of back-to-back frames (config/GUI `cat_scan_frames`, default 3,
+  max 8) before the locator net runs. On a genuinely still scene sensor noise
+  drops ~√N — *real signal recovery* (N samples of the same scene), the
+  opposite of the SR-style synthesized detail #69 rejected — which is exactly
+  what a dim room and a sleeping cat need. Safety valves: any movement
+  mid-burst (cheap downscaled-gray diff) aborts to the single sharp frame, so
+  a mover is never smeared; a read failure or size change aborts too; the
+  **fast treat path never averages** (bursting is confined to the forced scan,
+  which is not latency-sensitive); smooth-feed mode skips it (the grab thread
+  is the capture's sole reader). Per-camera **Scan frames** knob on the camera
+  card; old configs inherit the default via coercion.
+
+### Docs
+- **ROADMAP — future improvements**: recorded the post-#69 assessment as
+  actionable items — the recovers-signal vs synthesizes-detail filter,
+  CLAHE-for-dark-frames (measure first), the ranked equipment list (thermal
+  sensor nodes as hint sources, night lighting/optics, BLE collar, mmWave,
+  doorway break-beams, NAS GPU; PTZ/Wi-Fi-CSI/audio assessed and skipped), and
+  a **step-by-step guide to fine-tuning YOLO on our own cameras** (dataset
+  assembly from the sightings log, hard negatives from the decoy set, honest
+  scene-level splits, single-class locator recipe, 5090 training command,
+  ONNX export into the model registry, benchmark gating, miss-mining).
+
+### Notes
+- Suite: **287 tests** (+6: noise actually drops on a still scene, movement
+  mid-burst aborts, read-failure/size-change aborts, forced scan bursts while
+  the treat path reads exactly one frame, the knob clamps at 8 / disables at 1,
+  new cameras inherit the global knob).
+- NAS to verify: the real night-frame recall gain (CI proves the mechanics and
+  the math, not the camera's noise profile), and that RTSP burst reads don't
+  hiccup on the real streams.
+
 ## [0.33.0] — 2026-07-02
 
 ### Changed

@@ -352,6 +352,7 @@ class DetectionLoop:
                 cat_scan_tiling=spec["cat_scan_tiling"],
                 cat_scan_tile_overlap=spec["cat_scan_tile_overlap"],
                 cat_scan_imgsz=spec["cat_scan_imgsz"],
+                cat_scan_frames=spec["cat_scan_frames"],
                 cat_confidence=spec["cat_confidence"],
                 locator_classes=spec["locator_classes"],
             )

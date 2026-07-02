@@ -257,9 +257,15 @@ person/treat path untouched:
   **`yolo11m_960`** model is bundled (export more sizes with
   `scripts/export_yolo.py`). If a size's model isn't present it falls back to the
   native size + tiling.
+- **Frame averaging** (`Scan frames`, default 3) has the scan average a short burst
+  of back-to-back frames first: on a still scene sensor noise drops by roughly the
+  square root of the count — real signal recovery, which is exactly what a dim room
+  and a sleeping cat need. If anything moves mid-burst it falls back to the single
+  sharp frame, so a walking cat is never smeared. The fast treat path never averages.
 
-Tune both in the **Test detection** card against a real screenshot, then save to the
-camera.
+Tune the resolution knobs in the **Test detection** card against a real screenshot,
+then save to the camera. (Averaging applies to the live scan only — an uploaded
+still has nothing to average.)
 
 ### The escalation ladder — "zoom in and look again"
 
