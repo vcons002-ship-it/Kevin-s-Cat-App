@@ -10,7 +10,8 @@
   <main>
     <header>
       <h1>🎲🐱 Kevin's Cat App</h1>
-      <p class="tag">Roll a die when a person enters the kitchen — on a good roll, the speaker plays a chime: time for a treat!</p>
+      <p class="tag">Roll a die when a person enters the kitchen — on a good roll, the speaker plays a chime: time for a treat!
+        <a href="/guide" target="_blank" rel="noopener" title="the user & workflow guide: what each button does, the proven detection workflow, and what every toggle changes">❓ Guide</a></p>
     </header>
 
     <section id="status-bar" class="card status">
@@ -20,6 +21,7 @@
       <span class="status-spacer"></span>
       <button id="start-btn" class="go" type="button">Start watching</button>
       <button id="stop-btn" class="stop" type="button" disabled>Stop</button>
+      <span id="workflow-line" class="muted" style="flex-basis:100%;font-size:12px" title="what actually runs when the loop is on — every default here is benchmark-measured (see the Guide)"></span>
     </section>
 
     <!-- ===== Cat cam: the star of the show ===== -->
@@ -93,7 +95,7 @@
     <!-- ===== Test detection (tune settings against a photo/video) ===== -->
     <section class="card" id="test-card">
       <div class="row log-head">
-        <h2>🔬 Test detection</h2>
+        <h2>🔬 Test detection <span class="muted">— a sandbox: try settings on a screenshot; nothing here touches the live loop until you save</span></h2>
         <label class="btn-file ghost" title="upload a photo or a short video clip">
           ＋ Photo / video
           <input id="test-file" type="file" accept="image/*,video/*" hidden />
@@ -242,7 +244,7 @@
     <!-- ===== Cat-presence (VLM) tester — moondream "is there a cat?" (#48) ===== -->
     <section class="card" id="vlm-card">
       <div class="test-head">
-        <h2>🌙 Cat-presence (VLM)</h2>
+        <h2>🌙 Cat-presence (VLM) <span class="muted">— the AI second opinion: on-demand only, and it never confirms a sighting by itself (YOLO decides)</span></h2>
         <label class="upload ghost">
           ＋ Photo / video
           <input id="vlm-file" type="file" accept="image/*,video/*" hidden />

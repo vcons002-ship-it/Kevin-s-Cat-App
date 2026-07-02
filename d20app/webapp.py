@@ -195,6 +195,94 @@ _BENCH_LOCK = threading.Lock()
 _BENCH_MAX_REPORTS = 40         # hold a full batch (per-image reports + summary) at once
 _BENCH_TILINGS = ["off", "2x2", "3x3", "4x4"]
 _BENCH_MAX_RUNS = 24            # cap the matrix so one request can't run forever
+# /guide: a deliberately tiny markdown-to-HTML converter — headings, bold/italic,
+# inline + fenced code, lists, links, hr. Enough for docs/USER_GUIDE.md; NOT a
+# general renderer (tables/images/nesting unsupported — keep the guide simple).
+_GUIDE_STYLE = (
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+    "<title>Kevin's Cat App — User Guide</title><style>"
+    "body{font-family:system-ui,sans-serif;max-width:860px;margin:2rem auto;"
+    "padding:0 1rem;line-height:1.55;color:#222;background:#fafafa}"
+    "h1,h2{border-bottom:1px solid #ddd;padding-bottom:.3rem}"
+    "code{background:#eee;padding:1px 5px;border-radius:4px;font-size:.92em}"
+    "pre{background:#222;color:#eee;padding:.8rem;border-radius:8px;overflow-x:auto}"
+    "pre code{background:none;color:inherit;padding:0}"
+    "a{color:#1565c0}hr{border:none;border-top:1px solid #ddd;margin:1.5rem 0}"
+    "li{margin:.25rem 0}"
+    "@media(prefers-color-scheme:dark){body{background:#16181c;color:#ddd}"
+    "h1,h2{border-color:#333}code{background:#2a2d33}a{color:#7fb2ff}"
+    "hr{border-color:#333}}"
+    "</style></head><body>")
+
+
+def _md_to_html(md: str) -> str:
+    import html as html_mod
+    import re as re_mod
+
+    def inline(s):
+        s = html_mod.escape(s, quote=False)
+        s = re_mod.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+        s = re_mod.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
+        s = re_mod.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", s)
+        s = re_mod.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", r"<a href='\2'>\1</a>", s)
+        return s
+
+    out, para, in_list, in_code = [], [], False, False
+
+    def flush_para():
+        nonlocal para
+        if para:
+            out.append("<p>" + " ".join(inline(x) for x in para) + "</p>")
+            para = []
+
+    def close_list():
+        nonlocal in_list
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
+    for line in md.splitlines():
+        if line.strip().startswith("```"):
+            flush_para(); close_list()
+            out.append("<pre><code>" if not in_code else "</code></pre>")
+            in_code = not in_code
+            continue
+        if in_code:
+            out.append(html_mod.escape(line))
+            continue
+        m = re_mod.match(r"^(#{1,4})\s+(.*)$", line)
+        if m:
+            flush_para(); close_list()
+            n = len(m.group(1))
+            out.append(f"<h{n}>{inline(m.group(2))}</h{n}>")
+            continue
+        if re_mod.match(r"^---+\s*$", line):
+            flush_para(); close_list()
+            out.append("<hr>")
+            continue
+        m = re_mod.match(r"^\s*[-*]\s+(.*)$", line)
+        if m:
+            flush_para()
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{inline(m.group(1))}</li>")
+            continue
+        if not line.strip():
+            flush_para(); close_list()
+            continue
+        # a continuation line inside a list item joins that item
+        if in_list and out and out[-1].endswith("</li>"):
+            out[-1] = out[-1][:-5] + " " + inline(line.strip()) + "</li>"
+            continue
+        para.append(line.strip())
+    flush_para(); close_list()
+    if in_code:
+        out.append("</code></pre>")
+    return "\n".join(out) + "</body></html>"
+
+
 def _model_options() -> list:
     """``[{value, label}]`` for every selectable model, straight from the registry
     (labels + the ``selectable`` flag live in ``yolo.MODELS`` — one source, no drift;
@@ -836,6 +924,22 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     @app.get("/api/version")
     def api_version():
         return jsonify({"version": __version__})
+
+    @app.get("/guide")
+    def guide():
+        # The user & workflow guide (docs/USER_GUIDE.md) served in-app so "what does
+        # this button do?" has a one-click answer (the ❓ link in the header). One
+        # source: the markdown in the repo IS the page — rendered with the tiny
+        # converter below, no new dependency, no second copy to drift.
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "docs", "USER_GUIDE.md")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                md = fh.read()
+        except OSError:
+            return Response("The guide file (docs/USER_GUIDE.md) is missing.",
+                            mimetype="text/plain", status=404)
+        return Response(_GUIDE_STYLE + _md_to_html(md), mimetype="text/html")
 
     @app.get("/api/models")
     def api_models():

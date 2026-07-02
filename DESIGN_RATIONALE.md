@@ -7,10 +7,13 @@ standing principles that every change in this repo is held to. If a change appea
 to violate something here, that's either a bug or it needs an argued exception —
 flag it.
 
-Companion documents: [`CLAUDE.md`](CLAUDE.md) (working conventions),
+Companion documents: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) (*what* the app
+does and how every feature/toggle is used — served in-app at `/guide`),
+[`CLAUDE.md`](CLAUDE.md) (working conventions),
 [`ROADMAP.md`](ROADMAP.md) (feature history + parked ideas with verdicts),
 [`CHANGELOG.md`](CHANGELOG.md) (per-version detail), issue #65 (the "Find My Cat"
-design review that several decisions below trace back to).
+design review that several decisions below trace back to) and issue #70 (the
+authoritative detection benchmark behind the defaults).
 
 ---
 
