@@ -65,7 +65,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **262 automated tests**, including a detection-accuracy regression guard over
+- **272 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO/CUDA accelerators with
   CPU fallback, a clear error — no silent fallback — when a model can't load, the
@@ -167,10 +167,13 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       NAS to verify: real-scene ghosting/lighting-drift behaviour + the basket-cat
       recovery end-to-end. v2 ideas: doorway zones for the exit check (below),
       per-sighting trail images in the report card.
-- [ ] **Sighting/motion heat maps + semantic zones** — per-camera accumulated maps from
-      the existing `cats.log` boxes; named GUI-drawn zones ("the couch", doorways) for
-      semantic sightings and trail exit-detection; time-of-day priors to rank the
-      Find-My-Cat sweep (a prior, never a tracked state).
+- [x] **Sighting heat maps + semantic zones + time-of-day prior** (0.31.0, #68):
+      per-camera density maps from the existing `cats.log` boxes (🔥 Heat map);
+      GUI-drawn named zones ("the couch", doorways) so sightings carry a semantic
+      spot and exit zones sharpen the trail's left-the-view check; `by_hour` /
+      `likely_cameras` rank rooms by historical presence around the current hour
+      (a prior, never a tracked state). NAS to verify: zone-draw UX, heat-map
+      readability on real scenes, prior usefulness after a few days of data.
 - [ ] **Temporal VLM analysis** — frame ring buffer → frame-mosaic single query /
       per-frame voted queries (3070-friendly) before considering true video-LLMs
       (5090-tier experiment). Ring buffer also unlocks per-sighting event clips.

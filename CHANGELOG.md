@@ -11,6 +11,41 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.31.0] — 2026-07-02
+
+### Added
+- **Semantic zones** (#68): per-camera named rectangles drawn on the preview frame
+  (same drag interaction as the ROI picker — a **🚪 Add zone…** button on each camera
+  card; zones listed as removable chips). Sightings whose box lands in a zone are
+  recorded with its name, and the activity log / Cats card say **"cat seen (the
+  couch)"** instead of a grid cell. Zones marked **exit** (doorways) sharpen the
+  trail's "may have left the view" check: a trail endpoint inside an exit zone
+  suppresses the "probable location" claim even when it isn't at a frame edge.
+  Zones live on the saved camera (config `cameras[].zones`); old configs coerce to
+  `[]`. Zone boxes are in full-preview coordinates; detection boxes are ROI-crop
+  coordinates — `zone_for()` shifts by the ROI origin so the two meet correctly.
+- **Sighting heat maps** (#68): `GET /api/cats/heatmap?camera=` renders the
+  sighting history (the tracker's 500-cap log) as a Gaussian-softened density field
+  colour-mapped over the camera's current frame — the room's hot spots (the basket,
+  the couch arm, the sunny patch) at a glance. A **🔥 Heat map** button sits next to
+  🌈 Show trail. Pure CPU (`d20app/heatmap.py`).
+- **Time-of-day prior** (#68): `CatTracker.by_hour()` + `likely_cameras(hour)` rank
+  cameras by historical presence around the current hour (±1, wrapping midnight) —
+  exposed as `by_hour`/`likely` in `/api/cats` and shown on the Cats card as
+  *"Usually around now: Kitchen (12) · Bedroom (3)"*. Explicitly a **prior** for
+  ordering a Find-My-Cat sweep — a hint from history, never a tracked state (the
+  fragile house-graph tracking #65 rejected stays rejected).
+
+### Notes
+- Suite: **272 tests** (+10: zone naming + ROI shift, exit-zone matching, zone
+  persistence with legacy records, the hour histogram + wrap-around ranking, heat-map
+  hot/cold pixels + degenerate-box rejection, `/api/cats` prior exposure, heat-map
+  endpoint JPEG + 404/409s, exit-zone suppressing "probable", and camera-zone
+  round-trip through the saved-cameras API), all green.
+- **NAS to verify**: zone-drawing UX on the real cameras (drag on the preview),
+  whether the heat map reads well over real scenes, and the prior's usefulness once
+  a few days of sightings accumulate.
+
 ## [0.30.0] — 2026-07-02
 
 ### Added

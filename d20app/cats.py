@@ -56,6 +56,36 @@ def describe_region(box, frame_size) -> str:
     return f"{row}-{col}"
 
 
+def zone_for(box, zones, roi=None) -> str:
+    """The named semantic zone a detection box's centre falls in, or ``""``.
+
+    ``zones`` is the camera's ``[{name, box: [x, y, w, h], exit: bool}]`` list,
+    drawn on the **full preview frame** (like the ROI). Detection boxes live in
+    ROI-crop coordinates, so pass the camera's ``roi`` to shift them back into
+    full-frame space before testing (#68). First matching zone wins.
+    """
+    if not zones:
+        return ""
+    x1, y1, x2, y2 = box
+    ox, oy = (roi[0], roi[1]) if roi and len(roi) == 4 else (0, 0)
+    cx, cy = (x1 + x2) / 2.0 + ox, (y1 + y2) / 2.0 + oy
+    for z in zones:
+        zb = z.get("box") if isinstance(z, dict) else None
+        if not (zb and len(zb) == 4):
+            continue
+        zx, zy, zw, zh = zb
+        if zx <= cx <= zx + zw and zy <= cy <= zy + zh:
+            return str(z.get("name") or "")
+    return ""
+
+
+def box_in_exit_zone(box, zones, roi=None) -> bool:
+    """True when a box's centre falls inside a zone marked ``exit`` (a doorway) —
+    the precise version of the trail's "may have left the view" check (#68)."""
+    exits = [z for z in zones or [] if isinstance(z, dict) and z.get("exit")]
+    return bool(exits) and zone_for(box, exits, roi) != ""
+
+
 class CatTracker:
     """A thread-safe, bounded, file-backed list of cat sightings."""
 
@@ -111,7 +141,7 @@ class CatTracker:
     # -- public API ----------------------------------------------------------
     def record(self, camera: str, box, frame_size, score: float,
                image: str | None = None, ts: float | None = None,
-               label: str = "cat", source: str = "yolo") -> dict:
+               label: str = "cat", source: str = "yolo", zone: str = "") -> dict:
         """Store one cat sighting and persist it. Returns the stored record.
 
         ``label`` is the detected locator class (usually ``cat``; may be ``dog`` when
@@ -130,12 +160,43 @@ class CatTracker:
             "box": [x1, y1, x2, y2],
             "score": round(float(score), 3),
         }
+        if zone:
+            sighting["zone"] = str(zone)      # semantic spot ("the couch"), #68
         if image:
             sighting["image"] = str(image)
         with self._lock:
             self._sightings.append(sighting)
             self._append_to_file(sighting)
         return sighting
+
+    def by_hour(self, camera: str | None = None) -> list:
+        """Sighting counts per local hour of day (24 ints) — the raw material of
+        the time-of-day presence prior (#68). Optionally one camera's."""
+        counts = [0] * 24
+        with self._lock:
+            sightings = list(self._sightings)
+        for s in sightings:
+            if camera and s.get("camera") != camera:
+                continue
+            counts[time.localtime(s.get("ts", 0)).tm_hour] += 1
+        return counts
+
+    def likely_cameras(self, hour: int | None = None) -> list:
+        """Cameras ranked by historical presence around this hour (±1, wrapping) —
+        a **prior** for ordering a Find-My-Cat sweep, never a tracked state (#68).
+        ``[(camera, weight)]``, strongest first; empty when there's no history."""
+        hour = time.localtime().tm_hour if hour is None else int(hour) % 24
+        window = {(hour - 1) % 24, hour, (hour + 1) % 24}
+        weights: dict = {}
+        with self._lock:
+            sightings = list(self._sightings)
+        for s in sightings:
+            cam = s.get("camera") or ""
+            if not cam:
+                continue
+            if time.localtime(s.get("ts", 0)).tm_hour in window:
+                weights[cam] = weights.get(cam, 0) + 1
+        return sorted(weights.items(), key=lambda kv: -kv[1])
 
     def recent(self, limit: int | None = None) -> list:
         """Sightings, newest first."""

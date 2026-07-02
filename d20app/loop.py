@@ -18,7 +18,7 @@ from . import config as config_mod
 from . import dice
 from .activitylog import ActivityLog
 from .caster import Caster, SoundServer
-from .cats import CatTracker
+from .cats import CatTracker, zone_for
 from .detector import PersonDetector, mask_credentials
 from .snapshots import SnapshotStore
 
@@ -553,8 +553,10 @@ class DetectionLoop:
                             label, score, box = cat
                             snap = self.snapshots.save(detector.annotated_jpeg())
                             sighting = self.cats.record(
-                                name, box, detector.frame_size, score, image=snap, label=label)
-                            where = f" ({sighting['region']})" if sighting["region"] else ""
+                                name, box, detector.frame_size, score, image=snap, label=label,
+                                zone=zone_for(box, spec.get("zones"), spec.get("roi")))
+                            spot = sighting.get("zone") or sighting["region"]
+                            where = f" ({spot})" if spot else ""
                             self.activity.add(
                                 "motion",
                                 f"🐱 Still {label} seen{where} on {cam_label} — tracked, no roll.",
@@ -583,8 +585,10 @@ class DetectionLoop:
                         if cat is not None:
                             label, score, box = cat
                             sighting = self.cats.record(
-                                name, box, detector.frame_size, score, image=snap, label=label)
-                            where = f" ({sighting['region']})" if sighting["region"] else ""
+                                name, box, detector.frame_size, score, image=snap, label=label,
+                                zone=zone_for(box, spec.get("zones"), spec.get("roi")))
+                            spot = sighting.get("zone") or sighting["region"]
+                            where = f" ({spot})" if spot else ""
                             self.activity.add(
                                 "motion",
                                 f"🐱 {label.capitalize()} seen{where} on {cam_label} — tracked, no roll.",

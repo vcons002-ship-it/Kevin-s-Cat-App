@@ -131,6 +131,11 @@ _CAMERA_BASE = {
     "name": "", "url": "", "username": "", "password": "",
     "roll": True, "track_cats": True,
     "always_watch": False,        # exclude from round-robin — this camera never rests
+    # Semantic zones (#68): named rectangles drawn on the full preview frame (like
+    # the ROI) — [{name, box: [x, y, w, h], exit: bool}]. Sightings inside a zone
+    # get its name ("the couch"); zones marked exit (doorways) refine the trail's
+    # "may have left the view" check.
+    "zones": [],
 }
 # Per-camera detection fields → the global Config attribute that supplies the
 # default (so a new/old camera inherits the current global detection settings).

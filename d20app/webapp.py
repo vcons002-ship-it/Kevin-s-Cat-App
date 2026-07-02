@@ -36,6 +36,7 @@ from . import config as config_mod
 from . import discovery
 from . import escalation
 from . import moondream as vlm
+from .cats import box_in_exit_zone, zone_for
 from .detector import PersonDetector, grab_frame_jpeg, sample_video_frames
 from .loop import DetectionLoop, _camera_source
 
@@ -1117,7 +1118,38 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             "present": loop.cat_present(),     # cat on camera right now → flash the button
             "cameras": loop.cats_present_cameras(),   # cameras seeing a cat now → Show-cat rotation
             "recent": loop.cats.recent(limit=limit),
+            # Time-of-day PRIOR (#68): where the cats usually are around this hour —
+            # ranks a Find-My-Cat sweep; a hint from history, never a tracked state.
+            "by_hour": loop.cats.by_hour(),
+            "likely": [{"camera": c, "weight": n} for c, n in loop.cats.likely_cameras()],
         })
+
+    @app.get("/api/cats/heatmap")
+    def api_cats_heatmap():
+        # Sighting-density heat map over the camera's current frame (#68) — the
+        # camera's hot spots (basket / couch arm / sunny patch) from cats.log.
+        from . import heatmap as heatmap_mod
+
+        loop = app.config["loop"]
+        if not loop.is_running():
+            return jsonify({"error": "Start watching to see a heat map."}), 409
+        name = request.args.get("camera")
+        det = loop.get_detector(name) if name else None
+        if det is None:
+            return jsonify({"error": f"Unknown camera {name!r}."}), 404
+        raw = det.latest_frame()
+        if raw is None:
+            return jsonify({"error": "No frame from that camera yet."}), 409
+        frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+        boxes = [s["box"] for s in loop.cats.recent() if s.get("camera") == name]
+        img = heatmap_mod.render_heatmap(frame, boxes)
+        if img is None:
+            return jsonify({"error": "No sightings recorded for this camera yet."}), 404
+        import cv2
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            return jsonify({"error": "Couldn't encode the heat map."}), 500
+        return Response(buf.tobytes(), mimetype="image/jpeg")
 
     @app.post("/api/cats/clear")
     def api_cats_clear():
@@ -1531,7 +1563,13 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # The trail endpoint first — where the last movement ENDED is the
             # strongest "look here" hint (#67) — then motion blobs + last sighting.
             endpoint = det.trail_endpoint()
+            cam_zones = next((c.get("zones") or [] for c in (cfg.cameras or [])
+                              if isinstance(c, dict) and c.get("name") == camera), [])
             if endpoint:
+                # The precise exit check (#68): an endpoint inside a doorway zone
+                # means "may have left the view", whatever the frame-edge test said.
+                if box_in_exit_zone(endpoint["box"], cam_zones, det.roi):
+                    endpoint = {**endpoint, "interior": False}
                 hints.append(tuple(endpoint["box"]))
                 tracks.append((endpoint["ts"], tuple(endpoint["box"])))
             hints += list(det.motion_hint_boxes())
@@ -1635,7 +1673,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             sighting = loop.cats.record(camera, result["box"], (w, h),
                                         result["score"], image=snap,
                                         label=result["label"] or "cat",
-                                        source=result["source"])
+                                        source=result["source"],
+                                        zone=zone_for(result["box"], cam_zones, det.roi))
             where = f" ({sighting['region']})" if sighting["region"] else ""
             loop.activity.add(
                 "motion",

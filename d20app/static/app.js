@@ -140,12 +140,23 @@ function cameraCardHTML(cam) {
         <span class="muted" data-roinote>${roiTxt}</span>
       </div>
       <div class="row">
+        <button type="button" class="ghost" data-zone title="named spots ('the couch') label sightings; mark doorways as exits to sharpen the trail's left-the-room check">🚪 Add zone…</button>
+        <span data-zonelist>${zoneChipsHTML(cam.zones || [])}</span>
+      </div>
+      <div class="row">
         <button type="button" class="primary" data-save>Save camera</button>
         <button type="button" class="stop" data-delete>Delete</button>
         <span class="muted" data-note></span>
       </div>
     </div>
   </div>`;
+}
+
+function zoneChipsHTML(zones) {
+  if (!zones.length) return '<span class="muted">no zones</span>';
+  return zones.map((z, i) =>
+    `<span class="muted" style="margin-right:8px">${z.exit ? "🚪" : "📍"} ${esc(z.name || "?")}
+     <a href="#" data-zone-del="${i}" title="remove zone">×</a></span>`).join("");
 }
 
 function readCard(card) {
@@ -161,6 +172,8 @@ function readCard(card) {
   cam.locator_classes = card.querySelector("[data-dog]").checked ? ["cat", "dog"] : ["cat"];
   // Region: the picker stashes the chosen box on the card; else keep stored.
   cam.roi = card._roi !== undefined ? card._roi : (stored.roi || null);
+  // Zones (#68): same stash-on-card pattern as the ROI.
+  cam.zones = card._zones !== undefined ? card._zones : (stored.zones || []);
   // Expand a motion preset into the three raw knobs the detector actually reads.
   if (MOTION_PRESETS[cam.motion_sensitivity]) Object.assign(cam, MOTION_PRESETS[cam.motion_sensitivity]);
   if (!cam.password) delete cam.password;   // blank keeps the stored password
@@ -195,6 +208,29 @@ function wireCameraCard(card) {
     await loadCamerasList();
   };
   card.querySelector("[data-roi]").onclick = () => openRoiEditor(card);
+  card.querySelector("[data-zone]").onclick = () => openZoneEditor(card);
+  card.querySelectorAll("[data-zone-del]").forEach((el) => {
+    el.onclick = (e) => {
+      e.preventDefault();
+      const stored = cameras.find((c) => c.name === name) || {};
+      const zones = (card._zones !== undefined ? card._zones : (stored.zones || [])).slice();
+      zones.splice(Number(el.dataset.zoneDel), 1);
+      card._zones = zones;
+      card.querySelector("[data-zonelist]").innerHTML = zoneChipsHTML(zones);
+      card.querySelector("[data-save]").click();      // persist the removal
+    };
+  });
+}
+
+// Zone editor (#68): reuses the ROI picker's frame + drag; the drawn box becomes a
+// named zone (optionally an exit/doorway) appended to the camera's zone list.
+let zoneEdit = null;
+
+function openZoneEditor(card) {
+  zoneEdit = { card };
+  openRoiEditor(card);
+  roi = null; drawRoiBox();
+  $("roi-note").textContent = "Drag a box over the spot (the couch, a doorway…)";
 }
 
 function addCamera(prefill = {}) {
@@ -268,8 +304,21 @@ function drawRoiBox() {
   if (!cv || !cv.getContext) return;
   const ctx = cv.getContext("2d");
   ctx.clearRect(0, 0, cv.width, cv.height);
-  if (!roi || !img.naturalWidth) return;
+  if (!img.naturalWidth) return;
   const sx = cv.width / img.naturalWidth, sy = cv.height / img.naturalHeight;
+  // Zone mode: sketch the camera's existing zones for context (#68).
+  if (zoneEdit) {
+    const stored = cameras.find((c) => c.name === zoneEdit.card.dataset.name) || {};
+    const zones = zoneEdit.card._zones !== undefined ? zoneEdit.card._zones : (stored.zones || []);
+    for (const z of zones) {
+      if (!z.box) continue;
+      ctx.strokeStyle = z.exit ? "#ff9f43" : "#3ddc84"; ctx.lineWidth = 1;
+      ctx.strokeRect(z.box[0] * sx, z.box[1] * sy, z.box[2] * sx, z.box[3] * sy);
+      ctx.fillStyle = ctx.strokeStyle; ctx.font = "12px sans-serif";
+      ctx.fillText(z.name || "?", z.box[0] * sx + 3, z.box[1] * sy + 13);
+    }
+  }
+  if (!roi) return;
   ctx.strokeStyle = "#7c5cff"; ctx.lineWidth = 2;
   ctx.strokeRect(roi[0] * sx, roi[1] * sy, roi[2] * sx, roi[3] * sy);
 }
@@ -524,17 +573,23 @@ async function loadCats() {
   const box = $("cat-last");
   if (!body.last) { box.innerHTML = '<p class="muted">No cats seen yet.</p>'; return; }
   const s = body.last;
-  const where = s.region ? ` — ${s.region}` : "";
+  const where = (s.zone || s.region) ? ` — ${esc(s.zone || s.region)}` : "";
   const cam = s.camera ? ` on <strong>${esc(s.camera)}</strong>` : "";
   const thumb = s.image
     ? `<a href="/snapshots/${s.image}" target="_blank">
          <img class="cat-thumb" src="/snapshots/${s.image}" alt="last cat sighting" /></a>`
     : "";
   const today = `${body.today} sighting${body.today === 1 ? "" : "s"} today`;
+  // The time-of-day prior (#68): where the cats usually are around now — a hint
+  // from history for "where should I look first", never a tracked state.
+  const likely = (body.likely || []).slice(0, 3)
+    .map((l) => `${esc(l.camera)} (${l.weight})`).join(" · ");
+  const likelyLine = likely
+    ? `<div class="muted" style="font-size:12px">Usually around now: ${likely}</div>` : "";
   box.innerHTML = `${thumb}<div>
       <div><strong>Last seen</strong> ${fmtTime(s.ts)}${cam}${where}
         <span class="muted">(score ${s.score})</span></div>
-      <div class="muted">${today}</div></div>`;
+      <div class="muted">${today}</div>${likelyLine}</div>`;
 }
 
 async function showCat() {
@@ -1081,21 +1136,23 @@ function renderEscalation(b) {
   }
 }
 
-// Fetch the standalone cat trail for the selected camera (blue = entered → red =
-// latest). Cache-busted: the endpoint returns a fresh render each call.
-async function showTrail() {
+// Fetch a per-camera diagnostic image (the cat trail or the sighting heat map)
+// and open it in the lightbox. Cache-busted: fresh render each call.
+async function showCameraImage(path) {
   const cam = $("esc-camera").value;
   const note = $("esc-note");
-  const resp = await fetch(`/api/trail?camera=${encodeURIComponent(cam)}&t=${Date.now()}`);
+  const resp = await fetch(`${path}?camera=${encodeURIComponent(cam)}&t=${Date.now()}`);
   if (!resp.ok) {
     const body = await resp.json().catch(() => null);
-    note.textContent = (body && body.error) || "No trail available.";
+    note.textContent = (body && body.error) || "Not available.";
     return;
   }
   note.textContent = "";
   const blob = await resp.blob();
   zoomImg(URL.createObjectURL(blob));
 }
+const showTrail = () => showCameraImage("/api/trail");
+const showHeatmap = () => showCameraImage("/api/cats/heatmap");
 
 // Camera picker for live-camera escalation: shown only when the config toggle is
 // on AND the loop is running (mirrors the backend's 403/409 gates).
@@ -1327,6 +1384,23 @@ function wire() {
   // ROI picker.
   wireRoiCanvas();
   $("roi-use").onclick = () => {
+    if (zoneEdit) {                          // zone mode (#68): the box becomes a zone
+      if (!roi) { $("roi-note").textContent = "Drag a box first."; return; }
+      const zname = (prompt("Name this zone (e.g. the couch, kitchen door):", "") || "").trim();
+      if (!zname) { $("roi-note").textContent = "Zone needs a name — drag again or Cancel."; return; }
+      const isExit = confirm("Is this an exit (a doorway the cat can leave through)?\nOK = exit · Cancel = a normal spot");
+      const card = zoneEdit.card;
+      const stored = cameras.find((c) => c.name === card.dataset.name) || {};
+      const zones = (card._zones !== undefined ? card._zones : (stored.zones || [])).slice();
+      zones.push({ name: zname, box: roi.slice(), exit: isExit });
+      card._zones = zones;
+      card.querySelector("[data-zonelist]").innerHTML = zoneChipsHTML(zones);
+      $("roi-editor").classList.add("hidden");
+      zoneEdit = null; roiEdit = null;
+      // Persist; its loadCamerasList() re-render also wires the new chip's ×.
+      card.querySelector("[data-save]").click();
+      return;
+    }
     if (!roiEdit) return;
     roiEdit.card._roi = roi;
     const note = roiEdit.card.querySelector("[data-roinote]");
@@ -1335,8 +1409,8 @@ function wire() {
     roiEdit.card.querySelector("[data-save]").click();   // persist the new region
     roiEdit = null;
   };
-  $("roi-clear").onclick = () => { roi = null; drawRoiBox(); $("roi-note").textContent = "Whole frame"; };
-  $("roi-cancel").onclick = () => { $("roi-editor").classList.add("hidden"); roiEdit = null; };
+  $("roi-clear").onclick = () => { roi = null; drawRoiBox(); $("roi-note").textContent = zoneEdit ? "Drag a box over the spot" : "Whole frame"; };
+  $("roi-cancel").onclick = () => { $("roi-editor").classList.add("hidden"); roiEdit = null; zoneEdit = null; };
 
   $("sound-upload").onchange = async (e) => {
     const file = e.target.files[0];
@@ -1426,6 +1500,8 @@ function wire() {
   if (erc) erc.onclick = () => runEscalation($("esc-camera").value);
   const etb = $("esc-trail-btn");
   if (etb) etb.onclick = showTrail;
+  const ehb = $("esc-heatmap-btn");
+  if (ehb) ehb.onclick = showHeatmap;
   const et = $("vlm-escalation-toggle");
   if (et) et.onchange = async () => {
     await api("/api/config", postJSON({ vlm_escalation: et.checked }));
