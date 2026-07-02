@@ -11,6 +11,49 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.30.0] — 2026-07-02
+
+### Added
+- **The cat trail** (#67) — slice 2 of the smart-detection roadmap, per the user's
+  design. Frame-to-frame diffing only lights the *edges* of motion; diffing against
+  the last **null frame** (the scene when nothing was moving) lights the **whole cat
+  silhouette**. Each silhouette's pixels are stamped with when they were covered and
+  coloured by recency — **blue = where the episode started → red = the latest
+  position** — one image showing path, direction, and timing (`d20app/trail.py`,
+  fed by every frame read; capped working resolution, a few small-image ops per
+  frame, pure CPU).
+  - The **null frame re-adopts the scene** after a few still seconds — self-heals
+    lighting/auto-exposure drift, and (honestly noted) means a settled cat becomes
+    part of "null", so her departure briefly lights her old spot as a "ghost" in the
+    trail's oldest colours. A **motion episode** ends after a long stillness; the
+    trail keeps rendering until a *new* episode starts.
+  - **Trail-endpoint targeting**: the newest silhouette's box is a coordinate the app
+    knows numerically. If it's **interior** (not near a frame edge — the v1 exit
+    check), the cat plausibly didn't leave: the escalation ladder now takes it as its
+    **highest-priority hint** (and as a predictor track fix).
+  - **"Probable location"** — a third, honest outcome tier: when the ladder confirms
+    nothing but the trail ends in-view, the response says *"no confirmed detection,
+    but the last movement ended here Ns ago and no exit was seen — probable
+    location"*, with the endpoint boxed in orange on the annotated frame and the
+    trail image attached as evidence. **Never recorded as a sighting** — always
+    labelled as inference. An endpoint at the frame edge (may have exited) makes no
+    claim.
+  - **`GET /api/trail?camera=`** serves the recency-coloured trail over the current
+    frame (404 until something moves; 409 when not watching). GUI: a **🌈 Show
+    trail** button next to the camera check, the probable badge + orange box in the
+    escalation results, and the trail image inline when a live run returns one.
+
+### Notes
+- Suite: **262 tests** (+11: null adoption, silhouette painting + endpoint coords,
+  blue→red recency colouring, edge-vs-interior endpoints, episode reset, endpoint
+  staleness expiry, null-refresh absorbing a settled scene, the live escalate
+  "probable" path against a real loop+detector with injected frames, no-probable at
+  a frame edge, `/api/trail` JPEG + degradations, and the read_and_detect wiring),
+  all green.
+- **NAS still to verify**: real-scene trail quality — ghosting behaviour, lighting
+  drift across hours, and whether the endpoint deep-scrub recovers the basket-cat
+  case end-to-end. CI proves the geometry, colouring, episode logic, and API.
+
 ## [0.29.0] — 2026-07-02
 
 ### Added

@@ -276,6 +276,26 @@ treat path never touches it. Confirmed finds are logged as sightings tagged with
 rung that found them, so real use shows whether the free zoom or the VLM earns its
 keep. (VLM rungs need the optional moondream + a GPU/key; the zoom rung is pure CPU.)
 
+### The cat trail — where she went, in colour
+
+Comparing each frame to the last **still** frame (the empty room) lights up the
+**whole cat silhouette**, not just moving edges. The app stamps every silhouette
+with *when* it was seen and colours the result by recency — **blue where the cat
+entered, sweeping to red at her latest position** — one image showing the path,
+direction, and timing of the current motion episode (**🌈 Show trail**, or
+`GET /api/trail?camera=`). Pure CPU.
+
+The trail is also a detection instrument: its **red end is a coordinate**. If the
+last movement ended *inside* the view (not at a frame edge), the cat plausibly
+never left — that spot becomes the escalation ladder's strongest hint, and when
+even the ladder confirms nothing, the app reports an honest **"probable
+location"**: *no confirmed detection, but the last movement ended here and no exit
+was seen* — boxed in orange with the trail image as evidence, never logged as a
+real sighting. (Known quirk, stated plainly: the "empty room" baseline refreshes
+after a few still seconds — good, it heals lighting drift — so a cat who settles
+becomes part of it, and her later departure briefly lights her old spot as a ghost
+in the trail's oldest colours.)
+
 ### Watching lots of cameras without melting the CPU (round-robin)
 
 Each watched camera adds about one camera's load. **Round-robin** (a toggle under the
