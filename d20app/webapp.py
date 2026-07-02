@@ -906,6 +906,27 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         return Response(frames(),
                         mimetype="multipart/x-mixed-replace; boundary=frame")
 
+    @app.get("/api/trail")
+    def api_trail():
+        # The cat trail (#67): the camera's current frame with the episode's
+        # silhouettes tinted by recency (blue = entered → red = latest) and the
+        # endpoint boxed. 404 when there's been no motion this episode.
+        loop = app.config["loop"]
+        if not loop.is_running():
+            return jsonify({"error": "Start watching to see a cat trail."}), 409
+        name = request.args.get("camera")
+        det = loop.get_detector(name) if name else None
+        if det is None:
+            return jsonify({"error": f"Unknown camera {name!r}."}), 404
+        raw = det.latest_frame()
+        if raw is None:
+            return jsonify({"error": "No frame from that camera yet."}), 409
+        frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+        jpeg = det.trail_jpeg(frame)
+        if jpeg is None:
+            return jsonify({"error": "No trail yet — nothing has moved this episode."}), 404
+        return Response(jpeg, mimetype="image/jpeg")
+
     @app.post("/api/live/smooth")
     def api_live_smooth():
         # Persist the choice and, if watching, apply it live (the loop reconciles
@@ -1486,15 +1507,17 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         settings = body.get("settings") or {}
         use_vlm = body.get("use_vlm", True) is not False
         camera = (body.get("camera") or "").strip()
+        loop = app.config["loop"]
 
         det = None
+        endpoint = None
         hints, tracks = [], []
         if camera:                          # --- live-camera path ---------------
             cfg = config_mod.load()
             if not cfg.vlm_escalation:
                 return jsonify({"error": "Live-camera escalation is disabled — enable "
                                 "'VLM escalation' in settings first."}), 403
-            if loop is None or not loop.is_running():
+            if not loop.is_running():
                 return jsonify({"error": "Detection isn't running."}), 409
             det = loop.get_detector(camera)
             if det is None:
@@ -1505,9 +1528,15 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # The sync path publishes the frame already adjusted; the smooth-mode
             # grab thread publishes raw — adjust only then (no double-adjust).
             frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
-            hints = list(det.motion_hint_boxes())
-            if hints and det.motion_hint_ts() > 0:
-                tracks.append((det.motion_hint_ts(), hints[0]))
+            # The trail endpoint first — where the last movement ENDED is the
+            # strongest "look here" hint (#67) — then motion blobs + last sighting.
+            endpoint = det.trail_endpoint()
+            if endpoint:
+                hints.append(tuple(endpoint["box"]))
+                tracks.append((endpoint["ts"], tuple(endpoint["box"])))
+            hints += list(det.motion_hint_boxes())
+            if det.motion_hint_boxes() and det.motion_hint_ts() > 0:
+                tracks.append((det.motion_hint_ts(), det.motion_hint_boxes()[0]))
             recent = [s for s in loop.cats.recent(limit=20)
                       if s.get("camera") == camera][:3]
             if recent:
@@ -1565,7 +1594,19 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             vlm_query=vlm_query, locator_classes=locator_classes,
             cat_confidence=cat_conf)
 
-        # Annotate: thin gray crop windows, green final box.
+        # "Probable location" (#67): nothing CONFIRMED, but the trail's last
+        # movement ended in-view (interior endpoint) — the cat plausibly didn't
+        # leave. Surfaced as honest inference for the user; NEVER recorded as a
+        # sighting. An endpoint at the frame edge means "may have exited" → no claim.
+        result["probable"] = None
+        if (not result["found"] and endpoint and endpoint["interior"]):
+            result["probable"] = {
+                "box": list(endpoint["box"]), "age_s": endpoint["age_s"],
+                "note": ("No confirmed detection, but the last movement ended here "
+                         f"{int(endpoint['age_s'])}s ago and no exit was seen — "
+                         "probable location.")}
+
+        # Annotate: thin gray crop windows, green final box (or orange probable).
         annotated = frame.copy()
         for c in result["crops"]:
             x1, y1, x2, y2 = c["box"]
@@ -1576,6 +1617,11 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             cv2.putText(annotated, f"{result['label']} ({result['source']})",
                         (x1, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                         (80, 220, 80), 1, cv2.LINE_AA)
+        elif result["probable"]:
+            x1, y1, x2, y2 = result["probable"]["box"]
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 165, 255), 2)
+            cv2.putText(annotated, "probable (trail)", (x1, max(14, y1 - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1, cv2.LINE_AA)
         for c in result["crops"]:
             x1, y1, x2, y2 = c["box"]
             c["image"] = _orig_thumb_data_url(frame[y1:y2, x1:x2], width=320)
@@ -1597,7 +1643,16 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 image=snap)
             loop.boost_detection(camera, 5.0)
 
+        # Attach the trail image (the probable state's evidence; nice context on any
+        # live run). Data URL so the GUI shows it inline next to the rung table.
+        trail_url = None
+        if det is not None:
+            trail_img = det._trail.render(frame)
+            if trail_img is not None:
+                trail_url = _full_jpeg_data_url(trail_img, quality=80)
+
         return jsonify({**result, "annotated": _full_jpeg_data_url(annotated, quality=80),
+                        "trail": trail_url,
                         "frame_size": [w, h], "hints_used": [list(b) for b in hints],
                         "camera": camera or None, "note": vlm_note})
 

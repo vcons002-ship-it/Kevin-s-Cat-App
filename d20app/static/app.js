@@ -1050,6 +1050,11 @@ function renderEscalation(b) {
   if (b.found) {
     badge.textContent = `CAT found — ${b.source}${b.ratio ? ` (vote ${b.ratio})` : ""}`;
     badge.className = "vlm-badge vlm-yes";
+  } else if (b.probable) {
+    // The trail-based inference tier (#67): never a confirmed sighting, always
+    // labelled as "probable" with the evidence (the trail image below).
+    badge.textContent = `probably here — ${b.probable.note}`;
+    badge.className = "vlm-badge vlm-unparsed";
   } else {
     badge.textContent = "no cat confirmed";
     badge.className = "vlm-badge vlm-no";
@@ -1069,6 +1074,27 @@ function renderEscalation(b) {
   const ann = $("esc-annotated");
   ann.src = b.annotated || "";
   ann.onclick = () => zoomImg(ann.src);
+  const tr = $("esc-trail");
+  if (tr) {
+    tr.classList.toggle("hidden", !b.trail);
+    if (b.trail) { tr.src = b.trail; tr.onclick = () => zoomImg(tr.src); }
+  }
+}
+
+// Fetch the standalone cat trail for the selected camera (blue = entered → red =
+// latest). Cache-busted: the endpoint returns a fresh render each call.
+async function showTrail() {
+  const cam = $("esc-camera").value;
+  const note = $("esc-note");
+  const resp = await fetch(`/api/trail?camera=${encodeURIComponent(cam)}&t=${Date.now()}`);
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => null);
+    note.textContent = (body && body.error) || "No trail available.";
+    return;
+  }
+  note.textContent = "";
+  const blob = await resp.blob();
+  zoomImg(URL.createObjectURL(blob));
 }
 
 // Camera picker for live-camera escalation: shown only when the config toggle is
@@ -1398,6 +1424,8 @@ function wire() {
   if (er) er.onclick = () => runEscalation(null);
   const erc = $("esc-run-camera");
   if (erc) erc.onclick = () => runEscalation($("esc-camera").value);
+  const etb = $("esc-trail-btn");
+  if (etb) etb.onclick = showTrail;
   const et = $("vlm-escalation-toggle");
   if (et) et.onchange = async () => {
     await api("/api/config", postJSON({ vlm_escalation: et.checked }));

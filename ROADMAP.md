@@ -65,7 +65,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **251 automated tests**, including a detection-accuracy regression guard over
+- **262 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO/CUDA accelerators with
   CPU fallback, a clear error — no silent fallback — when a model can't load, the
@@ -158,12 +158,15 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       live cameras behind the off-by-default `vlm_escalation` toggle); the treat path is
       untouched. Sightings carry a `source` tag so real use shows which rung earns its
       keep. NAS still to verify: real `detect()` quality + VRAM co-residency.
-- [ ] **The "cat trail"** (next slice): diff the frame against the last **null**
-      (no-motion) frame so the whole cat silhouette lights up; colour by recency
-      (blue = entered → red = latest) for a path+timing visual; **trail-endpoint
-      targeting** (interior endpoint = cat didn't leave → deep-scrub that spot) and an
-      honest **"probable location"** state when detection fails but the trail ends
-      in-room. Foundations (retained, timestamped motion blobs) shipped in 0.29.0.
+- [x] **The "cat trail"** (0.30.0, #67): diff against the last **null** (no-motion)
+      frame so the whole cat silhouette lights up; coloured by recency (blue = entered
+      → red = latest) for a path+timing visual; **trail-endpoint targeting** (interior
+      endpoint = cat didn't leave → the ladder's strongest hint) and the honest
+      **"probable location"** state when detection fails but the trail ends in-room
+      (never recorded as a sighting). `GET /api/trail` + 🌈 Show trail in the GUI.
+      NAS to verify: real-scene ghosting/lighting-drift behaviour + the basket-cat
+      recovery end-to-end. v2 ideas: doorway zones for the exit check (below),
+      per-sighting trail images in the report card.
 - [ ] **Sighting/motion heat maps + semantic zones** — per-camera accumulated maps from
       the existing `cats.log` boxes; named GUI-drawn zones ("the couch", doorways) for
       semantic sightings and trail exit-detection; time-of-day priors to rank the

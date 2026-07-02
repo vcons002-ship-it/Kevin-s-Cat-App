@@ -387,6 +387,10 @@ class PersonDetector:
             diff_threshold=motion_diff_threshold,
             min_blob_px=motion_min_blob_px,
         )
+        # The "cat trail" (#67): null-frame silhouettes coloured by recency, fed by
+        # every frame read. Cheap (capped working resolution) and thread-safe.
+        from .trail import TrailTracker
+        self._trail = TrailTracker(diff_threshold=motion_diff_threshold)
 
     # -- model / stream lifecycle -------------------------------------------
     def _ensure_net(self):
@@ -715,6 +719,23 @@ class PersonDetector:
         """Wall-clock time of the last motion-blob update (0.0 if never)."""
         return self._motion.last_blobs_ts
 
+    def trail_endpoint(self):
+        """The cat trail's newest silhouette (frame coords + interior flag), or
+        None. An interior endpoint means the last movement ended in-view — the
+        ladder's strongest hint, and the basis of "probable location" (#67)."""
+        return self._trail.endpoint()
+
+    def trail_jpeg(self, frame_bgr):
+        """The recency-coloured trail composited over ``frame_bgr`` as JPEG bytes,
+        or None when there's no trail this episode."""
+        import cv2
+
+        img = self._trail.render(frame_bgr)
+        if img is None:
+            return None
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return buf.tobytes() if ok else None
+
     def latest_frame(self):
         """A copy of the most recent raw frame (camera-native, pre-ROI), or None.
 
@@ -886,6 +907,7 @@ class PersonDetector:
         cropped = self._crop(frame)
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         moved = self._motion.update(gray)      # keep the baseline fresh even when paused
+        self._trail.update(gray, moved)        # cat-trail silhouettes + endpoint (#67)
         # Run the net on real motion, or when a forced still-cat scan asks for it.
         if not force and (not detect or not moved):
             return FrameOutcome(motion=False, person=False)
