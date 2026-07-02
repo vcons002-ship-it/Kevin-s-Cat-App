@@ -56,6 +56,7 @@ cat_scan_tiling: "3x3"     # "off" | "2x2" | "3x3" | "4x4" — split into an ove
 cat_scan_tile_overlap: 0.35 # fraction each tile overlaps its neighbour (benchmark #70: 3x3 is best at 0.35; 2x2 prefers 0.20)
 cat_scan_imgsz: 0          # locator input size: 0 = native. YOLO needs a matching exported model (e.g. yolo11m_960) or falls back to native + tiling
 cat_scan_frames: 3         # still-cat scan only: average N back-to-back frames before the net (noise drops ~sqrt(N) on a still scene; movement mid-burst falls back to one frame). 1 = off, max 8. The treat path never averages.
+track_fusion: true         # temporal fusion: a string of WEAK cat detections that chain smoothly and actually MOVE is confirmed as one sighting (source "track") — catches a walking cat no single frame can confirm; the movement requirement keeps decoys out. false = judge every frame alone.
 
 # --- Round-robin (cap CPU when watching many cameras: run a few at a time, rotating
 # sets — many cameras at the CPU of a few). Per-camera "always_watch" exempts a camera. ---

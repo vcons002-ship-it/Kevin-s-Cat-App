@@ -11,6 +11,40 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.37.0] — 2026-07-02
+
+### Added
+- **Temporal score fusion ("track-before-detect")**: YOLO judged every frame
+  independently, so a cat scoring 0.35 in eight consecutive frames — the box
+  gliding smoothly along a plausible path — was discarded eight times. Now
+  weak locator hits (`0.2 ≤ score < cat_confidence`, decoded in the **same
+  forward pass** — the floor is a post-filter, not extra inference) chain
+  across frames by overlap and confirm as **one sighting** when the chain has
+  ≥4 hits inside 5 s **and net-travels ≥3% of the frame diagonal**. The
+  movement requirement is the decoy guard: per the benchmark arc (#69/#70),
+  the thing that separates a decoy from a cat is that the cat *moves* — and
+  its deliberate flip side is that a *stationary* weak cat never fuses (still
+  cats remain the averaging/tiling scan's job). Confirmed tracks are recorded
+  as ordinary sightings tagged `source: "track"` with the honest **mean** weak
+  score, log a "confirmed by track fusion (N weak hits over Ns)" activity
+  line, and count toward cat presence. A per-track 30 s cooldown keeps one
+  walking cat from spamming the log. Weak boxes never reach the live feed,
+  labels, or logs on their own. Pure YOLO evidence — no VLM anywhere in this
+  path (0.33.0's rule holds); this is the recall-raising mirror image of
+  `confirm_frames`' precision-raising streak. Per-camera **Track fusion**
+  checkbox (`track_fusion`, on by default; off = pre-0.37.0 behaviour).
+
+### Notes
+- Suite: **309 tests** (+9: moving weak track confirms exactly once,
+  stationary decoy never confirms, window pruning, reconfirm cooldown,
+  teleporting hits don't chain, detector wires weak hits to the fuser while
+  keeping them out of the live feed, fusion-off preserves single-frame
+  behaviour, the loop records `source="track"`, config/camera inheritance).
+- NAS to verify: the real-footage hit rate on walking cats, and that RTSP
+  compression shimmer doesn't fake smooth chains (the IoU-chaining + travel
+  requirements are the guards; if shimmer slips through, raise
+  `fusion.MIN_TRAVEL_FRAC` or `MIN_HITS`).
+
 ## [0.36.0] — 2026-07-02
 
 ### Fixed

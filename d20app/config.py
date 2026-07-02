@@ -88,6 +88,7 @@ class Config:
     cat_scan_tile_overlap: float = 0.35  # fraction each tile overlaps its neighbour so a cat on a seam still lands whole in one tile. Benchmark-settled (#70): 3x3 is best at 0.35 (2x2 prefers 0.20).
     cat_scan_imgsz: int = 0          # locator input size: 0 = native model size. YOLO needs a matching exported model (e.g. yolo11m_960.onnx) or this falls back to native + tiling
     cat_scan_frames: int = 3         # still-cat scan only: average this many back-to-back frames before the net (sensor noise drops ~sqrt(N) on a still scene — helps dim/noisy frames; any motion mid-burst falls back to the single frame). 1 = off; capped at 8. The fast treat path never averages.
+    track_fusion: bool = True        # temporal score fusion: a string of WEAK cat detections (below cat_confidence) that chain smoothly and actually MOVE across the frame is confirmed as one sighting (source "track") — the recall-raising mirror of confirm_frames. Pure YOLO evidence; the movement requirement is the decoy guard (a cushion never travels). Off = judge every frame alone (pre-0.37.0 behaviour).
 
     # --- CPU saving ---
     pause_during_cooldown: bool = True   # skip the neural net while in the between-rolls cooldown (nothing it sees can trigger anyway); resumes just before the window reopens
@@ -152,6 +153,7 @@ _CAMERA_FROM_CFG = {
     "cat_scan_tile_overlap": "cat_scan_tile_overlap",
     "cat_scan_imgsz": "cat_scan_imgsz",
     "cat_scan_frames": "cat_scan_frames",
+    "track_fusion": "track_fusion",
     "motion_sensitivity": "motion_sensitivity",
     "motion_min_area_frac": "motion_min_area_frac",
     "motion_diff_threshold": "motion_diff_threshold",

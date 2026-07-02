@@ -262,6 +262,31 @@ class DetectionLoop:
             return True
         return self._is_pinned(name, time.monotonic())
 
+    def _record_fused(self, name: str, cam_label: str, spec: dict, detector) -> dict | None:
+        """Claim and record a temporal-fusion confirmation (0.37.0), or None.
+
+        The fused hit is pure YOLO evidence accumulated across frames — a moving
+        cat no single frame could confirm — so it's recorded as an ordinary
+        sighting, honestly tagged ``source="track"`` with the mean weak score.
+        """
+        take = getattr(detector, "take_fused_hit", None)   # absent on test stubs
+        fused = take() if take else None
+        if not fused:
+            return None
+        snap = self.snapshots.save(detector.annotated_jpeg())
+        sighting = self.cats.record(
+            name, tuple(fused["box"]), detector.frame_size, fused["score"],
+            image=snap, label="cat", source="track",
+            zone=zone_for(fused["box"], spec.get("zones"), spec.get("roi")))
+        spot = sighting.get("zone") or sighting["region"]
+        where = f" ({spot})" if spot else ""
+        self.activity.add(
+            "motion",
+            f"🐱 Moving cat confirmed by track fusion ({fused['n']} weak hits over "
+            f"{fused['span_s']}s){where} on {cam_label} — tracked, no roll.",
+            image=snap)
+        return sighting
+
     def boost_detection(self, name: str, seconds: float | None = None) -> bool:
         """Run the net continuously on ``name`` for ``seconds`` (default
         :data:`_CAT_BOOST_SECONDS`), so the live feed keeps drawing a box around the
@@ -353,6 +378,7 @@ class DetectionLoop:
                 cat_scan_tile_overlap=spec["cat_scan_tile_overlap"],
                 cat_scan_imgsz=spec["cat_scan_imgsz"],
                 cat_scan_frames=spec["cat_scan_frames"],
+                track_fusion=spec["track_fusion"],
                 cat_confidence=spec["cat_confidence"],
                 locator_classes=spec["locator_classes"],
             )
@@ -539,6 +565,11 @@ class DetectionLoop:
 
                 if force_scan or outcome.motion:
                     last_scan = now      # the net ran; defer the next forced scan
+
+                # Temporal fusion (0.37.0): a string of weak YOLO hits that chained
+                # and MOVED was confirmed as one cat — record it like any sighting.
+                if track_cats:
+                    self._record_fused(name, cam_label, spec, detector)
 
                 # Forced scan (periodic still-cat check or a Show-cat boost) with no
                 # real motion: the net ran anyway and may have found a sleeping cat.

@@ -65,7 +65,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **292 automated tests**, including a detection-accuracy regression guard over
+- **309 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO/CUDA accelerators with
   CPU fallback, a clear error — no silent fallback — when a model can't load, the
@@ -181,6 +181,15 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       the Test tool's video uploads and on the escalation camera row). NAS to
       verify the core premise: whether moondream can actually reason over a grid
       of frames — the prompt and plumbing are tested, the model's skill is not.
+- [x] **Temporal score fusion / track-before-detect** (0.37.0): weak locator
+      hits (below `cat_confidence`, decoded in the same forward pass) chain
+      across frames by overlap and confirm as ONE sighting (source `track`)
+      when the chain is ≥4 hits in 5 s AND net-travels ≥3% of the frame
+      diagonal — the movement requirement is the decoy guard (#69/#70: decoys
+      don't travel). The recall-raising mirror of `confirm_frames`. Pure YOLO
+      evidence (0.33.0 rules); per-camera toggle, on by default. NAS to
+      verify: real-footage hit rate and that compression shimmer doesn't fake
+      chains (the smooth-chaining + travel checks are the guards).
 - [ ] Temporal follow-ups: per-frame voted queries aggregated over the ring;
       per-sighting event clips from the same buffer; true video-LLMs
       (5090-tier experiment) only if the mosaic underperforms on the NAS.

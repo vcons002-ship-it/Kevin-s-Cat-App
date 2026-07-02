@@ -267,6 +267,21 @@ Tune the resolution knobs in the **Test detection** card against a real screensh
 then save to the camera. (Averaging applies to the live scan only — an uploaded
 still has nothing to average.)
 
+### Track fusion — a string of weak looks beats one hard look
+
+YOLO judges every frame on its own, so a cat scoring 0.35 in eight consecutive
+frames — the box gliding smoothly across the room — used to be discarded eight
+times. **Track fusion** keeps those weak hits (they come from the same forward
+pass; nothing extra runs), chains them when they overlap frame-to-frame, and
+confirms a sighting when the chain is long enough **and actually travels** across
+the frame. The movement requirement is the decoy guard: a cat-shaped cushion
+produces weak hits that never go anywhere. Confirmed tracks are recorded like any
+sighting, honestly tagged `source: "track"` with the *mean* weak score — the
+recall-raising mirror image of `confirm_frames`' precision-raising streak. Weak
+boxes never reach the live feed or the logs on their own; per-camera **Track
+fusion** checkbox (on by default). The deliberate limit: a *stationary* weak cat
+never fuses — that's the still-cat scan's job.
+
 ### The escalation ladder — "zoom in and look again"
 
 When even the locator misses (a curled-up cat a few pixels tall), the **escalation
