@@ -190,6 +190,12 @@ class DetectionLoop:
             return self._detectors[name]
         return self._detectors.get(self._live_name)   # fall back to the default feed
 
+    def get_detector(self, name: str) -> PersonDetector | None:
+        """The named camera's running detector, or None. Lock-free: ``_detectors``
+        is built once per start and rebound (never mutated), same as :meth:`_pick`.
+        Used by the on-demand escalation endpoint (#66) — NOT a fallback lookup."""
+        return self._detectors.get(name)
+
     def live_jpeg(self, name: str | None = None) -> bytes | None:
         """Annotated frame from a camera's detector (defaults to the streamed one).
 

@@ -11,6 +11,59 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.29.0] — 2026-07-02
+
+### Added
+- **The escalation ladder** — "zoom in and look again" for the small/distant cats the
+  normal pass misses (#17's 0.00-confidence case; the roadmap's "VLM-guided cropping →
+  YOLO escalation" next-step). When the quick look finds nothing, the ladder runs
+  cheapest-first, stopping at the first **confirmed** find:
+  1. **zoom+yolo** (free, no VLM): full-resolution square crops around the "look here"
+     hints — where motion just happened, where the cat was last seen, and where a **CPU
+     predictor** says a moving cat is headed (`predict_hint_box`: centroid velocity from
+     the last timestamped fixes, uncertainty pad grows with staleness; stands down with
+     <2 recent fixes — the VLM stays the failsafe when the track is thin) — re-checked
+     by the ordinary YOLO net. In a crop the cat is big again.
+  2. **vlm detect**: moondream's previously-unused `detect("cat")` proposes regions;
+     each is cropped full-res and **confirmed** (YOLO first, voted yes/no query second).
+     A bare detect region is never trusted alone — open-vocab detect false-fires on
+     cat-shaped decoys.
+  3. **vlm query**: last resort — the voted yes/no on the hint crops.
+- **Motion location is now retained** (`MotionPrefilter.last_blobs` + timestamp): the
+  blob boxes the pre-filter always computed (and threw away) survive as escalation
+  hints, including sub-`min_area_frac` movers (a distant cat's small blob) — the motion
+  **verdict is unchanged**. Foundation for the upcoming null-frame "cat trail".
+- **`POST /api/vlm/escalate`** — on-demand only: a Test-tool frame (works without any
+  config), or a live camera's latest frame behind the new **`vlm_escalation`** toggle
+  (off by default; 403 when off, 409 when the loop/camera isn't available). The fast
+  treat path never touches any of this. A confirmed live find records a sighting
+  **tagged with its rung** (`source: zoom+yolo | vlm+yolo | vlm` — sightings now carry
+  a `source` field, old records read back as `yolo`), logs an activity line with the
+  annotated snapshot, and boosts the camera feed. Response includes the rung table
+  (ran/crops/ms/result), every crop as a thumbnail, and the annotated frame.
+- **GUI**: an "escalation" section in the VLM card — run on the uploaded frame, a
+  "use VLM rungs" toggle (off = pure-CPU zoom+yolo), and a per-camera "Check camera
+  now" (shown only when the toggle is on and detection is running); rung table + crop
+  thumbnails + annotated result. Settings gains the "Live-camera escalation" checkbox.
+- `d20app/escalation.py` is pure math with injected detectors — every ladder decision
+  is unit-tested without a net or GPU. `moondream.detect_regions()` wraps the detect
+  mode (normalized [0,1] coords per moondream 1.3.0; mapped/clamped/degenerate-rejected
+  by `map_normalized_box`).
+
+### Notes
+- Suite: **251 tests** (+29: crop math incl. edge-shifting, box mapping round-trips,
+  normalized clamping, hint dedupe/caps, the predictor's lead/stand-down/clamp cases,
+  the cheap-first guarantee (rung-1 hit → VLM never called), decoy resistance (bare
+  detect region never records), rung bookkeeping, endpoint 404/403/409/503 paths, a
+  real end-to-end zoom+yolo find on the cat fixture, blob retention/verdict split, and
+  sighting-source persistence), all green.
+- **Honest verification split**: CI proves the crop math, ladder decisions, and
+  degradations with mocks + real yolo11n on fixtures. **Only the NAS can verify**:
+  moondream `detect()` output quality/orientation on real frames, VRAM co-residency of
+  YOLO-CUDA + moondream2 on the 8 GB 3070 (the ladder's confirm rung defaults to CPU
+  YOLO for this reason), and the real-world hit rate on known-miss frames. See the PR
+  checklist.
+
 ## [0.28.0] — 2026-06-30
 
 ### Added

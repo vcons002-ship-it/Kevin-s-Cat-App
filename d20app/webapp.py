@@ -34,6 +34,7 @@ from werkzeug.utils import secure_filename
 from . import __version__
 from . import config as config_mod
 from . import discovery
+from . import escalation
 from . import moondream as vlm
 from .detector import PersonDetector, grab_frame_jpeg, sample_video_frames
 from .loop import DetectionLoop, _camera_source
@@ -159,6 +160,27 @@ def _run_test_detection(frame, settings: dict):
         t0 = time.perf_counter()
         annotated, dets = det.detect_image(frame)
         return annotated, dets, round((time.perf_counter() - t0) * 1000.0, 1)
+
+
+def _yolo_boxes_fn(settings: dict, floor: float):
+    """A ``run_yolo(img) -> [(label, score, box)]`` callable for the escalation
+    ladder (#66), reusing the Test tool's per-(model, accelerator) detector cache
+    under the same lock (cv2.dnn nets aren't thread-safe). Defaults to **CPU** —
+    the ladder is on-demand and the 8 GB card may already hold moondream (~4.6 GB);
+    pass ``settings["accelerator"]`` to override."""
+    model = settings.get("model") or "yolo11n"
+    accel = settings.get("accelerator") or "cpu"
+
+    def run_yolo(img):
+        with _test_detect_lock:
+            key = (model, accel)
+            det = _test_detectors.get(key)
+            if det is None:
+                det = PersonDetector(source="__test__", model=model, accelerator=accel)
+                _test_detectors[key] = det
+            return det._run_net(img, floor)
+
+    return run_yolo
 
 
 # --- "Benchmark this image": sweep models × tiling on one frame, emit a shareable
@@ -1385,7 +1407,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                         "default_prompt": vlm.DEFAULT_PROMPT,
                         "choices": vlm.VLM_CHOICES, "default_choice": vlm.DEFAULT_CHOICE,
                         "models": list(vlm.MODELS), "default_model": vlm.DEFAULT_MODEL,
-                        "default_passes": vlm.DEFAULT_PASSES, "max_passes": vlm.MAX_PASSES})
+                        "default_passes": vlm.DEFAULT_PASSES, "max_passes": vlm.MAX_PASSES,
+                        "escalation": {"enabled": bool(cfg.vlm_escalation)}})
 
     def _vlm_key(body) -> str | None:
         # Per-request key wins (e.g. a paste before saving); else the stored config key;
@@ -1450,6 +1473,133 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             "verdicts": verdicts, "cancelled": cancelled, "requested": len(items),
             "ran": len(verdicts), "skipped": len(skipped), "skipped_names": skipped[:20],
         })
+
+    @app.post("/api/vlm/escalate")
+    def api_vlm_escalate():
+        # The "find the cat" escalation ladder (#66): motion/last-seen/predicted
+        # zoom crops -> YOLO -> VLM detect + confirm -> VLM query. On-demand only —
+        # a Test-tool frame (works regardless of config) or a live camera's latest
+        # frame (needs the vlm_escalation toggle). Never touches the treat path.
+        import cv2
+
+        body = request.get_json(silent=True) or {}
+        settings = body.get("settings") or {}
+        use_vlm = body.get("use_vlm", True) is not False
+        camera = (body.get("camera") or "").strip()
+
+        det = None
+        hints, tracks = [], []
+        if camera:                          # --- live-camera path ---------------
+            cfg = config_mod.load()
+            if not cfg.vlm_escalation:
+                return jsonify({"error": "Live-camera escalation is disabled — enable "
+                                "'VLM escalation' in settings first."}), 403
+            if loop is None or not loop.is_running():
+                return jsonify({"error": "Detection isn't running."}), 409
+            det = loop.get_detector(camera)
+            if det is None:
+                return jsonify({"error": f"Unknown camera {camera!r}."}), 409
+            raw = det.latest_frame()
+            if raw is None:
+                return jsonify({"error": "No frame from that camera yet."}), 409
+            # The sync path publishes the frame already adjusted; the smooth-mode
+            # grab thread publishes raw — adjust only then (no double-adjust).
+            frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+            hints = list(det.motion_hint_boxes())
+            if hints and det.motion_hint_ts() > 0:
+                tracks.append((det.motion_hint_ts(), hints[0]))
+            recent = [s for s in loop.cats.recent(limit=20)
+                      if s.get("camera") == camera][:3]
+            if recent:
+                hints.append(tuple(recent[0]["box"]))
+            tracks += [(s["ts"], tuple(s["box"])) for s in recent]
+        else:                               # --- Test-tool frame path -----------
+            with _TEST_SESSIONS_LOCK:
+                frames = _TEST_SESSIONS.get(body.get("id"))
+            if not frames:
+                return jsonify({"error": "Upload a frame first (it may have expired)."}), 404
+            try:
+                idx = max(0, min(int(body.get("frame_index", 0)), len(frames) - 1))
+            except (TypeError, ValueError):
+                idx = 0
+            frame = frames[idx]
+            # Optional client-supplied hint boxes (no motion data for an upload).
+            for b in body.get("hints") or []:
+                if isinstance(b, (list, tuple)) and len(b) == 4:
+                    hints.append(tuple(int(v) for v in b))
+
+        h, w = frame.shape[:2]
+        pred = escalation.predict_hint_box(tracks, frame_size=(w, h))
+        if pred:
+            hints.append(pred)
+
+        cat_conf = settings.get("cat_confidence")
+        try:
+            cat_conf = float(cat_conf) if cat_conf is not None else 0.5
+        except (TypeError, ValueError):
+            cat_conf = 0.5
+        lc = settings.get("locator_classes")
+        locator_classes = tuple(lc) if isinstance(lc, (list, tuple)) and lc else ("cat",)
+        run_yolo = _yolo_boxes_fn(settings, floor=min(cat_conf, 0.3))
+
+        vlm_detect = vlm_query = None
+        vlm_note = None
+        if use_vlm:
+            mode = body.get("mode") or vlm.DEFAULT_MODE
+            model = body.get("model") or vlm.DEFAULT_MODEL
+            key = _vlm_key(body)
+            passes = body.get("passes") or vlm.DEFAULT_PASSES
+            try:
+                vlm.preflight(key, mode)
+            except RuntimeError as exc:
+                return jsonify({"error": str(exc)}), 503
+            vlm_detect = lambda img: vlm.detect_regions(   # noqa: E731
+                img, "cat", model=model, api_key=key, mode=mode)["objects"]
+            vlm_query = lambda img: vlm.query_image_voted(  # noqa: E731
+                img, model=model, api_key=key, mode=mode, passes=passes)
+        else:
+            vlm_note = "VLM rungs disabled by request — zoom+yolo only."
+
+        result = escalation.escalate(
+            frame, hints, run_yolo=run_yolo, vlm_detect=vlm_detect,
+            vlm_query=vlm_query, locator_classes=locator_classes,
+            cat_confidence=cat_conf)
+
+        # Annotate: thin gray crop windows, green final box.
+        annotated = frame.copy()
+        for c in result["crops"]:
+            x1, y1, x2, y2 = c["box"]
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (160, 160, 160), 1)
+        if result["found"] and result["box"]:
+            x1, y1, x2, y2 = result["box"]
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (80, 220, 80), 2)
+            cv2.putText(annotated, f"{result['label']} ({result['source']})",
+                        (x1, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (80, 220, 80), 1, cv2.LINE_AA)
+        for c in result["crops"]:
+            x1, y1, x2, y2 = c["box"]
+            c["image"] = _orig_thumb_data_url(frame[y1:y2, x1:x2], width=320)
+
+        # A live-camera find is a real sighting: record it (tagged with its rung)
+        # and flash the feed via the existing boost — same flow as the still scan.
+        if camera and det is not None and result["found"]:
+            snap_jpeg = cv2.imencode(".jpg", annotated,
+                                     [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes()
+            snap = loop.snapshots.save(snap_jpeg)
+            sighting = loop.cats.record(camera, result["box"], (w, h),
+                                        result["score"], image=snap,
+                                        label=result["label"] or "cat",
+                                        source=result["source"])
+            where = f" ({sighting['region']})" if sighting["region"] else ""
+            loop.activity.add(
+                "motion",
+                f"🔍 Cat found by escalation ({result['source']}){where} on {camera}.",
+                image=snap)
+            loop.boost_detection(camera, 5.0)
+
+        return jsonify({**result, "annotated": _full_jpeg_data_url(annotated, quality=80),
+                        "frame_size": [w, h], "hints_used": [list(b) for b in hints],
+                        "camera": camera or None, "note": vlm_note})
 
     @app.get("/api/test/benchmark/<rid>.html")
     def api_benchmark_html(rid):

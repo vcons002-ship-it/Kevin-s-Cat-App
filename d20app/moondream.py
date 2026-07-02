@@ -261,6 +261,44 @@ def query_image(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MO
     }
 
 
+def detect_regions(frame_bgr, obj: str = "cat", model: str = DEFAULT_MODEL,
+                   api_key: str | None = None, mode: str = DEFAULT_MODE) -> dict:
+    """Run moondream's **detect** mode ("where are the ``obj``s?") on one frame.
+
+    Returns ``{"objects": [{"x_min","y_min","x_max","y_max"}, ...], "detect_ms",
+    "load_ms", "model", "mode", "device"}``. Coordinates are **normalized [0,1]**
+    (moondream 1.3.0 ``types.py``; same shape on the local Photon and cloud paths) —
+    map them with :func:`d20app.escalation.map_normalized_box`.
+
+    Used by the escalation ladder (#66) to propose regions; a bare region is never
+    trusted alone — the ladder always confirms with YOLO or a voted query, because
+    open-vocabulary detect false-fires on cat-shaped decoys. NB: written against the
+    installed package's types and verified with mocks in CI; **unvalidated on real
+    GPU hardware until the NAS checklist runs** — treat orientation/quality of real
+    detect output as unconfirmed until then.
+    """
+    mode = mode if mode in MODES else DEFAULT_MODE
+    name = model or DEFAULT_MODEL
+    cached = (mode, name) in _MODELS
+
+    t0 = time.perf_counter()
+    m = _load_model(name, api_key, mode)
+    load_ms = 0.0 if cached else round((time.perf_counter() - t0) * 1000.0, 1)
+
+    img = _to_pil(frame_bgr)
+    t1 = time.perf_counter()
+    try:
+        result = m.detect(img, obj)
+    except Exception as exc:        # noqa: BLE001 — map OOM/KV/cuBLAS to advice
+        raise _friendly_model_error(exc, name) from exc
+    detect_ms = round((time.perf_counter() - t1) * 1000.0, 1)
+
+    objects = result.get("objects", []) if isinstance(result, dict) else []
+    device = "cloud" if mode == "cloud" else _require_gpu()
+    return {"objects": list(objects), "detect_ms": detect_ms, "load_ms": load_ms,
+            "model": name, "mode": mode, "device": device}
+
+
 def query_image_voted(frame_bgr, prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MODEL,
                       api_key: str | None = None, mode: str = DEFAULT_MODE,
                       passes: int = DEFAULT_PASSES) -> dict:

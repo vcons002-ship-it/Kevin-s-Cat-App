@@ -471,6 +471,7 @@ async function refreshStatus() {
   detail.textContent = parts.join("  ·  ");
   renderCamChips(body.cameras);
   updateLiveView(body.running);
+  updateEscalationCameraRow(body);
 }
 
 // ---- live detection feed ---------------------------------------------------
@@ -974,6 +975,10 @@ async function loadVlmStatus() {
   // API-key status: a missing key is the field's own documentation, never a cryptic 401.
   const ks = $("vlm-key-status");
   if (ks) ks.textContent = body.has_api_key ? "✅ key set" : "⚠ no key set — paste yours to enable the VLM";
+  // Escalation (#66): remember the live-camera gate + reflect it in the settings toggle.
+  VLM_ESCALATION_ENABLED = !!(body.escalation && body.escalation.enabled);
+  const et = $("vlm-escalation-toggle");
+  if (et) et.checked = VLM_ESCALATION_ENABLED;
   if (!body.available) {
     const note = $("vlm-unavailable");
     note.textContent = "moondream isn’t installed — the tester is ready, but local Run needs: pip install moondream, a supported GPU (CUDA/Ampere or Apple Silicon), and an API key. Cloud mode needs only the package + key. It’ll work once that’s in place.";
@@ -1009,7 +1014,79 @@ async function uploadVlm(file) {
     $("vlm-frame-count").textContent = `of ${body.count}`;
   }
   $("vlm-run").disabled = false;
+  const er = $("esc-run"); if (er) er.disabled = false;
 }
+
+// ---- escalation ladder (#66): zoom crops -> YOLO -> VLM detect/confirm ------
+async function runEscalation(camera) {
+  const note = $("esc-note");
+  const payload = {
+    use_vlm: !!($("esc-use-vlm") && $("esc-use-vlm").checked),
+    settings: {},                                    // defaults; CPU YOLO confirm rung
+  };
+  if (payload.use_vlm) {
+    const cur = vlmCurrent();
+    payload.mode = cur.mode; payload.model = cur.model; payload.passes = vlmPasses();
+  }
+  if (camera) {
+    payload.camera = camera;
+  } else {
+    if (!vlmSession) { note.textContent = "Upload a photo or video first."; return; }
+    payload.id = vlmSession.id;
+    payload.frame_index = Number($("vlm-frame").value) || 0;
+  }
+  note.textContent = "Climbing the ladder…";
+  $("esc-run").disabled = true;
+  const { ok, body } = await api("/api/vlm/escalate", postJSON(payload));
+  $("esc-run").disabled = !vlmSession;
+  if (!ok || !body || body.error) { note.textContent = (body && body.error) || "Escalation failed."; return; }
+  note.textContent = body.note || "";
+  renderEscalation(body);
+}
+
+function renderEscalation(b) {
+  $("esc-results").classList.remove("hidden");
+  const badge = $("esc-verdict");
+  if (b.found) {
+    badge.textContent = `CAT found — ${b.source}${b.ratio ? ` (vote ${b.ratio})` : ""}`;
+    badge.className = "vlm-badge vlm-yes";
+  } else {
+    badge.textContent = "no cat confirmed";
+    badge.className = "vlm-badge vlm-no";
+  }
+  const totalMs = (b.rungs || []).reduce((s, r) => s + (r.ms || 0), 0);
+  $("esc-summary").textContent =
+    `${(b.hints_used || []).length} hint(s) · ${Math.round(totalMs)} ms total` +
+    (b.camera ? ` · camera: ${b.camera}` : "");
+  $("esc-rungs").innerHTML =
+    "<tr><th>rung</th><th>ran</th><th>crops</th><th>ms</th><th>result</th></tr>" +
+    (b.rungs || []).map((r) => `<tr><td style="text-align:left">${esc(r.name)}</td>
+      <td>${r.ran ? "✓" : "—"}</td><td>${r.crops}</td><td>${Math.round(r.ms)}</td>
+      <td style="text-align:left">${r.found ? "🐱 found" : esc(r.note || (r.ran ? "nothing" : ""))}</td></tr>`).join("");
+  $("esc-crops").innerHTML = (b.crops || []).filter((c) => c.image).map((c) =>
+    `<img src="${c.image}" title="${esc(c.source_rung)} crop — click to enlarge"
+          style="max-width:140px;border-radius:4px;cursor:zoom-in" onclick="zoomImg(this.src)"/>`).join("");
+  const ann = $("esc-annotated");
+  ann.src = b.annotated || "";
+  ann.onclick = () => zoomImg(ann.src);
+}
+
+// Camera picker for live-camera escalation: shown only when the config toggle is
+// on AND the loop is running (mirrors the backend's 403/409 gates).
+function updateEscalationCameraRow(statusBody) {
+  const row = $("esc-camera-row");
+  if (!row) return;
+  const enabled = !!(VLM_ESCALATION_ENABLED && statusBody && statusBody.running);
+  row.hidden = !enabled;
+  if (enabled) {
+    const sel = $("esc-camera");
+    const cams = (statusBody.cameras || []).map((c) => c.name || c).filter(Boolean);
+    const prev = sel.value;
+    sel.innerHTML = cams.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+    if (cams.includes(prev)) sel.value = prev;
+  }
+}
+let VLM_ESCALATION_ENABLED = false;
 
 async function runVlm() {
   if (!vlmSession) { $("vlm-note").textContent = "Upload a photo or video first."; return; }
@@ -1317,6 +1394,15 @@ function wire() {
   if (vks) vks.onclick = saveVlmKey;
   const vr = $("vlm-run");
   if (vr) vr.onclick = runVlm;
+  const er = $("esc-run");
+  if (er) er.onclick = () => runEscalation(null);
+  const erc = $("esc-run-camera");
+  if (erc) erc.onclick = () => runEscalation($("esc-camera").value);
+  const et = $("vlm-escalation-toggle");
+  if (et) et.onchange = async () => {
+    await api("/api/config", postJSON({ vlm_escalation: et.checked }));
+    await loadVlmStatus();          // re-read the gate; refreshStatus shows/hides the row
+  };
   const vbf = $("vlm-batch-files");
   if (vbf) vbf.onchange = (e) => { addVlmBatchFiles(Array.from(e.target.files)); e.target.value = ""; };
   const vbr = $("vlm-batch-run");

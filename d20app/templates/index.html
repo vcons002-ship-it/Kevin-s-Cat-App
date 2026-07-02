@@ -255,6 +255,9 @@
         </label>
         <button id="vlm-key-save" class="ghost" type="button">Save key</button>
         <span id="vlm-key-status" class="muted"></span>
+        <label class="inline" title="allow the escalation ladder to run against live cameras on demand (the treat path never uses it)">
+          <input type="checkbox" id="vlm-escalation-toggle"/> Live-camera escalation
+        </label>
       </div>
       <div id="vlm-frame-pick" class="test-video-tools hidden">
         <label class="inline">Frame <input id="vlm-frame" type="number" min="0" step="1" value="0" /></label>
@@ -303,6 +306,34 @@
         </div>
         <div id="vlm-batch-list"></div>
         <div id="vlm-batch-results"></div>
+      </details>
+
+      <!-- Escalation ladder: motion/last-seen/predicted zoom crops -> YOLO ->
+           VLM detect + confirm -> VLM query (#66). On-demand only. -->
+      <details id="vlm-escalate">
+        <summary class="muted">escalation: zoom in and look again (find a missed cat)</summary>
+        <p class="help" style="font-size:13px">
+          When the normal look misses a small/distant cat, the ladder <strong>zooms in
+          where it makes sense</strong> — around recent motion, the last sighting, and a
+          CPU-predicted next position — and re-checks with YOLO first (free), asking the
+          VLM to point (<code>detect</code>) and to confirm only when the cheap rungs fail.
+          A bare VLM guess is never trusted without confirmation.
+        </p>
+        <div class="row">
+          <button id="esc-run" class="ghost" type="button" disabled>🔍 Run escalation ladder</button>
+          <label class="inline" title="off = zoom+YOLO rung only (no VLM, no GPU)"><input type="checkbox" id="esc-use-vlm" checked/> use VLM rungs</label>
+          <span id="esc-note" class="muted"></span>
+        </div>
+        <div class="row" id="esc-camera-row" hidden>
+          <label class="inline">Camera <select id="esc-camera"></select></label>
+          <button id="esc-run-camera" class="ghost" type="button">📷 Check camera now</button>
+        </div>
+        <div id="esc-results" class="hidden">
+          <p><span id="esc-verdict" class="vlm-badge"></span> <span id="esc-summary" class="muted"></span></p>
+          <table class="bench-tbl" id="esc-rungs"></table>
+          <div id="esc-crops" class="row" style="flex-wrap:wrap"></div>
+          <img id="esc-annotated" style="max-width:100%;border-radius:6px;cursor:zoom-in" alt="" />
+        </div>
       </details>
       <p class="help">
         A small <strong>vision-language model</strong> (moondream) <em>reasons</em> about

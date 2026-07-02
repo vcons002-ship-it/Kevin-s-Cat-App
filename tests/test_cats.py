@@ -34,6 +34,23 @@ def test_tracker_records_persists_and_reloads(tmp_path):
     assert again.last()["camera"] == "Garage"
 
 
+def test_sighting_source_persists_and_old_records_load(tmp_path):
+    # #66: sightings say HOW they were found (yolo default / an escalation rung).
+    path = str(tmp_path / "cats.log")
+    t = CatTracker(path=path)
+    t.record("Kitchen", (10, 10, 40, 40), (300, 300), 0.8)                # default
+    t.record("Kitchen", (10, 10, 40, 40), (300, 300), 0.7, source="vlm")  # escalated
+    again = CatTracker(path=path)
+    sources = [s.get("source") for s in again.recent()]
+    assert sources == ["vlm", "yolo"]
+    # A pre-#66 record (no "source" key) still loads; readers treat missing as yolo.
+    with open(path, "a") as fh:
+        fh.write('{"ts": 1.0, "camera": "Old", "box": [1, 1, 2, 2], "score": 0.5}\n')
+    legacy = CatTracker(path=path)
+    old = [s for s in legacy.recent() if s["camera"] == "Old"][0]
+    assert "source" not in old                       # read back untouched, no rewrite
+
+
 def test_count_since_and_clear(tmp_path):
     t = CatTracker(path=str(tmp_path / "cats.log"))
     t.record("Cam", (1, 1, 9, 9), (100, 100), 0.5, ts=time.time() - 99999)  # old
