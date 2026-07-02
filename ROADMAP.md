@@ -189,6 +189,16 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       cat re-ID embeddings (5090 benchmark before judging); **BLE collar tag** = the
       pragmatic per-cat identity (Wi-Fi CSI sensing assessed: people-tuned, new
       hardware — experiment-only, not an app feature).
+- [ ] ~~**Super-resolution before detection**~~ — **tested and rejected** (#69,
+      maintainer benchmark on the 5090): Real-ESRGAN before an unmodified YOLO
+      *reduced* recall 6–8 points at every tiling config and cost ~40× more time.
+      Mechanism: SR beautifies for humans and strips the sensor/compression
+      texture the detector's features key on — the output is out of YOLO's
+      training distribution, and the more SR changed the pixels the more recall
+      fell. The narrow escape hatch (fine-tuning a detector *on* SR'd imagery) is
+      a much larger project nobody is signing up for. Generative SR (SUPIR/InvSR)
+      untested but predicted worse (hallucinated cat texture = false positives).
+      Do not re-propose SR-before-detection; the data is in the issue.
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

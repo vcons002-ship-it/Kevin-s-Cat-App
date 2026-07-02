@@ -200,6 +200,18 @@ The endpoint returns the mosaic itself so a human can judge what the model saw.
   (espresense-style), which gives identity for free.
 - **Multi-cat counting as ground truth** — too flaky to rely on; a multi-cat hit
   is accepted opportunistically, never depended on.
+- **Super-resolution before detection** — empirically rejected (issue #69, a
+  maintainer-run benchmark on the 5090, 199 cat + 43 null images). Real-ESRGAN
+  applied per-tile before an unmodified YOLO *reduced* recall 6–8 points at
+  every config and cost ~40× the time. The mechanism matters more than the
+  number: SR optimises for human perception — it denoises and synthesises clean
+  edges — which pushes the image out of the detector's training distribution;
+  the confidence drop was monotonic with how much SR changed the pixels. The
+  precise verdict: *SR before an unmodified COCO detector hurts*; SR could help
+  a detector fine-tuned on SR'd imagery, which is a much larger project and not
+  planned. Generative SR (SUPIR/InvSR) is untested but predicted at least as
+  bad, with hallucinated-texture false positives on top. Don't re-propose this
+  without new evidence of that calibre.
 - **Wiring the ladder into the live loop now** — deferred, not rejected: it's a
   small follow-up gated on NAS validation (principles 1 and 2).
 
@@ -238,6 +250,15 @@ The endpoint returns the mosaic itself so a human can judge what the model saw.
   1. The temporal-mosaic premise — can moondream reason over a frame grid at
      all? (Prompt/tile-size iteration expected.)
   2. moondream `detect()` real-world quality and coordinate orientation.
+     **Context that raises the stakes** (issue #69, in passing): the
+     maintainer's benchmarks measured VLMs at **37–42% false positives on the
+     decoy set** — versus tuned yolo26x at 91% recall / 0% FP. Majority voting
+     reduces run-to-run *variance*, not systematic *bias*: if the model
+     reliably thinks a cat-shaped decoy is a cat, three votes agree wrongly.
+     This vindicates the ladder's never-trust-a-bare-VLM-answer rule and means
+     the pure-VLM rung 3's authority to *confirm* a sighting deserves
+     re-examination once the NAS decoy numbers are in — the likely direction
+     is demoting a votes-only "yes" from *confirmed* to *probable*.
   3. VRAM co-residency: moondream2 (~4.6 GB) + CUDA YOLO on the 8 GB 3070 (the
      ladder's confirm rung defaults to CPU YOLO for exactly this reason).
   4. Trail behaviour over hours (ghosting frequency, lighting drift).
