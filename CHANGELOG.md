@@ -9,7 +9,14 @@ everything through the latest entry is on `main`.
 
 ## [Unreleased]
 
-_Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
+### Docs
+- **`DESIGN_RATIONALE.md`** — a reviewer-facing document explaining the *why*
+  behind the architecture: the standing invariants (treat path is sacred,
+  cheap-first, never record unconfirmed claims, priors not state), the reasoning
+  behind each smart-detection slice (0.29.0–0.32.0), the ideas assessed and
+  rejected, the engineering conventions, and the open NAS-validation queue.
+  Linked from `CLAUDE.md` so any Claude session finds it. Docs only — no
+  behaviour change, no version bump.
 
 ## [0.32.0] — 2026-07-02
 
