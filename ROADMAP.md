@@ -65,7 +65,7 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
   and an optional `apt` install of `python3-venv`/`pip`.
 - **systemd** autostart instructions for OpenMediaVault.
 - **No Docker, no Frigate, no cloud.**
-- **222 automated tests**, including a detection-accuracy regression guard over
+- **251 automated tests**, including a detection-accuracy regression guard over
   45 cat images (incl. multi-cat scenes), a treat-cast regression guard, the
   YOLO11 backend (nano + medium variants, CPU/OpenCL/OpenVINO/CUDA accelerators with
   CPU fallback, a clear error — no silent fallback — when a model can't load, the
@@ -149,7 +149,33 @@ a list of **ideas, not commitments** — suggestions and PRs welcome.
       OOM/KV-cache errors, and a **multi-pass majority vote** (default 3 passes; the vote
       ratio is the honest confidence and non-unanimous frames are flagged for review) since
       moondream's yes/no wobbles run-to-run (0.28.0, #60). Optional dep, model runs on the
-      NAS. Next: `detect`-mode VLM-guided cropping → YOLO escalation.
+      NAS.
+- [x] **The escalation ladder** — "zoom in and look again" for missed small/distant cats
+      (0.29.0, #66): full-res crops around **motion blobs** (now retained with locations),
+      the **last sighting**, and a **CPU-predicted next position** → YOLO re-check (free) →
+      moondream `detect` proposes + YOLO/voted-query **confirms** (a bare VLM region never
+      records) → voted query as last resort. On-demand only (`/api/vlm/escalate` + GUI;
+      live cameras behind the off-by-default `vlm_escalation` toggle); the treat path is
+      untouched. Sightings carry a `source` tag so real use shows which rung earns its
+      keep. NAS still to verify: real `detect()` quality + VRAM co-residency.
+- [ ] **The "cat trail"** (next slice): diff the frame against the last **null**
+      (no-motion) frame so the whole cat silhouette lights up; colour by recency
+      (blue = entered → red = latest) for a path+timing visual; **trail-endpoint
+      targeting** (interior endpoint = cat didn't leave → deep-scrub that spot) and an
+      honest **"probable location"** state when detection fails but the trail ends
+      in-room. Foundations (retained, timestamped motion blobs) shipped in 0.29.0.
+- [ ] **Sighting/motion heat maps + semantic zones** — per-camera accumulated maps from
+      the existing `cats.log` boxes; named GUI-drawn zones ("the couch", doorways) for
+      semantic sightings and trail exit-detection; time-of-day priors to rank the
+      Find-My-Cat sweep (a prior, never a tracked state).
+- [ ] **Temporal VLM analysis** — frame ring buffer → frame-mosaic single query /
+      per-frame voted queries (3070-friendly) before considering true video-LLMs
+      (5090-tier experiment). Ring buffer also unlocks per-sighting event clips.
+- [ ] **Ideas parked with verdicts**: `caption()` report-card lines; `point()` as a cheap
+      presence probe; motion-adaptive tiling; scheduled "cat census" ladder sweeps;
+      cat re-ID embeddings (5090 benchmark before judging); **BLE collar tag** = the
+      pragmatic per-cat identity (Wi-Fi CSI sensing assessed: people-tuned, new
+      hardware — experiment-only, not an app feature).
 - [ ] Multiple / per-zone regions of interest.
 - [x] **Selectable YOLO11 model size** — `yolo11n` (default) or the bigger
       `yolo11m` for users with CPU headroom (0.7.0). Medium didn't beat nano on

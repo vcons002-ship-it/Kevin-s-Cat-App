@@ -261,6 +261,21 @@ person/treat path untouched:
 Tune both in the **Test detection** card against a real screenshot, then save to the
 camera.
 
+### The escalation ladder — "zoom in and look again"
+
+When even the locator misses (a curled-up cat a few pixels tall), the **escalation
+ladder** (in the Cat-presence card) does what you would: it cuts **full-resolution
+close-ups** of the places worth checking — where motion just happened, where the cat
+was last seen, and where a CPU predictor says a *moving* cat is headed — and re-runs
+the fast detector on them. Only if that fails does it ask moondream to **point**
+("where are the cats?"), and a VLM answer is **never trusted without confirmation**
+(YOLO on the crop first, the voted yes/no second — open-vocabulary pointing falls for
+cat-shaped decoys). It runs **on demand only**: on an uploaded test frame, or against
+a live camera behind the off-by-default **Live-camera escalation** setting — the
+treat path never touches it. Confirmed finds are logged as sightings tagged with the
+rung that found them, so real use shows whether the free zoom or the VLM earns its
+keep. (VLM rungs need the optional moondream + a GPU/key; the zoom rung is pure CPU.)
+
 ### Watching lots of cameras without melting the CPU (round-robin)
 
 Each watched camera adds about one camera's load. **Round-robin** (a toggle under the

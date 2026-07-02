@@ -241,6 +241,18 @@ class MotionPrefilter:
         self.min_blob_px = min_blob_px
         self._prev = None
         self._kernel = None
+        # WHERE the last update saw motion (the escalation ladder's "look here"
+        # hints, #66-era data we used to throw away): up to _max_blobs solid-blob
+        # boxes as (x1, y1, x2, y2) ints in the same (ROI-cropped) frame coords the
+        # detections use, largest first, plus the wall-clock time of that update.
+        # Includes sub-min-area blobs — a distant cat's small mover is exactly the
+        # hint the zoom rung wants — but never thin lines/specks (min_blob_px still
+        # applies), and the motion VERDICT below is unchanged. The list is rebound
+        # on each update, never mutated, so readers on other threads may hold a
+        # stale-but-consistent list without a lock.
+        self.last_blobs: list = []
+        self.last_blobs_ts: float = 0.0
+        self._max_blobs = 8
 
     def update(self, gray) -> bool:
         import cv2  # local import: keep module importable without OpenCV
@@ -251,6 +263,7 @@ class MotionPrefilter:
         clean = cv2.medianBlur(gray, 5)
         if self._prev is None:
             self._prev = clean
+            self.last_blobs = []
             return False
         delta = cv2.absdiff(self._prev, clean)
         self._prev = clean
@@ -264,13 +277,20 @@ class MotionPrefilter:
         contours, _ = cv2.findContours(
             thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
+        moved = False
+        blobs = []                                # (area, (x1, y1, x2, y2))
         for c in contours:
-            if cv2.contourArea(c) < min_area:
+            x, y, bw, bh = cv2.boundingRect(c)
+            if min(bw, bh) < self.min_blob_px:    # thin line/speck — not even a hint
                 continue
-            _, _, bw, bh = cv2.boundingRect(c)
-            if min(bw, bh) >= self.min_blob_px:   # a real blob, not a thin line
-                return True
-        return False
+            area = cv2.contourArea(c)
+            blobs.append((area, (x, y, x + bw, y + bh)))
+            if area >= min_area:                  # the original verdict, unchanged
+                moved = True
+        blobs.sort(key=lambda t: -t[0])
+        self.last_blobs = [b for _, b in blobs[:self._max_blobs]]
+        self.last_blobs_ts = time.time()
+        return moved
 
 
 class PersonDetector:
@@ -679,6 +699,31 @@ class PersonDetector:
         """
         with self._live_lock:
             return self._cat_last_seen
+
+    def motion_hint_boxes(self) -> list:
+        """WHERE motion last happened: ``[(x1, y1, x2, y2)]`` in the same
+        (ROI-cropped) frame coords the detections use, largest blob first.
+
+        The escalation ladder's "look here" hints (#66). Lock-free: the prefilter
+        rebinds (never mutates) ``last_blobs`` each update, so a reader on another
+        thread sees a stale-but-consistent list — the same pattern as the loop's
+        ``_detectors`` dict.
+        """
+        return self._motion.last_blobs
+
+    def motion_hint_ts(self) -> float:
+        """Wall-clock time of the last motion-blob update (0.0 if never)."""
+        return self._motion.last_blobs_ts
+
+    def latest_frame(self):
+        """A copy of the most recent raw frame (camera-native, pre-ROI), or None.
+
+        The on-demand escalation ladder inspects this; the copy detaches the caller
+        from the capture thread swapping the buffer (same as :meth:`live_jpeg`).
+        """
+        with self._live_lock:
+            frame = self._live_frame
+        return None if frame is None else frame.copy()
 
     def _publish_frame(self, frame) -> None:
         """Store the latest raw frame for the live feed and bump the version."""

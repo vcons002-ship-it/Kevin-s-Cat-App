@@ -85,6 +85,45 @@ def test_motion_prefilter_triggers_on_solid_blob():
     assert mp.update(moved) is True
 
 
+# --- motion blob retention: the escalation ladder's "look here" hints (#66) ----
+
+def test_motion_blobs_retained_with_location():
+    mp = detector.MotionPrefilter()
+    base = np.full((360, 640), 110, dtype=np.uint8)
+    assert mp.update(base) is False and mp.last_blobs == []   # first frame: no hints
+    moved = base.copy()
+    moved[120:300, 250:360] = 255
+    assert mp.update(moved) is True
+    assert len(mp.last_blobs) == 1 and mp.last_blobs_ts > 0
+    x1, y1, x2, y2 = mp.last_blobs[0]
+    # the retained box covers the moving blob (median blur shifts edges a little)
+    assert x1 <= 255 and x2 >= 355 and y1 <= 125 and y2 >= 295
+
+
+def test_small_mover_is_a_hint_but_not_a_motion_verdict():
+    # A blob below min_area_frac (the distant-cat case) must NOT trip motion,
+    # but MUST be retained as an escalation hint — the new hint/verdict split.
+    mp = detector.MotionPrefilter(min_area_frac=0.05, min_blob_px=10)
+    base = np.full((360, 640), 110, dtype=np.uint8)
+    mp.update(base)
+    moved = base.copy()
+    moved[100:140, 100:140] = 255                      # 40x40: solid but small
+    assert mp.update(moved) is False                    # verdict unchanged
+    assert len(mp.last_blobs) == 1                      # ...yet the hint survives
+
+
+def test_static_frame_clears_blob_hints():
+    mp = detector.MotionPrefilter()
+    base = np.full((360, 640), 110, dtype=np.uint8)
+    mp.update(base)
+    moved = base.copy()
+    moved[120:300, 250:360] = 255
+    mp.update(moved)
+    assert mp.last_blobs
+    mp.update(moved.copy())                             # no change now
+    assert mp.last_blobs == []
+
+
 # --- PersonDetector tuning + cooldown pause -----------------------------------
 
 def test_detector_forwards_motion_params_and_label_floor():

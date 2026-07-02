@@ -81,6 +81,7 @@ dont_interrupt_playback: false   # if true, skip the chime when the speaker is a
 
 # --- VLM (moondream) cat-presence tester ---
 moondream_api_key: ''     # paste in the GUI instead — authenticates the one-time local weight download AND cloud inference. Never logged; never sent back to the browser. Env MOONDREAM_API_KEY also works.
+vlm_escalation: false     # allow the "find the cat" escalation ladder (zoom crops -> YOLO -> VLM detect/query) to run against LIVE cameras on demand. The fast treat path never uses it; Test-tool escalation on uploads works regardless.
 
 # --- Servers ---
 web_port: 8080            # the GUI

@@ -107,6 +107,7 @@ class Config:
 
     # --- VLM (moondream) cat-presence tester ---
     moondream_api_key: str = ""      # paste once in the GUI; authenticates the one-time local weight download AND cloud inference. Never logged; masked in the API. Env MOONDREAM_API_KEY also works (headless).
+    vlm_escalation: bool = False     # allow the "find the cat" escalation ladder (zoom crops -> YOLO -> VLM detect/query) to run against LIVE cameras on demand. Off by default; the fast treat path never touches it, and Test-tool escalation on uploaded frames works regardless of this flag.
 
     # --- Server ---
     web_port: int = 8080
