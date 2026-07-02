@@ -33,6 +33,10 @@ def main() -> int:
     ap.add_argument("--imgsz", type=int, default=960,
                     help="square input size to export at (e.g. 960, 1280)")
     ap.add_argument("--opset", type=int, default=12)
+    ap.add_argument("--half", action="store_true",
+                    help="export FP16 weights (benchmark #70: ~0 accuracy cost, up to "
+                         "2.2x faster on CUDA; verified with onnxruntime-CUDA — cv2.dnn "
+                         "FP16 handling is unverified). Output stem gains _fp16.")
     ap.add_argument("--out", default=None,
                     help="output filename stem (default: <model> for a native-size "
                          "export, else <model>_<imgsz>). e.g. --out yolo26x")
@@ -55,10 +59,18 @@ def main() -> int:
     head = model.model.model[-1]
     if hasattr(head, "end2end"):
         head.end2end = False
-    out = model.export(format="onnx", imgsz=args.imgsz, opset=args.opset, simplify=True)
+    # The golden recipe (#70 §2 / #71): raw head forced above (end2end=False), plus
+    # explicit nms=False / dynamic=False / batch=1 so nothing re-bakes an NMS head.
+    # A good export's output is (1, 84, N) with no NMS/TopK ops; (1, 300, 6) + TopK
+    # is a bad one (the app now refuses to decode those).
+    out = model.export(format="onnx", imgsz=args.imgsz, opset=args.opset,
+                       simplify=True, dynamic=False, batch=1, nms=False,
+                       half=bool(args.half))
 
     base = args.model[:-3] if args.model.endswith(".pt") else args.model
     stem = args.out if args.out else f"{base}_{args.imgsz}"
+    if args.half and not stem.endswith("_fp16"):
+        stem += "_fp16"
     dest = os.path.join(_MODELS_DIR, f"{stem}.onnx")
     os.makedirs(_MODELS_DIR, exist_ok=True)
     os.replace(out, dest)

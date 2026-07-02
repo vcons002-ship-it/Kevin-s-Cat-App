@@ -11,6 +11,43 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.35.0] — 2026-07-02
+
+### Changed
+- **Benchmark-settled model lineup** (#71, from the authoritative benchmark #70):
+  the selectable models are now **26x** (workhorse: 91% recall / 0% FP at
+  3×3/0.20), **26m** (lightweight: 82%/0% at 2×2/0.20) and **11n** (floor:
+  75%/0%), plus **FP16 variants** of the 26-series (identical accuracy, up to
+  2.2× faster on CUDA; export with `scripts/export_yolo.py --half`; pair with
+  the auto/CUDA accelerator — `cv2.dnn` FP16 handling is unverified). Dropped:
+  11m (beaten by golden 26m) and its `_960`/`_1280` locator exports — their
+  registry entries survive so **old configs keep loading**; they just can't be
+  picked for new ones. Model labels + the `selectable` flag now live in the
+  `yolo.MODELS` registry — one source for every dropdown and the sweep (#50).
+- **Golden-export guard** (#71/#70 §2): the decoder now **refuses** an end2end
+  (NMS-baked, `(1, 300, 6)`) ONNX head with a clear error naming the fix,
+  instead of silently mis-decoding it and quietly costing 4–9 recall points —
+  the exact failure that skewed the earlier `.pt`-era model decisions.
+  `scripts/export_yolo.py` now passes the full golden recipe explicitly
+  (`end2end=False, nms=False, dynamic=False, batch=1`).
+- **`auto` accelerator, now the default** (#71): CUDA when it genuinely binds —
+  reusing the verified-provider check, so auto can never silently run slow —
+  else CPU with a loud log line. NAS-verified CUDA is what makes the heavier
+  models everyday-runnable; a machine without a GPU still works and says so.
+- **Benchmark-settled scan defaults** (#70 §5): still-cat scan tiling default
+  **4×4 → 3×3**, tile overlap **0.2 → 0.35** — 3×3/0.20-0.35 is the clean
+  recall-per-ms winner; 4×4 adds ~1 cat at 1.7× the latency and high-overlap
+  4×4 buys recall with false positives.
+
+### Notes
+- Suite: **292 tests** (+5: end2end head refused with an actionable error, raw
+  head still decodes, auto-accelerator CPU fallback, dropped models excluded
+  from the picker while their registry entries survive, new defaults).
+- NAS follow-ups: re-export the deployed models with the golden recipe (the
+  guard will catch any bad one at first use), produce the FP16 exports, and let
+  `auto` pick CUDA — `run.py`'s LD_LIBRARY_PATH handling already covers the
+  torch-lib path trick.
+
 ## [0.34.0] — 2026-07-02
 
 ### Added

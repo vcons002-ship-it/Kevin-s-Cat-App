@@ -9,14 +9,14 @@ odd poses (it scored 0.00 on a real dim night frame). YOLO11n scored ~0.87 on th
 same frame — a much better night/occlusion detector — so SSD was dropped entirely
 in 0.25.0 (#57) and YOLO is now the only backend.
 
-Two variants are available (see :data:`MODELS`):
+The selectable lineup is benchmark-settled (#70/#71; see :data:`MODELS`):
 
-- ``yolo11n`` — nano at 320x320 (~11 MB, ~28 ms/frame). The default; it already
-  handles the night case well.
-- ``yolo11m`` — medium at 640x640 (~77 MB, ~500 ms/frame on CPU). Bigger and
-  slower; on our own night/day frames it did **not** beat nano on the night case
-  that motivated it, so it's offered as an option, not the default. Worth trying
-  if you have CPU headroom and want the extra capacity on hard scenes.
+- ``yolo26x`` — the workhorse: 91% recall / 0% FP at 3×3/0.20 tiling. Export-only
+  (~213 MB); FP16 makes it the everyday pick on CUDA (167 ms warm on a 3070).
+- ``yolo26m`` — the lightweight: 82%/0% at 2×2/0.20, 64 ms FP16.
+- ``yolo11n`` — the floor: 75%/0% at 3×3, tiny and CPU-friendly. The default.
+- ``yolo11m`` variants remain loadable for old configs but aren't selectable —
+  golden-exported 26m beats 11m (#71 reversed the earlier ``.pt``-era call).
 
 Each model is exported from its Ultralytics ``*.pt`` to a fixed-size ONNX (see
 d20app/models/README.md). Raw output is ``(1, 84, N)``: 4 box coords (cx, cy, w,
@@ -42,7 +42,10 @@ letterbox + NMS decode below is shared. ``load_net`` returns a small *runner*
 
 from __future__ import annotations
 
+import logging
 import os
+
+_log = logging.getLogger(__name__)
 
 # COCO-80 class names in model order. Index 0 is "person", 15 is "cat" — the two
 # the app cares about; the rest are named in the activity log like any mover.
@@ -65,22 +68,38 @@ _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 
 # Known YOLO variants → their exported ONNX file and the fixed input size that
 # file was exported at (must match, or the net errors / decodes garbage).
+# The benchmark-settled lineup (#70/#71, full 199-cat + 43-null set, golden exports):
+# 26x = workhorse (91% recall / 0% FP @ 3×3/0.20), 26m = lightweight (82%/0% @
+# 2×2/0.20), 11n = floor (75%/0%). 11m and 26n were dropped — with the golden export
+# 26m beats 11m and 11n beats 26n (11x was tested and rejected: FP-prone). Dropped
+# models keep registry entries (``selectable: False``) so a saved camera naming one
+# still loads; they just can't be picked for new configs. FP16 exports cost ~0
+# accuracy and run up to 2.2× faster on CUDA (#70 §4) — benchmark-verified on
+# onnxruntime-CUDA only; cv2.dnn's handling of FP16 weights is NOT verified, so use
+# them with the auto / onnx-cuda accelerators. Every model must be GOLDEN-exported:
+# raw (1, 84, N) head, no NMS/TopK ops (end2end=False — scripts/export_yolo.py);
+# an end2end (1, 300, 6) export mis-decodes and detect_boxes() now rejects it loudly.
+# Files not committed (26x, fp16 variants) appear in the picker once exported.
 MODELS = {
-    "yolo11n": {"file": "yolo11n.onnx", "size": 320},
-    "yolo11m": {"file": "yolo11m.onnx", "size": 640},
-    # Larger-input exports for the high-resolution "locator" scan (Option A). These
-    # ONNX files aren't committed by default — run scripts/export_yolo.py to produce
-    # them (see models/README.md). Until present, selecting one falls back gracefully.
-    "yolo11m_960": {"file": "yolo11m_960.onnx", "size": 960},
-    "yolo11m_1280": {"file": "yolo11m_1280.onnx", "size": 1280},
-    # YOLO26 (same COCO lineage as YOLO11, tuned for small objects). It must be
-    # exported with the **raw detection head** (end2end=False) — YOLO26 is NMS-free
-    # by default and its end-to-end export emits a (1,300,6) tensor that cv2.dnn
-    # mis-decodes; the raw head is the familiar (1,84,N), so the decode below is
-    # unchanged. ``yolo26m`` (~79 MB) ships; ``yolo26x`` (~213 MB) is too big to
-    # commit — export it locally (scripts/export_yolo.py), graceful fallback if absent.
-    "yolo26m": {"file": "yolo26m.onnx", "size": 640},
-    "yolo26x": {"file": "yolo26x.onnx", "size": 640},
+    "yolo11n": {"file": "yolo11n.onnx", "size": 320,
+                "label": "YOLO11n (320) — floor, lowest CPU", "selectable": True},
+    "yolo26m": {"file": "yolo26m.onnx", "size": 640,
+                "label": "YOLO26m (640) — lightweight", "selectable": True},
+    "yolo26m_fp16": {"file": "yolo26m_fp16.onnx", "size": 640,
+                     "label": "YOLO26m FP16 (640) — lightweight, CUDA",
+                     "selectable": True},
+    "yolo26x": {"file": "yolo26x.onnx", "size": 640,
+                "label": "YOLO26x (640) — workhorse", "selectable": True},
+    "yolo26x_fp16": {"file": "yolo26x_fp16.onnx", "size": 640,
+                     "label": "YOLO26x FP16 (640) — workhorse, CUDA",
+                     "selectable": True},
+    # Legacy (dropped by #71): loadable for existing configs, not selectable for new.
+    "yolo11m": {"file": "yolo11m.onnx", "size": 640,
+                "label": "YOLO11m (640) — legacy", "selectable": False},
+    "yolo11m_960": {"file": "yolo11m_960.onnx", "size": 960,
+                    "label": "YOLO11m (960) — legacy locator", "selectable": False},
+    "yolo11m_1280": {"file": "yolo11m_1280.onnx", "size": 1280,
+                     "label": "YOLO11m (1280) — legacy locator", "selectable": False},
 }
 DEFAULT_VARIANT = "yolo11n"
 
@@ -88,7 +107,8 @@ DEFAULT_VARIANT = "yolo11n"
 #   cpu / opencl                 — OpenCV cv2.dnn (CPU, or an OpenCL iGPU target)
 #   openvino-gpu / openvino-auto — Intel OpenVINO runtime (iGPU)
 #   onnx-cuda                    — onnxruntime-gpu on an NVIDIA GPU (CUDAExecutionProvider)
-ACCELERATORS = ("cpu", "opencl", "openvino-gpu", "openvino-auto", "onnx-cuda")
+#   auto                         — onnx-cuda when it genuinely binds, else CPU (loudly)
+ACCELERATORS = ("auto", "cpu", "opencl", "openvino-gpu", "openvino-auto", "onnx-cuda")
 
 # Back-compat aliases for the single-model era (some tests/callers import these).
 ONNX_PATH = os.path.join(_MODELS_DIR, MODELS[DEFAULT_VARIANT]["file"])
@@ -229,8 +249,20 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
         raise FileNotFoundError(
             f"YOLO model {os.path.relpath(path)} is missing. "
             "See d20app/models/README.md to export it, or pick a bundled model "
-            "(yolo11n / yolo11m / yolo26m) in the GUI."
+            "(yolo11n / yolo26m) in the GUI."
         )
+
+    if accel == "auto":
+        # The benchmark-settled default (#71): CUDA when it genuinely binds —
+        # the runner below verifies the provider actually selected, so "auto"
+        # can never silently run slow — else CPU, said out loud.
+        try:
+            return _OnnxRuntimeRunner(path)
+        except Exception as exc:            # noqa: BLE001 — any CUDA absence → CPU
+            _log.warning(
+                "accelerator 'auto': CUDA unavailable (%s) — running %s on CPU",
+                exc, variant)
+            return _CvDnnRunner(cv2.dnn.readNetFromONNX(path))
 
     if accel in ("openvino-gpu", "openvino-auto"):
         device = "GPU" if accel == "openvino-gpu" else "AUTO"
@@ -297,6 +329,17 @@ def detect_boxes(net, frame, floor: float, size: int = INPUT_SIZE) -> list:
     else:                                     # back-compat: a bare cv2.dnn net
         net.setInput(blob)
         out = net.forward()
+    # Golden-export guard (#71): this decoder reads the RAW (1, 84, N) head. An
+    # end2end export (YOLO26's default) emits (1, 300, 6) — NMS baked in — which
+    # this decode silently mis-reads as garbage scores, quietly costing 4–9 recall
+    # points. Refuse it loudly instead.
+    if getattr(out, "ndim", 0) != 3 or out.shape[1] > out.shape[2]:
+        raise RuntimeError(
+            f"YOLO output shape {getattr(out, 'shape', None)} is not the raw "
+            "(1, 84, N) detection head — this looks like an end2end (NMS-baked) "
+            "export, which mis-decodes here. Re-export with end2end=False (the "
+            "golden recipe: scripts/export_yolo.py, issue #71)."
+        )
     out = np.squeeze(out, 0).T                 # (N, 84): [cx, cy, w, h, 80 class scores]
     class_scores = out[:, 4:]
     class_ids = class_scores.argmax(axis=1)

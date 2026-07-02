@@ -191,29 +191,18 @@ _BENCH_LOCK = threading.Lock()
 _BENCH_MAX_REPORTS = 40         # hold a full batch (per-image reports + summary) at once
 _BENCH_TILINGS = ["off", "2x2", "3x3", "4x4"]
 _BENCH_MAX_RUNS = 24            # cap the matrix so one request can't run forever
-# Selectable detection models with display labels. This is the SINGLE source for the
-# benchmark sweep AND every GUI model dropdown, so a hand-maintained list can't drift
-# from the registry again (#50 — the YOLO26 entries reached the sweep but not the live
-# picker, the mirror of the earlier "SSD variants missing from the sweep" bug).
-_YOLO_OPTIONS = [
-    ("yolo11n", "YOLO11n (320) — low light, rec."),
-    ("yolo11m", "YOLO11m (640) — heavier"),
-    ("yolo11m_960", "YOLO11m (960) — max"),
-    ("yolo11m_1280", "YOLO11m (1280)"),
-    ("yolo26m", "YOLO26m (640) — newer, small-object"),
-    ("yolo26x", "YOLO26x (640) — heaviest"),
-]
-
-
 def _model_options() -> list:
-    """``[{value, label}]`` for every selectable model: the YOLO variants whose ONNX is
-    actually present (export-only ones like yolo26x/yolo11m_1280 appear only once their
-    file exists, so the picker never offers a model that can't load). Order =
-    lightest-to-heaviest."""
+    """``[{value, label}]`` for every selectable model, straight from the registry
+    (labels + the ``selectable`` flag live in ``yolo.MODELS`` — one source, no drift;
+    #50, #71). Only present ONNX files are offered (export-only ones like yolo26x /
+    the fp16 variants appear once their file exists), and #71's dropped models
+    (11m and friends) are registered-but-not-selectable: old configs load, new
+    configs can't pick them. Order = the registry's lightest-to-heaviest."""
     from . import yolo
 
-    return [{"value": v, "label": lbl} for v, lbl in _YOLO_OPTIONS
-            if v in yolo.MODELS and os.path.exists(yolo.model_path(v))]
+    return [{"value": v, "label": m.get("label", v)}
+            for v, m in yolo.MODELS.items()
+            if m.get("selectable", True) and os.path.exists(yolo.model_path(v))]
 
 
 def _benchmark_models():

@@ -52,8 +52,8 @@ class Config:
     cooldown_seconds: int = 600      # frequency interval between rolls
 
     # --- Detection tuning ---
-    detector_model: str = "yolo11n"  # "yolo11n" (better low-light/odd-pose, default) or a heavier YOLO variant (yolo11m / yolo11m_960 / yolo26m / ...). MobileNet-SSD was removed in 0.25.0 (YOLO won every benchmark); a model that can't load now raises a clear error rather than silently falling back.
-    accelerator: str = "cpu"         # where the YOLO model runs: "cpu" (default), "opencl" (iGPU via OpenCL, no extra deps), "openvino-gpu"/"openvino-auto" (Intel OpenVINO, needs the optional 'openvino' pkg + Intel GPU drivers), or "onnx-cuda" (NVIDIA GPU via the optional 'onnxruntime-gpu' CUDA-12 build; ~37x faster than CPU). Auto-falls back to CPU if a GPU backend can't start — and onnx-cuda raises loudly rather than silently running on CPU.
+    detector_model: str = "yolo11n"  # the benchmark-settled lineup (#70/#71): "yolo11n" (floor, default), "yolo26m" (lightweight), "yolo26x"/fp16 variants (workhorse, export-only). Dropped models (yolo11m/...) still load from old configs but aren't selectable. A model that can't load raises a clear error rather than silently falling back.
+    accelerator: str = "auto"        # where the YOLO model runs: "auto" (default, #71: CUDA when it genuinely binds — verified, never a silent CPU fallback — else CPU, logged loudly), "cpu", "opencl" (iGPU via OpenCL), "openvino-gpu"/"openvino-auto" (Intel OpenVINO, optional 'openvino' pkg), or "onnx-cuda" (NVIDIA via optional 'onnxruntime-gpu' CUDA-12 build; raises loudly if CUDA doesn't bind).
     person_confidence: float = 0.5   # min DNN confidence to count as a person (0.5: clean person/cat split on stills, keeps hard poses ≥0.71)
     confirm_frames: int = 4          # require a person in this many frames in a row (4 guards against a moving cat's transient high-confidence spike)
     detect_size: int = 300           # legacy MobileNet-SSD net input size — ignored since 0.25.0 (YOLO uses its exported size). Kept so old configs still load; pick model resolution via the model name (e.g. yolo11m_960).
@@ -84,8 +84,8 @@ class Config:
     # --- Locator resolution (the still-cat scan only; the fast treat path is untouched).
     # A sleeping cat shrunk into a 640 frame can be too small to detect at all; tiling
     # and/or a larger input give the locator scan more effective resolution. ---
-    cat_scan_tiling: str = "4x4"     # "off" | "2x2" | "3x3" | "4x4" — split the frame into an overlapping grid, detect per tile, merge (more tiles = catches smaller cats, more CPU). Default 4x4 (what actually resolves a small/sleeping cat in testing).
-    cat_scan_tile_overlap: float = 0.2   # fraction each tile overlaps its neighbour so a cat on a seam still lands whole in one tile
+    cat_scan_tiling: str = "3x3"     # "off" | "2x2" | "3x3" | "4x4" — split the frame into an overlapping grid, detect per tile, merge. Default 3x3 per the full benchmark (#70): 26x@3x3 = 91%/0% FP; 4x4 adds ~1 cat at 1.7x the latency (and high-overlap 4x4 buys recall with false positives).
+    cat_scan_tile_overlap: float = 0.35  # fraction each tile overlaps its neighbour so a cat on a seam still lands whole in one tile. Benchmark-settled (#70): 3x3 is best at 0.35 (2x2 prefers 0.20).
     cat_scan_imgsz: int = 0          # locator input size: 0 = native model size. YOLO needs a matching exported model (e.g. yolo11m_960.onnx) or this falls back to native + tiling
     cat_scan_frames: int = 3         # still-cat scan only: average this many back-to-back frames before the net (sensor noise drops ~sqrt(N) on a still scene — helps dim/noisy frames; any motion mid-burst falls back to the single frame). 1 = off; capped at 8. The fast treat path never averages.
 
