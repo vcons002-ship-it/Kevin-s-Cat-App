@@ -11,6 +11,49 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.36.0] — 2026-07-02
+
+### Fixed
+- **VLM batch ignored the user's prompt** (#72): the batch path ran a baked-in
+  prompt no matter what the prompt box said (the "rhino?" test failed), making
+  batch prompt-testing impossible. The batch now threads the user's prompt to
+  the model exactly like the single-image path; blank falls back to the model's
+  validated default.
+
+### Changed
+- **Validated default prompt (P6)** (#72): the default is now the bake-off
+  winner — *"Ignore plush toys, statues, paintings, reflections, and empty cat
+  beds. Is a real live cat visible in this image? Answer with exactly Yes or
+  No."* — 97% recall / 2% FP on the full set (prompts without the negative
+  exclusions scored 20–73% FP). Every prompt should end with an explicit
+  yes/no instruction so the verdict parser can vote on the output.
+- **Prompts are model-specific** (#74): per-model defaults live in
+  `MODEL_PROMPTS` (moondream3 gets a deliberately short, *unvalidated* form —
+  P6 on M3 produced ~100% FP). The GUI swaps the default on a model switch and
+  shows a warning when a custom prompt is carried across models.
+- **Upload/test-queue cap 100 → 1000** (#73): a full benchmark set (199 cats +
+  43 nulls) now runs in one pass. This is the app-level upload queue only —
+  moondream's `max_batch_size`/`kv_cache_pages` VRAM params are untouched
+  (raising those OOMs the 8 GB card), and a test asserts they stay put.
+
+### Added
+- **📍 Where? — detect mode in the tester** (#75): `POST /api/vlm/locate` runs
+  moondream's `detect` on the picked frame and draws the proposed regions —
+  the diagnostic for false-positive frames ("what feature is it locking
+  onto?"), which informs better exclusion prompts. Purely informational:
+  nothing is recorded (a bare detect region is never trusted — 0.33.0 rules).
+- **Reasoning toggle for moondream3** (#76): `query()` was always called
+  without `reasoning`, so M3 ran in its weaker non-reasoning mode. A
+  *Reasoning (M3)* checkbox now passes `reasoning=True` through the single,
+  voted, and batch paths; the reasoning text is surfaced with the response.
+  No effect on moondream2; staying compatible with models whose `query()`
+  lacks the kwarg is tested.
+
+### Notes
+- Suite: **300 tests** (+8). The P6 numbers (97%/2%) are the maintainer's
+  full-set measurements (#70 §6, moondream2 local); the M3 default prompt is
+  explicitly unvalidated — M3 remains cloud-only and not the deployment pick.
+
 ## [0.35.0] — 2026-07-02
 
 ### Changed
