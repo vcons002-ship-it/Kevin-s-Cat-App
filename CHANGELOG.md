@@ -11,6 +11,25 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.43.0] — 2026-07-03
+
+### Added
+- **TensorRT accelerator** (#82, opt-in): a `tensorrt` option loads a prebuilt,
+  GPU-specific `.engine` — measured by the issue at **1.6×** the onnx-cuda
+  workhorse on the NAS 3070 (175 ms → 111 ms at 3×3/0.20, identical 91%/0%;
+  26m 1.37×, 11n 1.21×). Engines are a cached one-time build per machine
+  (`models/export_trt_engine.py`, golden `end2end=False` head, FP16 default),
+  never rebuilt per launch. **Driver guard:** TensorRT needs a CUDA-13-capable
+  driver, and installing it on an older one breaks the torch stack — the app
+  checks `nvidia-smi`'s driver capability *first*, refuses with instructions,
+  and never pip-installs anything itself. Any failure (driver, package,
+  engine) logs why and falls back to `auto` (verified CUDA, else CPU) — same
+  model, same accuracy, just slower. onnx-cuda/`auto` remains the default;
+  switching the default to TensorRT waits on live NAS results, per the issue.
+  *(NAS: build engines, then compare a few frames' boxes vs onnx-cuda — the
+  runner is written against the TensorRT 10 API but has not run on real
+  hardware from this app; also watch VRAM with moondream resident.)*
+
 ## [0.42.1] — 2026-07-03
 
 ### Changed
