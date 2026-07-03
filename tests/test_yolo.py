@@ -39,8 +39,8 @@ def test_persondetector_yolo_detects_people():
 
 
 # The bundled variants ship their ONNX; the larger-input locator exports
-# (yolo11m_960/_1280) are optional and produced on demand by scripts/export_yolo.py.
-_BUNDLED_VARIANTS = ("yolo11n", "yolo11m", "yolo26m")
+# (yolo26x / fp16 variants) are optional and produced on demand by export_yolo.py.
+_BUNDLED_VARIANTS = ("yolo11n", "yolo26m")
 _CATS = sorted(glob.glob(os.path.join(FIXTURES, "cats", "*.jpg")))
 
 
@@ -59,17 +59,37 @@ def test_load_net_rejects_unknown_variant():
         yolo.load_net("yolo11xl")
 
 
-def test_yolo11m_loads_and_finds_a_person():
-    net = yolo.load_net("yolo11m")
+def test_dropped_models_raise_actionable_errors():
+    # #79: naming a dropped model is a loud config error, not a silent worse
+    # detector — the 0.25.0 no-silent-fallback stance applied consistently.
+    import pytest
+
+    for name in ("yolo11m", "yolo11m_960", "yolo26n", "yolo11x"):
+        with pytest.raises(ValueError) as exc:
+            yolo.load_net(name)
+        assert "#7" in str(exc.value) and "yolo26m" in str(exc.value)
+
+
+def test_yolo26m_loads_and_finds_a_person():
+    net = yolo.load_net("yolo26m")
     img = cv2.imread(PEOPLE[0])
-    boxes = yolo.detect_boxes(net, img, floor=0.25, size=yolo.input_size("yolo11m"))
-    assert any(b[0] == "person" for b in boxes), "yolo11m found no person in a clear photo"
+    boxes = yolo.detect_boxes(net, img, floor=0.25, size=yolo.input_size("yolo26m"))
+    assert any(b[0] == "person" for b in boxes), "yolo26m found no person in a clear photo"
 
 
-def test_persondetector_yolo11m_detects_a_person():
-    det = PersonDetector(source="unused", confidence=0.4, model="yolo11m")
+def test_persondetector_dropped_model_is_fatal_not_retried():
+    import pytest
+
+    det = PersonDetector(source="unused", model="yolo11m")
+    with pytest.raises(FileNotFoundError) as exc:   # the loop's fatal-stop path
+        det._ensure_net()
+    assert "dropped" in str(exc.value)
+
+
+def test_persondetector_yolo26m_detects_a_person():
+    det = PersonDetector(source="unused", confidence=0.4, model="yolo26m")
     assert det.detect_in_frame(cv2.imread(PEOPLE[0])) is True
-    assert det.model == "yolo11m" and det._yolo_size == 640
+    assert det.model == "yolo26m" and det._yolo_size == 640
 
 
 def test_yolo26m_raw_head_decodes_and_finds_a_cat():
@@ -189,8 +209,9 @@ def test_onnx_output_decodes_identically_to_cv2dnn():
             return sess.run(None, {name: blob})[0]
 
     frame = cv2.imread(PEOPLE[0])
-    b_cv = yolo.detect_boxes(yolo.load_net("yolo11n", "cpu"), frame, 0.3, size=320)
-    b_ort = yolo.detect_boxes(_OrtCpu(), frame, 0.3, size=320)
+    size = yolo.input_size("yolo11n")               # fixed-shape export (640 since #80)
+    b_cv = yolo.detect_boxes(yolo.load_net("yolo11n", "cpu"), frame, 0.3, size=size)
+    b_ort = yolo.detect_boxes(_OrtCpu(), frame, 0.3, size=size)
     # same labels, and scores match to 3 dp (same weights, same decode)
     assert [l for l, _, _ in b_cv] == [l for l, _, _ in b_ort]
     assert [round(s, 3) for _, s, _ in b_cv] == [round(s, 3) for _, s, _ in b_ort]

@@ -104,6 +104,63 @@ def test_null_refresh_absorbs_settled_scene():
     assert t.endpoint(now=10.1)["ts"] == before    # nothing new painted
 
 
+# ---- 0.39.0: flood guard, blob hygiene, route path, live overlay --------------
+def test_global_lighting_change_resets_null_instead_of_flooding():
+    # The first NAS screenshot: an exposure shift made the WHOLE frame differ from
+    # the null and the room was flood-stamped green. Now: a global change re-adopts
+    # the scene as the new null and stamps NOTHING.
+    t = TrailTracker()
+    t.update(BASE, False, now=0.0)
+    flood = np.full_like(BASE, 200)              # everything got brighter
+    t.update(flood, True, now=5.0)
+    assert not t.has_trail() and t.endpoint(now=5.1) is None
+    # the flooded scene became the new null: a real blob on it stamps normally
+    blob = flood.copy()
+    blob[100:180, 280:360] = 60
+    t.update(blob, True, now=6.0)
+    ep = t.endpoint(now=6.1)
+    assert ep and 260 <= ep["box"][0] <= 290     # just the blob, not the room
+
+
+def test_oversized_blob_is_not_an_animal():
+    # A single blob covering ~30% of the frame (below the global-change guard but
+    # far bigger than a cat) is filtered by the silhouette-size ceiling.
+    t = TrailTracker()
+    t.update(BASE, False, now=0.0)
+    big = BASE.copy()
+    big[:, :192] = 220                           # 30% of a 640-wide frame
+    t.update(big, True, now=5.0)
+    assert not t.has_trail()
+
+
+def test_route_path_is_recorded_and_rendered_with_legend():
+    t = TrailTracker()
+    t.update(BASE, False, now=0.0)
+    t.update(_blob(80, 100, 160, 180), True, now=1.0)
+    t.update(_blob(280, 100, 360, 180), True, now=3.0)
+    assert len(t._path) == 2                     # one centroid per stamped frame
+    frame = np.full((360, 640, 3), 110, np.uint8)
+    out = t.render(frame, now=3.5)
+    assert out is not None and out.shape == frame.shape
+    # the legend's black backing plate sits at the bottom-left
+    assert out[352, 10].tolist() != frame[352, 10].tolist()
+
+
+def test_live_jpeg_trail_overlay():
+    det = PersonDetector(source="unused")
+    frame = np.full((360, 640, 3), 110, np.uint8)
+    det._publish_frame(frame)
+    plain = det.live_jpeg()
+    assert plain and det.live_jpeg(trail=True) == plain   # no trail yet → plain feed
+    gray = frame[:, :, 0].copy()
+    det._trail.update(gray, False)
+    blob = gray.copy()
+    blob[100:180, 280:360] = 220
+    det._trail.update(blob, True)
+    overlaid = det.live_jpeg(trail=True)
+    assert overlaid and overlaid != det.live_jpeg()       # ribbon + legend drawn
+
+
 # ---- live wiring: detector + escalate probable tier + /api/trail -------------
 def _running_loop_with_fake_camera(monkeypatch, cam="Room"):
     """A real DetectionLoop that LOOKS running and carries a real PersonDetector

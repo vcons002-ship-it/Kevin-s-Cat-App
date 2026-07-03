@@ -338,7 +338,7 @@ class PersonDetector:
         self.contrast = float(contrast)
         self.saturation = float(saturation)
         # Which YOLO model to run: "yolo11n" (default — low light/odd poses, ~1.4x
-        # CPU), "yolo11m"/"yolo26m"/"yolo26x" (bigger/stronger), etc. A model that
+        # CPU), "yolo26m"/"yolo26x" (bigger/stronger), etc. A model that
         # can't load raises a clear error (MobileNet-SSD was removed in 0.25.0).
         self.model = model or "yolo11n"
         # Where the YOLO conv layers run: "cpu" (default), "opencl" (iGPU via
@@ -349,7 +349,7 @@ class PersonDetector:
         self._yolo_size = None  # the loaded variant's fixed input size
         self.roi = roi          # optional [x, y, w, h]
         # Legacy MobileNet-SSD net input size. Ignored since 0.25.0 — YOLO uses its
-        # exported fixed size; pick resolution via the model name (e.g. yolo11m_960).
+        # exported fixed size; every deployed model is a 640 export (#70/#80).
         # Kept as a no-op so old callers/configs don't break.
         self.detect_size = int(detect_size) if detect_size else 300
         # Min confidence to NAME a non-person mover (cat/pottedplant/…) in the log
@@ -415,6 +415,11 @@ class PersonDetector:
         from . import yolo
         try:
             self._yolo = yolo.load_net(self.model, self.accelerator)
+        except ValueError as exc:
+            # Unknown or DROPPED model (#79): a config error, not a camera hiccup —
+            # surface it through the loop's fatal path (same as a missing file) so
+            # it stops loudly instead of retrying forever.
+            raise FileNotFoundError(str(exc)) from exc
         except Exception as exc:            # noqa: BLE001 — degrade the *accelerator*…
             # A failed accelerator (e.g. no GPU/driver) shouldn't cost the model:
             # retry the same YOLO on CPU. If even that fails, raise clearly — there's
@@ -661,15 +666,18 @@ class PersonDetector:
     # camera that dies after a good frame is still noticed, not silently frozen).
     _GRAB_STALE_SECONDS = 2.0
 
-    def live_jpeg(self) -> bytes | None:
+    def live_jpeg(self, trail: bool = False) -> bytes | None:
         """JPEG of the most recent frame, with recent detection boxes overlaid.
 
         Drives the live GUI stream. Returns the latest read frame (not just the
         last *analysed* one, so the feed stays smooth at scan rate); boxes are
         drawn only if the net refreshed them within :data:`_LIVE_BOX_TTL`, so a
-        person who has left doesn't leave a box hanging. ``None`` until a frame
-        has been read. Thread-safe: the web request thread calls this while the
-        detection loop writes the underlying frame.
+        person who has left doesn't leave a box hanging. ``trail=True`` (0.39.0)
+        composites the cat trail as a live overlay — the recency ribbon + route
+        line update in place as the cat moves — with detection boxes drawn on
+        top; no trail this episode simply shows the plain feed. ``None`` until a
+        frame has been read. Thread-safe: the web request thread calls this
+        while the detection loop writes the underlying frame.
         """
         import cv2
 
@@ -682,6 +690,10 @@ class PersonDetector:
         # Crop to the ROI here (the buffer holds the raw frame); the copy also
         # detaches us from the grab thread swapping the buffer underneath.
         img = self._crop(frame).copy()
+        if trail:
+            overlaid = self._trail.render(img)
+            if overlaid is not None:
+                img = overlaid
         if fresh:
             self._draw_boxes(img, boxes)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])

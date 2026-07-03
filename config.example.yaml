@@ -21,7 +21,7 @@ active_cameras: []        # e.g. ["Kitchen", "Garage"]; empty = the single camer
 cameras: []               # e.g.:
 #   - {name: Kitchen, url: "rtsp://1.2.3.4/main", username: admin, password: "secret",
 #      roll: true,  track_cats: false, model: yolo11n, scan_fps: 10.0, roi: null}
-#   - {name: Garage,  url: "usb:0", roll: false, track_cats: true, model: yolo11m}
+#   - {name: Garage,  url: "usb:0", roll: false, track_cats: true, model: yolo26m}
 
 # --- Speaker(s) (Google Home / Nest — where the chime plays) ---
 speaker_names: []         # one or more exact names, e.g. ["Kitchen speaker", "Office"]
@@ -38,13 +38,13 @@ dc: 20                    # treat when the roll is >= this (DC20 on a D20 = only
 cooldown_seconds: 600     # minimum seconds between rolls (frequency interval)
 
 # --- Detection tuning ---
-detector_model: yolo11n   # benchmark-settled lineup (#70/#71): yolo11n (floor, default), yolo26m (lightweight), yolo26x / *_fp16 (workhorse; export-only). Dropped models (yolo11m/...) still load from old configs but aren't selectable. A model that can't load raises a clear error (no silent fallback).
+detector_model: yolo11n   # benchmark-settled lineup (#70/#71): yolo11n (floor, 640 since #80, default), yolo26m (lightweight), yolo26x / *_fp16 (workhorse; export-only). Dropped models (yolo11m/... , #79) raise a loud, actionable error (no silent worse detector).
 accelerator: auto         # auto (default, #71: CUDA when it genuinely binds, else CPU — logged loudly, never a silent slow fallback), cpu, opencl (iGPU via OpenCL), openvino-gpu / openvino-auto (Intel OpenVINO; optional 'openvino' pkg), onnx-cuda (NVIDIA; optional 'onnxruntime-gpu', raises if CUDA doesn't bind)
 person_confidence: 0.5    # 0..1; raise to reduce false triggers, lower to catch harder poses
 cat_confidence: 0.5       # 0..1; min confidence for a cat (locator) detection — independent of person_confidence and label_floor. Gates the track_cats/Show-cat path only.
 locator_classes: ["cat"]  # COCO classes that count as "the cat" for the locator. A no-dog household can use ["cat", "dog"] (the model often mislabels a cat as a dog).
 confirm_frames: 4         # require a person in this many frames in a row (cuts false positives, incl. a moving cat's brief high-confidence frame)
-detect_size: 300          # legacy MobileNet-SSD input size — ignored since 0.25.0 (YOLO size is fixed by its export). Kept so old configs still load; pick resolution via the model name (e.g. yolo11m_960).
+detect_size: 300          # legacy MobileNet-SSD input size — ignored since 0.25.0 (YOLO size is fixed by its export). Kept so old configs still load.
 scan_fps: 10.0            # frames/sec read from the camera; lower = less CPU (good for the main feed)
 smooth_live_feed: false   # run a dedicated capture thread so the live GUI feed plays at camera rate (decoupled from inference); a little extra CPU/bandwidth
 roi: null                 # [x, y, w, h] region of interest — set this visually in the GUI
@@ -54,7 +54,7 @@ roi: null                 # [x, y, w, h] region of interest — set this visuall
 # larger input give the locator scan more effective resolution. ---
 cat_scan_tiling: "3x3"     # "off" | "2x2" | "3x3" | "4x4" — split into an overlapping grid, detect per tile, merge. Default 3x3 per the full benchmark (#70): best clean recall per ms; 4x4 adds ~1 cat at 1.7x the cost.
 cat_scan_tile_overlap: 0.35 # fraction each tile overlaps its neighbour (benchmark #70: 3x3 is best at 0.35; 2x2 prefers 0.20)
-cat_scan_imgsz: 0          # locator input size: 0 = native. YOLO needs a matching exported model (e.g. yolo11m_960) or falls back to native + tiling
+cat_scan_imgsz: 0          # LEGACY, no effect since 0.40.0 (#79): >640 input measured worse than 640 (#70); tiling is the lever. Kept so old configs load.
 cat_scan_frames: 3         # still-cat scan only: average N back-to-back frames before the net (noise drops ~sqrt(N) on a still scene; movement mid-burst falls back to one frame). 1 = off, max 8. The treat path never averages.
 track_fusion: true         # temporal fusion: a string of WEAK cat detections that chain smoothly and actually MOVE is confirmed as one sighting (source "track") — catches a walking cat no single frame can confirm; the movement requirement keeps decoys out. false = judge every frame alone.
 

@@ -986,6 +986,9 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             ), 409
 
         name = request.args.get("camera")     # which camera's feed (default: streamed one)
+        # trail=1 (0.39.0): composite the cat trail as a LIVE overlay — the ribbon
+        # and route line update in place as the cat moves (the 🌈 toggle by the feed).
+        trail = request.args.get("trail") == "1"
 
         def frames():
             # One JPEG per part; the browser renders this directly in an <img>.
@@ -998,7 +1001,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 loop.note_viewing(name)   # keep this camera awake under round-robin
                 ver = loop.live_version(name)
                 if ver != last_ver:
-                    jpeg = loop.live_jpeg(name)
+                    jpeg = loop.live_jpeg(name, trail=trail)
                     if jpeg is not None:
                         last_ver = ver
                         yield (b"--frame\r\nContent-Type: image/jpeg\r\n"

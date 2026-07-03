@@ -196,13 +196,14 @@ class DetectionLoop:
         Used by the on-demand escalation endpoint (#66) — NOT a fallback lookup."""
         return self._detectors.get(name)
 
-    def live_jpeg(self, name: str | None = None) -> bytes | None:
+    def live_jpeg(self, name: str | None = None, trail: bool = False) -> bytes | None:
         """Annotated frame from a camera's detector (defaults to the streamed one).
 
-        ``None`` when the loop isn't running or that camera hasn't read a frame.
+        ``trail=True`` composites the live cat-trail overlay (0.39.0). ``None``
+        when the loop isn't running or that camera hasn't read a frame.
         """
         det = self._pick(name)
-        return det.live_jpeg() if det is not None else None
+        return det.live_jpeg(trail=trail) if det is not None else None
 
     def live_version(self, name: str | None = None) -> int:
         """Frame/box version of a camera's detector (0 if not running)."""

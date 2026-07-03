@@ -47,8 +47,13 @@ measured, not guessed. Per watched camera, for every frame:
    the movement requirement keeps cat-shaped decoys out.
 4. **Cat trail** *(always on, CPU)* — every frame is compared to the last *still*
    frame, so the cat's whole silhouette is painted with a timestamp. The trail
-   (blue = older → red = newest) shows where she went; its red end is where the
-   last movement stopped.
+   (blue = older → red = newest, with a route line and an on-image legend) shows
+   where she went; its red end is where the last movement stopped. A global
+   lighting/exposure change resets the baseline instead of flood-painting the
+   room, and only animal-sized blobs are kept. View it as a still (🌈 Show
+   trail) or live: the **🌈 Trail overlay** checkbox by the live feed paints it
+   onto the stream, updating as the cat moves. It tracks *all* motion — you
+   included.
 5. **Still-cat scan** *(default: every 30 s per cat-tracking camera)* — a
    sleeping cat makes no motion, so the net is forced periodically with the
    heavy settings: **3×3 tiling at 0.35 overlap** (the benchmark's clean
@@ -62,8 +67,9 @@ off-by-default privacy toggle.
 
 ### The recommended upgrade (one-time, on the GPU box)
 
-Out of the box the app uses the bundled **yolo11n** (the benchmark "floor":
-75% recall / 0% FP, tiny). The **proven workhorse** is **yolo26x FP16 @ 3×3**
+Out of the box the app uses the bundled **yolo11n at 640** (the benchmark
+"floor": 75% recall / 0% FP — the 640 export is the one those numbers belong
+to, #80). The **proven workhorse** is **yolo26x FP16 @ 3×3**
 (91% / 0%, 167 ms warm on the deployment 3070). It's too big to bundle, so
 export it once where your `.pt` weights live:
 

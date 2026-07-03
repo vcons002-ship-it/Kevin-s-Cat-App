@@ -564,9 +564,9 @@ def test_locator_imgsz_missing_yolo_variant_falls_back():
     import cv2
 
     frame = cv2.imread(_CAT)
-    # yolo11m_1280 isn't committed (only the 960 export is) — selecting it must
-    # degrade to the native size, not crash.
-    det = PersonDetector(source="x", model="yolo11m", cat_scan_imgsz=1280,
+    # cat_scan_imgsz is legacy (#79: >640 measured worse, no large exports remain
+    # registered) — any value must degrade to the native size, not crash.
+    det = PersonDetector(source="x", model="yolo26m", cat_scan_imgsz=960,
                          cat_scan_tiling="off", label_floor=0.4)
     assert det._locator_net() is None
     annotated, _ = det.detect_image(frame)

@@ -136,10 +136,11 @@ as a person except two honestly-documented frames (one of which actually contain
 a person's hand). See `tests/test_detection_accuracy.py`, which guards this with
 bundled sample photos.
 
-**Model = resolution.** A YOLO ONNX is a fixed-shape export, so the **model name
-carries its input size** (`yolo11n` = 320, `yolo11m` = 640, `yolo11m_960` = 960,
-…) — pick a bigger model from the dropdown to resolve a small/distant subject, at
-more CPU. (The old `detect_size` knob was a MobileNet-only control and is gone.)
+**Model = resolution.** A YOLO ONNX is a fixed-shape export; every deployed model
+runs at its benchmarked **640** (#70 measured smaller *and* larger inputs as
+worse — the once-bundled 320 floor export is gone, #80). Pick a bigger **model**
+(26m → 26x) to resolve a small/distant subject, at more CPU. (The old
+`detect_size` knob was a MobileNet-only control and is gone.)
 People in hats, helmets, and headgear, and people with their back to the camera,
 all detect reliably.
 
@@ -154,7 +155,7 @@ feed** on a slow connection. It's the quickest way to confirm framing and that
 recognition is actually firing.
 
 By default the feed updates at your **scan rate**, which is gated by how fast
-detection runs — so on a slow CPU or the heavier `yolo11m` it can look choppy.
+detection runs — so on a slow CPU or the heavier `yolo26m`/`yolo26x` it can look choppy.
 Tick **Smooth feed** to run a dedicated capture thread that reads the camera
 continuously and plays the video at the camera's own frame rate, independent of
 inference. It costs a little extra CPU and reads the camera non-stop, so leave it
@@ -197,7 +198,7 @@ The card surfaces the settings that actually change whether things are identifie
 correctly, as live sliders that **re-run detection as you drag**:
 
 - **Model** (which carries the resolution — a YOLO size is fixed by its export, so
-  pick `yolo11m_960` for more detail), **person confidence**, **cat confidence**
+  pick `yolo26m`/`yolo26x` for more capacity), **person confidence**, **cat confidence**
   (the cat has its **own** threshold, separate from people), **notify floor** — what
   counts as a detection.
 - **Count dogs as the cat** — the model often calls a cat a **dog** with high
@@ -218,7 +219,7 @@ and produces a **shareable report** — a **self-contained HTML** file (annotate
 thumbnails inlined, opens/emails anywhere off the LAN-only NAS) and an **optional
 XLSX** (needs `openpyxl`; offered by setup). Each run lists best **cat / dog /
 combined** score, whether it cleared the cat threshold, and **inference time**. Trim
-the matrix with the checkboxes — a 4×4 × `yolo11m_960` sweep is heavy on CPU.
+the matrix with the checkboxes — a 4×4 × `yolo26x` sweep is heavy on CPU.
 
 The report is built to **travel and reproduce**: each annotated thumbnail is encoded
 large enough to read the boxes and is **click-to-enlarge**, the **unannotated original
@@ -256,10 +257,9 @@ person/treat path untouched:
   and detects per tile, so a small/distant cat fills more of the net's input. 4×4 is
   what actually resolved a sleeping cat in testing; drop to 2×2/off to save CPU. Works
   with the bundled models — no extra downloads.
-- **Larger input** (`Cat input size`) runs the locator scan at 960/1280. A
-  **`yolo11m_960`** model is bundled (export more sizes with
-  `scripts/export_yolo.py`). If a size's model isn't present it falls back to the
-  native size + tiling.
+- ~~Larger input (960/1280)~~ — **retired in 0.40.0** (#79): the benchmark
+  measured >640 input as *worse* than 640 across the board (#70 §5). Tiling is
+  the resolution lever; the old `cat_scan_imgsz` config value is ignored.
 - **Frame averaging** (`Scan frames`, default 3) has the scan average a short burst
   of back-to-back frames first: on a still scene sensor noise drops by roughly the
   square root of the count — real signal recovery, which is exactly what a dim room
@@ -311,9 +311,15 @@ CPU.)
 Comparing each frame to the last **still** frame (the empty room) lights up the
 **whole cat silhouette**, not just moving edges. The app stamps every silhouette
 with *when* it was seen and colours the result by recency — **blue where the cat
-entered, sweeping to red at her latest position** — one image showing the path,
-direction, and timing of the current motion episode (**🌈 Show trail**, or
-`GET /api/trail?camera=`). Pure CPU.
+entered, sweeping through green/yellow to red at her latest position** — plus a
+**route line** through the movement and an on-image **legend**, so one picture
+shows path, direction, and timing. View it as a still (**🌈 Show trail**,
+`GET /api/trail?camera=`) or as a **live overlay on the live feed** (the
+🌈 Trail overlay checkbox — it updates in place as the cat moves). Pure CPU.
+Real-hardware guards (0.39.0): a global lighting/exposure change **resets** the
+baseline instead of flood-painting the room, and only plausibly-animal-sized
+blobs are kept — the trail is shapes, not confetti. It tracks *all* motion,
+people included.
 
 The trail is also a detection instrument: its **red end is a coordinate**. If the
 last movement ended *inside* the view (not at a frame edge), the cat plausibly
@@ -385,7 +391,7 @@ All tunable from the GUI (no config-file editing):
   Camera box. The high-res **main** feed spots distant cats better; the **sub**
   feed is lighter on CPU.
 - **Model = detection detail:** how big a frame the net sees is set by the model
-  you pick (`yolo11n` 320 → `yolo11m` 640 → `yolo11m_960` 960). A bigger model
+  you pick — every deployed model is a 640 export (#70/#80). A bigger model
   sees smaller/farther subjects at more CPU. (The old separate `detect_size`
   control was MobileNet-only and was removed in 0.25.0.)
 - **Scan rate** (`scan_fps`): frames read per second (default 10). Lower it to

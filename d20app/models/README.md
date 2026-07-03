@@ -1,7 +1,7 @@
 # Person-detection models
 
 The detector is **YOLO** (Ultralytics, COCO-80), run through OpenCV's `cv2.dnn` —
-no PyTorch/TensorFlow at runtime, no cloud. `yolo11n`, `yolo11m` and `yolo26m` are
+no PyTorch/TensorFlow at runtime, no cloud. `yolo11n` and `yolo26m` are
 **bundled in the repo** so there's nothing to download — the app works straight
 after `setup.sh`.
 
@@ -21,17 +21,21 @@ golden exports, verified on the deployment 3070):
   167 ms warm as FP16 on the 3070. Export-only (~213 MB, over GitHub's limit).
 - **`yolo26m`** (bundled, ~79 MB) — the **lightweight**: 82%/0% at 2×2/0.20,
   64 ms FP16.
-- **`yolo11n`** (bundled, ~10 MB, 320×320, the default) — the **floor**: 75%/0%
-  at 3×3, tiny and CPU-friendly. Class names live in `d20app/yolo.py`
-  (`COCO_CLASSES`); `person` is index 0, `cat` is 15.
+- **`yolo11n`** (bundled, ~10 MB, **640×640**, the default) — the **floor**:
+  75%/0% at 3×3, small and CPU-friendly. Bundled at 640 since #80: the earlier
+  320 export was never benchmarked and ran far below the 640 numbers it was
+  labelled with. Class names live in `d20app/yolo.py` (`COCO_CLASSES`);
+  `person` is index 0, `cat` is 15.
 - **FP16 variants** (`yolo26x_fp16` / `yolo26m_fp16`, export with `--half`) —
   identical accuracy, up to **2.2×** faster on CUDA (#70 §4). Verified with
   onnxruntime-CUDA; `cv2.dnn`'s FP16 handling is unverified — pair them with the
   `auto`/`onnx-cuda` accelerators.
-- **Dropped by #71** (still loadable from old configs, not selectable for new):
-  `yolo11m` and its `_960`/`_1280` locator exports — golden-exported 26m beats
-  11m, and 11x/26n lost their tiers too (the earlier "drop 26m/26n" call was an
-  artifact of the end2end export bug, now guarded against).
+- **Dropped models raise a loud error** (#79): `yolo11m` (beaten by golden 26m)
+  and its `_960`/`_1280` locator exports (the >640-input hypothesis measured
+  *worse* than 640 — #70), plus 11x (FP-prone) and 26n. Naming one in a config
+  stops the app with an actionable message instead of quietly running a worse
+  detector — the 0.25.0 no-silent-fallback stance, applied consistently. Their
+  ONNX files are removed from the tree (git history is left unrewritten).
 
 The variant → file/size mapping lives in `d20app/yolo.py` (`MODELS`). Pick
 resolution via the **model name**; there's no separate "net input size" control —
@@ -64,7 +68,7 @@ The `accelerator` setting (Detection card in the GUI, or `accelerator:` in
 - `openvino-gpu` / `openvino-auto` — run the ONNX through Intel's **OpenVINO**
   runtime (optional `openvino` package; `setup.sh`/`setup.ps1` offer it) on the
   `GPU` device, or `AUTO` (GPU with a built-in CPU fallback). Typically 2–4× CPU
-  on Intel hardware and the thing that makes `yolo11m` practical.
+  on Intel hardware — useful headroom for `yolo26m` on Intel boxes.
 - `onnx-cuda` — run the ONNX through **onnxruntime-gpu** on an **NVIDIA GPU**
   (CUDAExecutionProvider). Measured **~23 ms/inference on an RTX 3070 vs
   ~485–855 ms on CPU — a ~37× speedup**, which is what makes the heavyweight
@@ -105,7 +109,7 @@ times CPU vs your backend:
 
 Worth knowing: even with **no GPU**, OpenVINO's CPU runtime measured ~3× faster
 than `cv2.dnn` on a dev box (yolo11m ~465 ms → ~150 ms/frame), so `openvino-auto`
-can be a free win and is what makes `yolo11m` practical on CPU-only hardware.
+can be a free win for the heavier models on CPU-only hardware.
 
 ## Re-exporting the YOLO ONNX files
 
@@ -115,33 +119,20 @@ Ultralytics + PyTorch are needed **only to export** (one-off, offline) — they 
 
 ```
 pip install ultralytics            # pulls torch; do this in a throwaway venv
-# nano @ 320 (default):
-python -c "from ultralytics import YOLO; YOLO('yolo11n.pt').export(format='onnx', imgsz=320, opset=12, simplify=True)"
-mv yolo11n.onnx d20app/models/yolo11n.onnx
-# medium @ 640:
-python -c "from ultralytics import YOLO; YOLO('yolo11m.pt').export(format='onnx', imgsz=640, opset=12, simplify=True)"
-mv yolo11m.onnx d20app/models/yolo11m.onnx
+# nano @ 640 (the default floor, #80):
+python scripts/export_yolo.py --model yolo11n --imgsz 640 --out yolo11n
 ```
 
 The input size is fixed at export time; if you re-export at a different size,
 update that variant's `size` in the `MODELS` table in `d20app/yolo.py` to match
 (OpenCV's importer needs a static shape).
 
-### High-resolution locator variants (optional)
+### High-resolution locator variants — RETIRED (#79)
 
-The still-cat "locator" scan can run at a larger input to resolve a small/distant
-cat (Option A). Those variants — `yolo11m_960`, `yolo11m_1280` — are already
-registered in `MODELS` but **not committed**; produce them with the helper:
-
-```
-pip install ultralytics                 # export-only, offline; use a throwaway venv
-python scripts/export_yolo.py --model yolo11m --imgsz 960
-python scripts/export_yolo.py --model yolo11m --imgsz 1280
-```
-
-Until the file is present, selecting that locator size **falls back** to the native
-size + tiling (no crash) — so tiling (Option B), which needs no export, is the
-default.
+The 960/1280 "locator input" exports were benchmarked and **rejected**: >640
+input measured *worse* than 640 across the board (#70 §5). Tiling is the
+resolution lever; the `cat_scan_imgsz` config value is now a no-op kept only so
+old configs load.
 
 ### YOLO26 variants
 

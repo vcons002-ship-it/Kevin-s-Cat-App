@@ -43,6 +43,14 @@ MAX_DIM = 640               # trail working resolution cap (memory + CPU)
 MIN_SILHOUETTE_FRAC = 0.0005  # ignore microscopic masks (noise that survived cleanup)
 EDGE_MARGIN_FRAC = 0.04     # endpoint within this of an edge = "may have exited"
 ENDPOINT_FRESH_SECS = 600.0  # older endpoints stop driving hints / "probable"
+# Real-hardware guards (0.39.0 — from the first NAS screenshot, which was a wall of
+# green): an auto-exposure/white-balance/lighting shift makes the WHOLE frame differ
+# from the null, flood-stamping the room as one giant "silhouette".
+GLOBAL_CHANGE_FRAC = 0.35   # diff covering more than this = lighting event, not a cat → re-adopt null, stamp nothing
+MAX_SILHOUETTE_FRAC = 0.25  # a single blob bigger than this isn't an animal either
+MAX_BLOBS = 4               # keep only the largest few plausible blobs per frame
+PATH_MAX_POINTS = 400       # centroid path memory per episode (draws the route line)
+TINT_ALPHA = 0.35           # silhouette tint strength (0.55 was unreadable on real footage)
 
 
 class TrailTracker:
@@ -60,6 +68,7 @@ class TrailTracker:
         self._last_ts = 0.0
         self._last_motion_ts = 0.0
         self._still_since = None
+        self._path = []
 
     # -- internals -----------------------------------------------------------
     def _small(self, gray):
@@ -82,6 +91,7 @@ class TrailTracker:
         self._episode_start = 0.0
         self._last_box = None
         self._last_ts = 0.0
+        self._path = []              # [(ts, cx, cy)] silhouette centroids, small coords
 
     # -- update (camera worker thread) ----------------------------------------
     def update(self, gray, moved: bool, now: float | None = None) -> None:
@@ -112,22 +122,45 @@ class TrailTracker:
                     self._still_since = now
                 return
 
+            delta = cv2.absdiff(self._null, clean)
+            _, mask = cv2.threshold(delta, self.diff_threshold, 255, cv2.THRESH_BINARY)
+            mask = cv2.morphologyEx(
+                mask, cv2.MORPH_OPEN,
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+
+            # Global-change guard (0.39.0): a diff covering most of the frame is a
+            # lighting/exposure/white-balance event, not an animal — the first NAS
+            # run flood-stamped the entire room green this way. Re-adopt the scene
+            # as the new null and stamp NOTHING.
+            if np.count_nonzero(mask) > GLOBAL_CHANGE_FRAC * mask.size:
+                self._null = clean
+                self._still_since = now
+                return
+
             # Motion. A long-enough quiet gap first means a NEW episode.
             if self._last_motion_ts and now - self._last_motion_ts > EPISODE_GAP_SECS:
                 self._ts_buf[:] = 0.0
                 self._episode_start = 0.0
                 self._last_box = None
                 self._last_ts = 0.0
+                self._path = []
             self._last_motion_ts = now
             self._still_since = None
 
-            delta = cv2.absdiff(self._null, clean)
-            _, mask = cv2.threshold(delta, self.diff_threshold, 255, cv2.THRESH_BINARY)
-            mask = cv2.morphologyEx(
-                mask, cv2.MORPH_OPEN,
-                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
-            ys, xs = np.nonzero(mask)
-            if len(xs) < MIN_SILHOUETTE_FRAC * mask.size:
+            # Silhouette hygiene (0.39.0): keep only plausibly-animal-sized blobs —
+            # a cat is neither 3 pixels nor a quarter of the room — and only the
+            # largest few, so the trail is shapes, not confetti.
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                           cv2.CHAIN_APPROX_SIMPLE)
+            lo, hi = MIN_SILHOUETTE_FRAC * mask.size, MAX_SILHOUETTE_FRAC * mask.size
+            blobs = sorted((c for c in contours if lo <= cv2.contourArea(c) <= hi),
+                           key=cv2.contourArea, reverse=True)[:MAX_BLOBS]
+            if not blobs:
+                return
+            kept = np.zeros_like(mask)
+            cv2.drawContours(kept, blobs, -1, 255, thickness=-1)
+            ys, xs = np.nonzero(kept)
+            if not len(xs):
                 return
             self._ts_buf[ys, xs] = now
             self._last_box = (int(xs.min()), int(ys.min()),
@@ -135,6 +168,10 @@ class TrailTracker:
             self._last_ts = now
             if not self._episode_start:
                 self._episode_start = now
+            # The route line: one centroid per stamped frame, bounded per episode.
+            self._path.append((now, float(xs.mean()), float(ys.mean())))
+            if len(self._path) > PATH_MAX_POINTS:
+                del self._path[:len(self._path) - PATH_MAX_POINTS]
 
     # -- reads (web threads) ---------------------------------------------------
     def endpoint(self, now: float | None = None):
@@ -160,10 +197,24 @@ class TrailTracker:
         with self._lock:
             return bool(self._episode_start and self._last_ts)
 
+    @staticmethod
+    def _ramp_bgr(frac: float) -> tuple:
+        """The recency colour for ``frac`` in [0, 1]: 0 = oldest (blue, OpenCV hue
+        120) sweeping to 1 = newest (red, hue 0)."""
+        import cv2
+        import numpy as np
+
+        hue = int(round((1.0 - max(0.0, min(1.0, frac))) * 120.0))
+        px = np.uint8([[[hue, 255, 255]]])
+        b, g, r = cv2.cvtColor(px, cv2.COLOR_HSV2BGR)[0, 0]
+        return (int(b), int(g), int(r))
+
     def render(self, frame_bgr, now: float | None = None):
         """The trail composited over ``frame_bgr`` (the detector's ROI-cropped
         frame): silhouette pixels tinted by recency (blue = episode start → red =
-        newest), endpoint boxed. Returns a new BGR image, or None if no trail."""
+        newest, at :data:`TINT_ALPHA`), the centroid **route line** drawn in the
+        same ramp, the endpoint boxed, and a colour legend. Returns a new BGR
+        image, or None if no trail."""
         import cv2
         import numpy as np
 
@@ -174,6 +225,7 @@ class TrailTracker:
             ts = self._ts_buf.copy()
             t0, t1 = self._episode_start, self._last_ts
             last_box, scale = self._last_box, self._scale
+            path = list(self._path)
 
         covered = ts > 0
         span = max(t1 - t0, 1e-6)
@@ -188,10 +240,38 @@ class TrailTracker:
         mask = cv2.resize(covered.astype(np.uint8) * 255, (w, h),
                           interpolation=cv2.INTER_NEAREST) > 0
         out = frame_bgr.copy()
-        out[mask] = (0.45 * out[mask] + 0.55 * tint[mask]).astype(np.uint8)
+        out[mask] = ((1.0 - TINT_ALPHA) * out[mask]
+                     + TINT_ALPHA * tint[mask]).astype(np.uint8)
+
+        # The route line: silhouette centroids joined in time order, each segment
+        # coloured by its (newer) endpoint's age — the "where did she go" answer
+        # at a glance, readable even where the tint is subtle.
+        for (ta, xa, ya), (tb, xb, yb) in zip(path, path[1:]):
+            col = self._ramp_bgr((tb - t0) / span)
+            cv2.line(out, (int(xa * scale), int(ya * scale)),
+                     (int(xb * scale), int(yb * scale)), col, 2, cv2.LINE_AA)
+        for (tp, xp, yp) in path[:1] + path[-1:]:
+            cv2.circle(out, (int(xp * scale), int(yp * scale)), 4,
+                       self._ramp_bgr((tp - t0) / span), -1, cv2.LINE_AA)
+
         if last_box:
             x1, y1, x2, y2 = (int(v * scale) for v in last_box)
             cv2.rectangle(out, (x1, y1), (x2, y2), (0, 0, 255), 2)
             cv2.putText(out, "latest", (x1, max(14, y1 - 6)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
+
+        # Legend (bottom-left): the colour ramp with its meaning, so the image
+        # explains itself. Age span shown so "blue" has a number.
+        bar_w, bar_h, pad = min(140, w - 20), 10, 8
+        by = h - pad - bar_h
+        cv2.rectangle(out, (pad - 3, by - 22), (pad + bar_w + 60, h - pad + 3),
+                      (0, 0, 0), -1)
+        for i in range(bar_w):
+            cv2.line(out, (pad + i, by), (pad + i, by + bar_h),
+                     self._ramp_bgr(i / max(1, bar_w - 1)), 1)
+        cv2.putText(out, f"path: old -> new ({int(round(span))}s)",
+                    (pad, by - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                    (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(out, "now", (pad + bar_w + 6, by + bar_h),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
         return out

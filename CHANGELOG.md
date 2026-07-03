@@ -11,6 +11,85 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.40.0] — 2026-07-03
+
+### Fixed
+- **The default model now ships at its benchmarked size** (#80): the bundled
+  `yolo11n` was a **320** export wearing the **640** benchmark's numbers
+  (75%/0% — measured on the 640 golden 11n only; the 320 was never benchmarked
+  and performed far worse). The bundled file is now a 640 raw-head export and
+  the registry/labels/docs say 640 everywhere. Slightly more CPU per frame,
+  honest accuracy. *(NAS: run the batch benchmark once against the full set to
+  pin this exact file's numbers — the weights are the same as the golden 11n;
+  the export flags may differ cosmetically.)*
+
+### Changed
+- **Dropped models now fail loudly** (#79, answering the design question):
+  `yolo11m` (+ its `_960`/`_1280` locator exports), `yolo11x`, `yolo26n`, and
+  `mobilenet_ssd` names raise an actionable error ("dropped in #71 — pick
+  yolo26m/yolo11n…") at load and stop the loop like any config error, instead
+  of quietly running a worse detector — the 0.25.0 no-silent-fallback stance
+  applied consistently, as the issue argued. `yolo11m.onnx` and
+  `yolo11m_960.onnx` are removed from the tree (~160 MB less checkout; git
+  *history* is deliberately left unrewritten — see the #79 reply).
+- **The >640 "locator input" knob is retired** (#79/#70 §5): 960/1280 input
+  measured *worse* than 640 across the board, so the per-camera "Cat input
+  size" select is gone and `cat_scan_imgsz` is a legacy no-op (old configs
+  still load; any value falls back to native + tiling). Tiling is the
+  resolution lever.
+
+### Notes
+- Suite: **319 tests** (+2 net: the dropped-model coverage replaced the old
+  yolo11m variant tests — dropped names raise the actionable error,
+  a dropped model in a detector is fatal-not-retried, the 640 floor is
+  asserted, decode parity now runs at the export's true size).
+- Old configs: a camera that names `yolo11m*` will now stop with a clear
+  message naming the replacement — that's the intended behaviour per #79
+  (two-person setup, no silent degradation). Everything else coerces as
+  before.
+
+## [0.39.0] — 2026-07-03
+
+### Fixed
+- **Trail flood on real hardware** (from the first NAS screenshot — a wall of
+  green): a camera auto-exposure / white-balance / lighting shift made the
+  *whole frame* differ from the remembered null frame, and the entire room was
+  stamped as one giant "silhouette" at a single moment (which the recency ramp
+  then painted mid-ramp green, edge to edge). Two guards now stop that class of
+  failure:
+  - **Global-change guard**: a diff covering more than 35% of the frame is
+    treated as a lighting event, not an animal — the scene is re-adopted as the
+    new null and nothing is stamped.
+  - **Silhouette-size ceiling + blob hygiene**: only plausibly-animal-sized
+    contour blobs are kept (a cat is neither 3 pixels nor a quarter of the
+    room), at most the largest 4 per frame — the trail is shapes, not confetti.
+
+### Added
+- **Live trail overlay** (the originally-envisioned display): a **🌈 Trail
+  overlay** checkbox by the live feed composites the trail onto the live
+  stream (`/api/stream?...&trail=1`) — silhouettes and route update in place
+  as the cat moves. Purely visual; detection is unaffected. The 🌈 snapshot
+  button remains for a still image.
+- **Route line + legend**: the silhouette centroids are joined into a path
+  line coloured by the same recency ramp, and every render carries a legend —
+  **blue = older → red = newest** with the episode's span in seconds — so the
+  image explains itself. Tint opacity lowered 0.55 → 0.35 (the old value was
+  unreadable over real footage).
+
+### Notes
+- Colour key, for the record: the ramp is a hue sweep blue → cyan → green →
+  yellow → red. Green is the *middle* of the age range — in the flooded
+  screenshot everything shared one mid-episode stamp time, hence a green room.
+- The trail tracks **all** motion (people included) — that's inherent to a
+  motion trail and now stated in the GUI help.
+- Suite: **317 tests** (+4: a global lighting change resets the null instead
+  of flooding, an oversized blob is rejected, the route path is recorded and
+  rendered with the legend, the live overlay composites and degrades to the
+  plain feed when there's no trail).
+- NAS to verify: how often the guard fires on the real cameras (exposure
+  hunting), overlay readability at night, and the 35%/25% thresholds on real
+  scenes — `trail.GLOBAL_CHANGE_FRAC` / `MAX_SILHOUETTE_FRAC` are the knobs.
+
 ## [0.38.0] — 2026-07-02
 
 ### Added
