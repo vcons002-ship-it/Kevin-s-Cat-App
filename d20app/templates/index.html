@@ -66,6 +66,9 @@
         <h2>Live detection</h2>
         <div class="row">
           <select id="live-camera" title="which camera to show"></select>
+          <label class="checkbox" title="paint the cat trail onto the live feed: silhouettes and a route line coloured by recency (blue = older → red = newest), updating live as the cat moves. Purely visual — detection is unaffected.">
+            <input type="checkbox" id="trail-overlay" /> 🌈 Trail overlay
+          </label>
           <label class="checkbox">
             <input type="checkbox" id="smooth_feed" /> Smooth feed
           </label>
@@ -83,6 +86,11 @@
         person (green) or cat (orange) as it recognises them. It streams only
         while watching and only to browsers with this open, so it costs little —
         turn <em>Show live feed</em> off on a slow connection.
+        <br><strong>🌈 Trail overlay</strong> paints where things moved this
+        episode, coloured by recency — <strong>blue = older → red = newest</strong>
+        — with a route line through the movement and a legend. It tracks
+        <em>all</em> motion (you included), and a big lighting change resets it
+        rather than flooding the screen.
         <br><strong>Smooth feed</strong> runs a dedicated capture thread so the
         video plays at the camera's frame rate instead of stuttering at your scan
         rate (which is gated by detection speed — heavy on a slow CPU / big

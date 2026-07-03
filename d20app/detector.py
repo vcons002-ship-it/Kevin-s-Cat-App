@@ -661,15 +661,18 @@ class PersonDetector:
     # camera that dies after a good frame is still noticed, not silently frozen).
     _GRAB_STALE_SECONDS = 2.0
 
-    def live_jpeg(self) -> bytes | None:
+    def live_jpeg(self, trail: bool = False) -> bytes | None:
         """JPEG of the most recent frame, with recent detection boxes overlaid.
 
         Drives the live GUI stream. Returns the latest read frame (not just the
         last *analysed* one, so the feed stays smooth at scan rate); boxes are
         drawn only if the net refreshed them within :data:`_LIVE_BOX_TTL`, so a
-        person who has left doesn't leave a box hanging. ``None`` until a frame
-        has been read. Thread-safe: the web request thread calls this while the
-        detection loop writes the underlying frame.
+        person who has left doesn't leave a box hanging. ``trail=True`` (0.39.0)
+        composites the cat trail as a live overlay — the recency ribbon + route
+        line update in place as the cat moves — with detection boxes drawn on
+        top; no trail this episode simply shows the plain feed. ``None`` until a
+        frame has been read. Thread-safe: the web request thread calls this
+        while the detection loop writes the underlying frame.
         """
         import cv2
 
@@ -682,6 +685,10 @@ class PersonDetector:
         # Crop to the ROI here (the buffer holds the raw frame); the copy also
         # detaches us from the grab thread swapping the buffer underneath.
         img = self._crop(frame).copy()
+        if trail:
+            overlaid = self._trail.render(img)
+            if overlaid is not None:
+                img = overlaid
         if fresh:
             self._draw_boxes(img, boxes)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])

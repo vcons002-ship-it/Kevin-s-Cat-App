@@ -311,9 +311,15 @@ CPU.)
 Comparing each frame to the last **still** frame (the empty room) lights up the
 **whole cat silhouette**, not just moving edges. The app stamps every silhouette
 with *when* it was seen and colours the result by recency — **blue where the cat
-entered, sweeping to red at her latest position** — one image showing the path,
-direction, and timing of the current motion episode (**🌈 Show trail**, or
-`GET /api/trail?camera=`). Pure CPU.
+entered, sweeping through green/yellow to red at her latest position** — plus a
+**route line** through the movement and an on-image **legend**, so one picture
+shows path, direction, and timing. View it as a still (**🌈 Show trail**,
+`GET /api/trail?camera=`) or as a **live overlay on the live feed** (the
+🌈 Trail overlay checkbox — it updates in place as the cat moves). Pure CPU.
+Real-hardware guards (0.39.0): a global lighting/exposure change **resets** the
+baseline instead of flood-painting the room, and only plausibly-animal-sized
+blobs are kept — the trail is shapes, not confetti. It tracks *all* motion,
+people included.
 
 The trail is also a detection instrument: its **red end is a coordinate**. If the
 last movement ended *inside* the view (not at a frame edge), the cat plausibly

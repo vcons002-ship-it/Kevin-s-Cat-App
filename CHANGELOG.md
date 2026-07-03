@@ -11,6 +11,48 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.39.0] — 2026-07-03
+
+### Fixed
+- **Trail flood on real hardware** (from the first NAS screenshot — a wall of
+  green): a camera auto-exposure / white-balance / lighting shift made the
+  *whole frame* differ from the remembered null frame, and the entire room was
+  stamped as one giant "silhouette" at a single moment (which the recency ramp
+  then painted mid-ramp green, edge to edge). Two guards now stop that class of
+  failure:
+  - **Global-change guard**: a diff covering more than 35% of the frame is
+    treated as a lighting event, not an animal — the scene is re-adopted as the
+    new null and nothing is stamped.
+  - **Silhouette-size ceiling + blob hygiene**: only plausibly-animal-sized
+    contour blobs are kept (a cat is neither 3 pixels nor a quarter of the
+    room), at most the largest 4 per frame — the trail is shapes, not confetti.
+
+### Added
+- **Live trail overlay** (the originally-envisioned display): a **🌈 Trail
+  overlay** checkbox by the live feed composites the trail onto the live
+  stream (`/api/stream?...&trail=1`) — silhouettes and route update in place
+  as the cat moves. Purely visual; detection is unaffected. The 🌈 snapshot
+  button remains for a still image.
+- **Route line + legend**: the silhouette centroids are joined into a path
+  line coloured by the same recency ramp, and every render carries a legend —
+  **blue = older → red = newest** with the episode's span in seconds — so the
+  image explains itself. Tint opacity lowered 0.55 → 0.35 (the old value was
+  unreadable over real footage).
+
+### Notes
+- Colour key, for the record: the ramp is a hue sweep blue → cyan → green →
+  yellow → red. Green is the *middle* of the age range — in the flooded
+  screenshot everything shared one mid-episode stamp time, hence a green room.
+- The trail tracks **all** motion (people included) — that's inherent to a
+  motion trail and now stated in the GUI help.
+- Suite: **317 tests** (+4: a global lighting change resets the null instead
+  of flooding, an oversized blob is rejected, the route path is recorded and
+  rendered with the legend, the live overlay composites and degrades to the
+  plain feed when there's no trail).
+- NAS to verify: how often the guard fires on the real cameras (exposure
+  hunting), overlay readability at night, and the 35%/25% thresholds on real
+  scenes — `trail.GLOBAL_CHANGE_FRAC` / `MAX_SILHOUETTE_FRAC` are the knobs.
+
 ## [0.38.0] — 2026-07-02
 
 ### Added

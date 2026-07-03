@@ -546,17 +546,20 @@ async function refreshStatus() {
 }
 
 // ---- live detection feed ---------------------------------------------------
-let liveOn = false, liveCam = null;
+let liveOn = false, liveCam = null, liveTrail = false;
 
 function updateLiveView(running) {
   const img = $("live-img"), note = $("live-note"), cam = $("live-camera").value || "";
   const want = running && $("live-enabled").checked;
-  if (want && (!liveOn || cam !== liveCam)) {
-    const q = cam ? `camera=${encodeURIComponent(cam)}&` : "";
+  const trail = !!($("trail-overlay") && $("trail-overlay").checked);
+  if (want && (!liveOn || cam !== liveCam || trail !== liveTrail)) {
+    const q = (cam ? `camera=${encodeURIComponent(cam)}&` : "") + (trail ? "trail=1&" : "");
     img.src = `/api/stream?${q}ts=${Date.now()}`;
     img.classList.remove("hidden");
-    note.textContent = "Live — green = person, orange = cat.";
-    liveOn = true; liveCam = cam;
+    note.textContent = trail
+      ? "Live — green = person, orange = cat · trail: blue = older → red = newest."
+      : "Live — green = person, orange = cat.";
+    liveOn = true; liveCam = cam; liveTrail = trail;
   } else if (!want && liveOn) {
     img.src = ""; img.classList.add("hidden"); liveOn = false;
   }
@@ -1552,6 +1555,8 @@ function wire() {
   };
 
   $("live-enabled").onchange = () => refreshStatus();
+  const tov = $("trail-overlay");
+  if (tov) tov.onchange = () => refreshStatus();   // rebuilds the stream URL (0.39.0)
   $("live-camera").onchange = () => { catRotate = false; if (liveOn) { liveOn = false; } refreshStatus(); };
   $("cat_scan_interval").onchange = saveConfig;
   $("live-img").onerror = () => { if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); } };
