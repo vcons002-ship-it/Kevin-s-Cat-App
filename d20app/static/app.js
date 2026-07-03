@@ -49,7 +49,7 @@ async function loadModelOptions() {
     if (MODEL_OPTS.some(([v]) => v === prev)) sel.value = prev;
   }
 }
-const ACCEL_OPTS = [["auto", "Auto — CUDA if available (rec.)"], ["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"], ["onnx-cuda", "NVIDIA CUDA (onnxruntime-gpu)"]];
+const ACCEL_OPTS = [["auto", "Auto — CUDA if available (rec.)"], ["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"], ["onnx-cuda", "NVIDIA CUDA (onnxruntime-gpu)"], ["tensorrt", "TensorRT engine — fastest (CUDA 13+ driver, prebuilt engine)"]];
 const SENS_OPTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"]];
 const TILING_OPTS = [["off", "Off"], ["2x2", "2×2"], ["3x3", "3×3"], ["4x4", "4×4"]];
 // (The "Cat input size" 960/1280 knob was removed in 0.40.0 — the benchmark (#70)

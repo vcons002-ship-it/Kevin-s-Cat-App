@@ -155,3 +155,33 @@ python scripts/export_yolo.py --model yolo26m --imgsz 640 --out yolo26m --half
 `m.model.model[-1].end2end = False` before
 `m.export(format="onnx", imgsz=640, opset=12, simplify=True, dynamic=False,
 batch=1, nms=False)` — or the decode guard will refuse the file.)
+
+### TensorRT engines (#82 — opt-in, fastest)
+
+A prebuilt TensorRT engine runs the workhorse **~1.6× faster** than onnx-cuda on
+the NAS 3070 (175 ms → 111 ms at 3×3/0.20) with identical 91%/0% accuracy
+(26m 1.37×, 11n 1.21×). Select the **tensorrt** accelerator to use one.
+
+- **Engines are GPU-specific.** Build once on the machine that runs them (a
+  5090 engine won't load on the 3070); the build is cached as
+  `models/<variant>.engine` and takes a few minutes:
+
+  ```
+  pip install ultralytics tensorrt cuda-python     # build-time deps
+  python d20app/models/export_trt_engine.py yolo26x_fp16 yolo26m_fp16
+  ```
+
+- **Hard prerequisite: a CUDA-13-capable driver.** TensorRT's pip build pulls
+  CUDA-13 packages; on an older driver (Debian 12's repo driver 535.x = CUDA
+  12.2) installing it **breaks the torch stack** (#82). The app checks the
+  driver first and refuses with instructions instead of trying — and it never
+  pip-installs anything itself. Debian 12 needs NVIDIA's CUDA repo for a
+  CUDA-13 driver (610.x worked on the NAS).
+- **Falls back loudly.** If the driver, package, or engine is missing, the
+  `tensorrt` accelerator logs why and falls back to `auto` (verified CUDA,
+  else CPU) — same model, same accuracy, just slower. onnx-cuda stays the
+  default; TensorRT is opt-in until it proves out live.
+- **Not yet run from this app on real hardware** — the 1.6× numbers are from
+  #82's benchmark harness. First NAS run: compare a few frames' boxes against
+  the onnx-cuda runner before trusting it (the runner raises loudly on any
+  CUDA error rather than guessing).

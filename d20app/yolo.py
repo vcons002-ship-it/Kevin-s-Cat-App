@@ -119,8 +119,19 @@ DROPPED_MODELS = {
 #   cpu / opencl                 — OpenCV cv2.dnn (CPU, or an OpenCL iGPU target)
 #   openvino-gpu / openvino-auto — Intel OpenVINO runtime (iGPU)
 #   onnx-cuda                    — onnxruntime-gpu on an NVIDIA GPU (CUDAExecutionProvider)
+#   tensorrt                     — a prebuilt, GPU-specific .engine (#82): ~1.6× the
+#                                  onnx-cuda workhorse on the 3070, identical accuracy.
+#                                  Opt-in; needs a CUDA-13-capable driver (see below).
 #   auto                         — onnx-cuda when it genuinely binds, else CPU (loudly)
-ACCELERATORS = ("auto", "cpu", "opencl", "openvino-gpu", "openvino-auto", "onnx-cuda")
+ACCELERATORS = ("auto", "cpu", "opencl", "openvino-gpu", "openvino-auto", "onnx-cuda",
+                "tensorrt")
+
+# TensorRT's pip build pulls CUDA-13 dependencies. On an older driver (e.g. 535.x =
+# CUDA 12.2) those packages can't run AND installing them breaks the torch stack
+# (#82 learned this the hard way: `undefined symbol: ncclCommResume`). So the
+# accelerator refuses to even try below this driver capability — and nothing in the
+# app ever pip-installs tensorrt on the user's behalf.
+_TRT_MIN_CUDA = 13.0
 
 # Back-compat aliases for the single-model era (some tests/callers import these).
 ONNX_PATH = os.path.join(_MODELS_DIR, MODELS[DEFAULT_VARIANT]["file"])
@@ -162,6 +173,14 @@ def boost_variant(current: str, accelerator: str = "cpu",
 def input_size(variant: str = DEFAULT_VARIANT) -> int:
     """The fixed square input size the given variant was exported at."""
     return MODELS[variant]["size"]
+
+
+def engine_path(variant: str = DEFAULT_VARIANT) -> str:
+    """Absolute path to a variant's TensorRT engine (no existence check).
+
+    Engines are **GPU-specific** — built once per machine by
+    ``models/export_trt_engine.py`` and cached (#82); they are never committed."""
+    return os.path.join(_MODELS_DIR, f"{variant}.engine")
 
 
 class _CvDnnRunner:
@@ -267,6 +286,168 @@ class _OnnxRuntimeRunner:
         return self._sess.run(None, {self._input: blob})[0]     # (1, 84, N)
 
 
+def _parse_cuda_version(text: str):
+    """The driver's max CUDA version out of ``nvidia-smi`` header text, or None."""
+    import re
+
+    m = re.search(r"CUDA Version:\s*([0-9]+(?:\.[0-9]+)?)", text or "")
+    return float(m.group(1)) if m else None
+
+
+def _driver_cuda_version():
+    """The installed NVIDIA driver's CUDA capability (e.g. 13.3), or None when
+    there's no working driver/nvidia-smi. This is the **driver's** ceiling, not
+    the toolkit version — exactly what gates TensorRT (#82)."""
+    import subprocess
+
+    try:
+        out = subprocess.run(["nvidia-smi"], capture_output=True, text=True,
+                             timeout=10).stdout
+    except Exception:       # noqa: BLE001 — no driver, no binary, no GPU: all "no"
+        return None
+    return _parse_cuda_version(out)
+
+
+def _strip_engine_metadata(data: bytes) -> bytes:
+    """Drop the Ultralytics metadata header from an exported ``.engine`` file.
+
+    Ultralytics prepends ``<4-byte LE length><JSON dict>`` to the serialized
+    engine; raw TensorRT can't deserialize that. A bare engine passes through
+    unchanged."""
+    import json
+    import struct
+
+    if len(data) > 8:
+        (n,) = struct.unpack("<I", data[:4])
+        if 0 < n < len(data) - 4:
+            try:
+                meta = json.loads(data[4:4 + n].decode("utf-8"))
+                if isinstance(meta, dict):
+                    return data[4 + n:]
+            except (UnicodeDecodeError, ValueError):
+                pass
+    return data
+
+
+class _TensorRtRunner:
+    """A prebuilt TensorRT engine behind ``infer`` (#82).
+
+    Measured on the NAS 3070 (real 3×3 tiled pipeline): 26x FP16 175 ms → 111 ms
+    (1.6×), identical 91%/0% accuracy; 26m 1.37×, 11n 1.21×. The engine file is
+    GPU-specific — deserialization fails loudly if it was built elsewhere.
+
+    Honest status: written against the TensorRT 10 API (``cuda-python`` for the
+    device buffers) but **not yet run on real hardware from this app** — the #82
+    benchmark used its own harness. First NAS run should compare a few frames'
+    boxes against the onnx-cuda runner before trusting it.
+    """
+
+    def __init__(self, engine_file: str):
+        import numpy as np
+        import tensorrt as trt
+        from cuda import cudart
+
+        self._cudart = cudart
+        self._np = np
+        with open(engine_file, "rb") as fh:
+            data = _strip_engine_metadata(fh.read())
+        runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))
+        engine = runtime.deserialize_cuda_engine(data)
+        if engine is None:
+            raise RuntimeError(
+                f"couldn't deserialize {os.path.basename(engine_file)} — TensorRT "
+                "engines are GPU-specific: rebuild it on THIS machine "
+                "(python d20app/models/export_trt_engine.py <variant>, #82)")
+        self._engine = engine
+        self._ctx = engine.create_execution_context()
+        self._in_name = self._out_name = None
+        for i in range(engine.num_io_tensors):
+            name = engine.get_tensor_name(i)
+            if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+                self._in_name = name
+            else:
+                self._out_name = name
+
+        def np_dtype(name):
+            return np.float16 if engine.get_tensor_dtype(name) == trt.DataType.HALF \
+                else np.float32
+
+        self._in_dtype = np_dtype(self._in_name)
+        self._out_dtype = np_dtype(self._out_name)
+        self._in_shape = tuple(engine.get_tensor_shape(self._in_name))
+        self._out_shape = tuple(engine.get_tensor_shape(self._out_name))
+        self._in_bytes = int(np.prod(self._in_shape)) * np.dtype(self._in_dtype).itemsize
+        self._out_bytes = int(np.prod(self._out_shape)) * np.dtype(self._out_dtype).itemsize
+        self._d_in = self._malloc(self._in_bytes)
+        self._d_out = self._malloc(self._out_bytes)
+        self._ctx.set_tensor_address(self._in_name, self._d_in)
+        self._ctx.set_tensor_address(self._out_name, self._d_out)
+        err, self._stream = cudart.cudaStreamCreate()
+        self._check(err)
+
+    def _check(self, err) -> None:
+        if err != self._cudart.cudaError_t.cudaSuccess:
+            raise RuntimeError(f"CUDA error in the TensorRT runner: {err}")
+
+    def _malloc(self, nbytes: int):
+        err, ptr = self._cudart.cudaMalloc(nbytes)
+        self._check(err)
+        return ptr
+
+    def infer(self, blob):
+        np, cudart = self._np, self._cudart
+        host_in = np.ascontiguousarray(blob.astype(self._in_dtype, copy=False))
+        self._check(cudart.cudaMemcpyAsync(
+            self._d_in, host_in.ctypes.data, self._in_bytes,
+            cudart.cudaMemcpyKind.cudaMemcpyHostToDevice, self._stream)[0])
+        if not self._ctx.execute_async_v3(self._stream):
+            raise RuntimeError("TensorRT inference failed (execute_async_v3)")
+        host_out = np.empty(self._out_shape, self._out_dtype)
+        self._check(cudart.cudaMemcpyAsync(
+            host_out.ctypes.data, self._d_out, self._out_bytes,
+            cudart.cudaMemcpyKind.cudaMemcpyDeviceToHost, self._stream)[0])
+        self._check(cudart.cudaStreamSynchronize(self._stream)[0])
+        return host_out.astype(np.float32, copy=False)   # (1, 84, N), like the others
+
+
+def _load_tensorrt(variant: str):
+    """Bring up the TensorRT runner, or raise an actionable ``RuntimeError``.
+
+    Ordered so the cheapest/most-fundamental failure speaks first: driver
+    capability → package → engine file. The driver guard exists because
+    installing tensorrt on a pre-CUDA-13 driver **breaks torch** (#82) — the
+    error says so instead of letting anyone pip their way into that hole.
+    """
+    ver = _driver_cuda_version()
+    if ver is None:
+        raise RuntimeError(
+            "tensorrt accelerator: no working NVIDIA driver detected (nvidia-smi "
+            "not found or failed). Use 'auto', 'onnx-cuda', or 'cpu'.")
+    if ver < _TRT_MIN_CUDA:
+        raise RuntimeError(
+            f"tensorrt needs a driver supporting CUDA >= {_TRT_MIN_CUDA:g}, but this "
+            f"driver reports CUDA {ver:g}. Do NOT pip-install tensorrt on this driver "
+            "— its CUDA-13 dependencies break torch (#82). Upgrade the NVIDIA driver "
+            "first (NVIDIA's CUDA repo; Debian 12's own repo caps at 535/12.2), or "
+            "use 'onnx-cuda'.")
+    try:
+        import tensorrt  # noqa: F401 — optional, opt-in dep
+        from cuda import cudart  # noqa: F401 — cuda-python, ships alongside
+    except ImportError as exc:
+        raise RuntimeError(
+            "tensorrt accelerator: the 'tensorrt' + 'cuda-python' packages aren't "
+            "installed. On this CUDA-13-capable driver: pip install tensorrt "
+            "cuda-python (never on an older driver — it breaks torch, #82).") from exc
+    epath = engine_path(variant)
+    if not os.path.exists(epath):
+        raise RuntimeError(
+            f"no TensorRT engine for {variant} ({os.path.relpath(epath)}). Engines "
+            "are GPU-specific and take minutes to build, so they're a cached, "
+            "one-time setup step: python d20app/models/export_trt_engine.py "
+            f"{variant} (see models/README.md, #82).")
+    return _TensorRtRunner(epath)
+
+
 def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
     """Build an inference runner for a YOLO11 variant on the chosen accelerator.
 
@@ -288,6 +469,20 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
     accel = (accelerator or "cpu").lower()
     if accel not in ACCELERATORS:
         raise ValueError(f"unknown accelerator {accel!r}; known: {list(ACCELERATORS)}")
+
+    if accel == "tensorrt":
+        # Opt-in engine path (#82). Runs BEFORE the ONNX existence check — a
+        # machine can legitimately hold only the .engine (26x's ONNX is
+        # export-only). Any failure falls back to 'auto' (verified CUDA, else
+        # CPU — both say so out loud): same model, same accuracy, just slower,
+        # which is the established accelerator-degradation stance.
+        try:
+            return _load_tensorrt(variant)
+        except RuntimeError as exc:
+            _log.warning("tensorrt unavailable (%s) — falling back to 'auto' "
+                         "(verified CUDA, else CPU)", exc)
+            accel = "auto"
+
     path = model_path(variant)
     if not os.path.exists(path):
         raise FileNotFoundError(
