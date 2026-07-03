@@ -161,6 +161,100 @@ def test_live_jpeg_trail_overlay():
     assert overlaid and overlaid != det.live_jpeg()       # ribbon + legend drawn
 
 
+# ---- 0.41.0: people don't leave trails ----------------------------------------
+def test_exclude_boxes_blank_person_from_the_stamp():
+    t = TrailTracker()
+    t.update(BASE, False, now=0.0)
+    # person moves on the left, cat on the right — same frame
+    f = _blob(80, 100, 160, 180)
+    f[120:200, 400:480] = 200
+    t.update(f, True, now=1.0, exclude=[(70, 90, 170, 190)])
+    ep = t.endpoint(now=1.1)
+    assert ep and ep["box"][0] >= 380              # only the cat stamped
+    assert len(t._path) == 1
+
+
+def test_excluded_person_only_frame_stamps_nothing():
+    t = TrailTracker()
+    t.update(BASE, False, now=0.0)
+    t.update(_blob(80, 100, 160, 180), True, now=1.0,
+             exclude=[(70, 90, 170, 190)])
+    assert not t.has_trail() and t.endpoint(now=1.1) is None
+
+
+def test_erase_recent_scrubs_the_person_keeps_the_cat():
+    t = TrailTracker()
+    t.update(BASE, False, now=0.0)
+    t.update(_blob(400, 120, 480, 200), True, now=1.0)   # the cat, a while ago
+    t.update(_blob(80, 100, 160, 180), True, now=8.0)    # the person, just now
+    # the net names the mover: scrub its stamps (made < ERASE_WINDOW_SECS ago)
+    t.erase_recent([(70, 90, 170, 190)], now=8.1)
+    ep = t.endpoint(now=8.2)
+    assert ep and ep["box"][0] >= 380              # endpoint falls back to the cat
+    assert t.has_trail()                           # the cat's older trail survives
+    assert len(t._path) == 1 and t._path[0][1] * t._scale >= 380
+    # old stamps inside the box are NOT scrubbed (only recent ones)
+    t2 = TrailTracker()
+    t2.update(BASE, False, now=0.0)
+    t2.update(_blob(80, 100, 160, 180), True, now=1.0)
+    t2.erase_recent([(70, 90, 170, 190)], now=20.0)      # stamp is 19 s old
+    assert t2.has_trail()
+
+
+def test_erase_recent_person_only_episode_resets():
+    t = TrailTracker()
+    t.update(BASE, False, now=0.0)
+    t.update(_blob(80, 100, 160, 180), True, now=1.0)
+    t.erase_recent([(70, 90, 170, 190)], now=1.1)
+    assert not t.has_trail() and t.endpoint(now=1.2) is None
+
+
+def test_read_and_detect_person_never_trails():
+    # Wiring: the net reports a person → the entry-frame stamp is erased and the
+    # following frames are excluded, so human movement leaves NO trail.
+    det = PersonDetector(source="unused")
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: [
+        ("person", 0.9, (270, 90, 370, 190))]
+    det.read_and_detect(detect=False)              # adopts the null frame
+    for x in (280, 300, 320):                      # the person's arm keeps moving
+        f = np.full((360, 640, 3), 110, np.uint8)
+        f[100:180, x:x + 60] = 220
+        frames.append(f)
+        det.read_and_detect(detect=True)
+    assert not det._trail.has_trail()
+    assert det.trail_endpoint() is None
+
+
+def test_read_and_detect_cat_still_trails_next_to_person():
+    det = PersonDetector(source="unused")
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: [
+        ("person", 0.9, (60, 90, 180, 190))]
+    det.read_and_detect(detect=False)
+    f = np.full((360, 640, 3), 110, np.uint8)
+    f[100:180, 80:160] = 220                       # the person's arm
+    f[120:200, 400:480] = 200                      # the cat, well clear of the box
+    frames.append(f)
+    det.read_and_detect(detect=True)               # person box known from this run
+    frames.append(f.copy())
+    det.read_and_detect(detect=False)              # trail keeps stamping the cat
+    ep = det.trail_endpoint()
+    assert ep is not None and ep["box"][0] >= 380  # the cat's spot, not the arm
+
+
 # ---- live wiring: detector + escalate probable tier + /api/trail -------------
 def _running_loop_with_fake_camera(monkeypatch, cam="Room"):
     """A real DetectionLoop that LOOKS running and carries a real PersonDetector

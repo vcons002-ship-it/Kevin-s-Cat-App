@@ -395,6 +395,11 @@ class PersonDetector:
         # every frame read. Cheap (capped working resolution) and thread-safe.
         from .trail import TrailTracker
         self._trail = TrailTracker(diff_threshold=motion_diff_threshold)
+        # Person exclusion for the trail (0.41.0): the freshest person boxes the
+        # net produced, so human movement doesn't stamp cat-sized blobs. Written
+        # and read on the camera worker thread only — no lock needed.
+        self._person_boxes: list = []
+        self._person_boxes_at = 0.0
         # Frame ring buffer (#68): the last few seconds of (downscaled) frames for
         # the temporal VLM mosaic ("did a cat pass through?"). ~8 frames spaced ≥1 s
         # at ≤480 px ≈ well under 3 MB per camera. Guarded by _live_lock.
@@ -783,6 +788,14 @@ class PersonDetector:
     # genuinely-weak-but-real hits fusion exists to accumulate).
     _FUSE_FLOOR = 0.2
 
+    # Trail person-exclusion freshness (0.41.0): person boxes older than this stop
+    # masking the trail. Short on purpose — long enough to ride out a per-frame
+    # detection flicker, short enough that a spot a person just left is trail-able
+    # again quickly. Honest limit: during the cooldown detection-pause the net is
+    # skipped, so no fresh boxes exist and a person moving through the pause can
+    # still stamp (erase_recent() cleans up what detection sees when it resumes).
+    _PERSON_EXCLUDE_SECS = 3.0
+
     def take_fused_hit(self):
         """Pop the latest temporal-fusion confirmation (or None). The loop claims it
         exactly once and records it as an ordinary sighting (source "track")."""
@@ -1027,7 +1040,16 @@ class PersonDetector:
         cropped = self._crop(frame)
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         moved = self._motion.update(gray)      # keep the baseline fresh even when paused
-        self._trail.update(gray, moved)        # cat-trail silhouettes + endpoint (#67)
+        # Cat-trail silhouettes + endpoint (#67). Fresh person boxes are blanked
+        # out of the stamp (0.41.0): a human arm moves in cat-sized blobs, and
+        # the trail is a cat trail. The boxes are the PREVIOUS net run's (the net
+        # goes after the trail each frame) — erase_recent() below scrubs the
+        # frame or two that slip through when a person first appears.
+        exclude = ()
+        if self._person_boxes and (time.monotonic() - self._person_boxes_at
+                                   <= self._PERSON_EXCLUDE_SECS):
+            exclude = self._person_boxes
+        self._trail.update(gray, moved, exclude=exclude)
         self._push_ring(cropped)               # temporal-mosaic frame history (#68)
         # Run the net on real motion, or when a forced still-cat scan asks for it.
         if not force and (not detect or not moved):
@@ -1055,6 +1077,13 @@ class PersonDetector:
             boxes = self._detect_boxes(frame, floor)
         self._last_frame = cropped             # what the net saw (box coords match)
         now = time.monotonic()
+        person_boxes = [b for lab, _s, b in boxes if lab == "person"]
+        if person_boxes:
+            self._person_boxes = person_boxes
+            self._person_boxes_at = now
+            # The trail stamped this frame BEFORE the net ran — scrub the
+            # person's just-made stamps retroactively (0.41.0).
+            self._trail.erase_recent(person_boxes)
         cat_seen = any(self._is_locator_hit(lab, score) for lab, score, _ in boxes)
         with self._live_lock:
             self._last_boxes = boxes           # fresh detections (possibly empty)

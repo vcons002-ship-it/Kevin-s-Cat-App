@@ -11,6 +11,22 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.41.0] — 2026-07-03
+
+### Changed
+- **People don't leave cat trails**: the trail now blanks out the region of any
+  fresh **person** detection before stamping silhouettes — a human arm moves in
+  cat-sized blobs, and the trail is a *cat* trail. Because the trail stamps each
+  frame *before* the net runs, the net's person verdict also **retroactively
+  erases** stamps made in the previous few seconds inside the person's box
+  (pixels, route points, and the endpoint — which falls back to the previous
+  genuinely-cat stamp). Exclusion boxes are padded 10% and expire after 3 s
+  without a fresh person hit. *Honest limit:* during the cooldown
+  detection-pause the net is skipped, so a person moving through the pause can
+  still stamp until detection resumes and the erase catches what falls inside
+  the then-current box. *(NAS: watch a real "human in frame" episode — the arm
+  test — and confirm the trail stays cat-only.)*
+
 ## [0.40.0] — 2026-07-03
 
 ### Fixed

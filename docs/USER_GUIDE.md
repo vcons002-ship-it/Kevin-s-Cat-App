@@ -52,8 +52,10 @@ measured, not guessed. Per watched camera, for every frame:
    lighting/exposure change resets the baseline instead of flood-painting the
    room, and only animal-sized blobs are kept. View it as a still (🌈 Show
    trail) or live: the **🌈 Trail overlay** checkbox by the live feed paints it
-   onto the stream, updating as the cat moves. It tracks *all* motion — you
-   included.
+   onto the stream, updating as the cat moves. Movement inside a detected
+   **person** box is excluded (and scrubbed retroactively once the net names the
+   mover), so your arm's cat-sized gestures don't paint the trail — it stays a
+   *cat* trail.
 5. **Still-cat scan** *(default: every 30 s per cat-tracking camera)* — a
    sleeping cat makes no motion, so the net is forced periodically with the
    heavy settings: **3×3 tiling at 0.35 overlap** (the benchmark's clean
