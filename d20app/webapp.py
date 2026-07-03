@@ -989,6 +989,9 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         # trail=1 (0.39.0): composite the cat trail as a LIVE overlay — the ribbon
         # and route line update in place as the cat moves (the 🌈 toggle by the feed).
         trail = request.args.get("trail") == "1"
+        # last_known=0 (0.42.0) hides the default-on grey "last known location"
+        # box (the camera's newest recorded sighting, age-labelled).
+        last_known = request.args.get("last_known") != "0"
 
         def frames():
             # One JPEG per part; the browser renders this directly in an <img>.
@@ -1001,7 +1004,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 loop.note_viewing(name)   # keep this camera awake under round-robin
                 ver = loop.live_version(name)
                 if ver != last_ver:
-                    jpeg = loop.live_jpeg(name, trail=trail)
+                    jpeg = loop.live_jpeg(name, trail=trail, last_known=last_known)
                     if jpeg is not None:
                         last_ver = ver
                         yield (b"--frame\r\nContent-Type: image/jpeg\r\n"
@@ -1859,7 +1862,9 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 "motion",
                 f"🔍 Escalation: VLM suspects a cat on {camera} (unconfirmed) — "
                 "boosting detection so YOLO can confirm.")
-            loop.boost_detection(camera, 10.0)
+            # Targeted (0.42.0): the lead names a PLACE — aim the boost's zoom
+            # crop + heaviest-model pass at it, don't just look harder everywhere.
+            loop.boost_detection(camera, 10.0, box=result["probable"]["box"])
 
         # Attach the trail image (the probable state's evidence; nice context on any
         # live run). Data URL so the GUI shows it inline next to the rung table.

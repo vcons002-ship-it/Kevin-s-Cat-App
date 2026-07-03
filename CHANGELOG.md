@@ -11,6 +11,32 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.42.0] — 2026-07-03
+
+### Added
+- **Targeted boost**: when an unconfirmed VLM lead names a *place*, the
+  10-second confirm-boost now aims at it instead of just looking harder
+  everywhere — forced scans additionally run a **full-resolution zoom crop**
+  around the lead's box through the **heaviest model on disk** (26x > 26m >
+  the camera's own; FP16 variants only on CUDA). Both choices are #70's
+  answer to "heavier model or higher resolution?": heavier model measured
+  better (91% vs 82% vs 75%), while raw >640 input measured *worse* — the
+  zoom crop **is** the resolution lever that works. The boost never
+  downgrades (a 26x camera keeps its 26x), degrades loudly to the camera's
+  own net if the heavier file is missing, and its results confirm/record
+  through the ordinary YOLO paths only. The feed shows the spot as an orange
+  **"checking (lead)"** box while it runs.
+- **"Last known location" on the live feed** (default **on**): a grey,
+  age-labelled box at the camera's newest recorded sighting, so "where was
+  she last?" stays answered even when nothing is detected right now. Fades
+  out after 30 min (the age label keeps older boxes honest until then);
+  toggled by the **📍 Last known** checkbox by the feed
+  (`/api/stream?last_known=0` to hide). Only *confirmed, recorded* sightings
+  draw it — an unconfirmed lead shows as the orange "checking" box during
+  its window and is never promoted to "last known".
+  *(NAS: watch a lead → targeted boost → confirm round-trip on real footage,
+  and eyeball 26x latency per forced scan on the 3070/CPU.)*
+
 ## [0.41.0] — 2026-07-03
 
 ### Changed

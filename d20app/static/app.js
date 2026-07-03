@@ -546,20 +546,23 @@ async function refreshStatus() {
 }
 
 // ---- live detection feed ---------------------------------------------------
-let liveOn = false, liveCam = null, liveTrail = false;
+let liveOn = false, liveCam = null, liveTrail = false, liveLastKnown = true;
 
 function updateLiveView(running) {
   const img = $("live-img"), note = $("live-note"), cam = $("live-camera").value || "";
   const want = running && $("live-enabled").checked;
   const trail = !!($("trail-overlay") && $("trail-overlay").checked);
-  if (want && (!liveOn || cam !== liveCam || trail !== liveTrail)) {
-    const q = (cam ? `camera=${encodeURIComponent(cam)}&` : "") + (trail ? "trail=1&" : "");
+  const lk = !($("lastknown-overlay") && !$("lastknown-overlay").checked); // default ON
+  if (want && (!liveOn || cam !== liveCam || trail !== liveTrail || lk !== liveLastKnown)) {
+    const q = (cam ? `camera=${encodeURIComponent(cam)}&` : "")
+      + (trail ? "trail=1&" : "") + (lk ? "" : "last_known=0&");
     img.src = `/api/stream?${q}ts=${Date.now()}`;
     img.classList.remove("hidden");
-    note.textContent = trail
-      ? "Live — green = person, orange = cat · trail: blue = older → red = newest."
-      : "Live — green = person, orange = cat.";
-    liveOn = true; liveCam = cam; liveTrail = trail;
+    const parts = ["Live — green = person, orange = cat"];
+    if (trail) parts.push("trail: blue = older → red = newest");
+    if (lk) parts.push("grey = last known location");
+    note.textContent = parts.join(" · ") + ".";
+    liveOn = true; liveCam = cam; liveTrail = trail; liveLastKnown = lk;
   } else if (!want && liveOn) {
     img.src = ""; img.classList.add("hidden"); liveOn = false;
   }
@@ -1557,6 +1560,8 @@ function wire() {
   $("live-enabled").onchange = () => refreshStatus();
   const tov = $("trail-overlay");
   if (tov) tov.onchange = () => refreshStatus();   // rebuilds the stream URL (0.39.0)
+  const lkv = $("lastknown-overlay");
+  if (lkv) lkv.onchange = () => refreshStatus();   // rebuilds the stream URL (0.42.0)
   $("live-camera").onchange = () => { catRotate = false; if (liveOn) { liveOn = false; } refreshStatus(); };
   $("cat_scan_interval").onchange = saveConfig;
   $("live-img").onerror = () => { if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); } };

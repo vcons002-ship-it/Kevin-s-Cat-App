@@ -52,7 +52,10 @@ measured, not guessed. Per watched camera, for every frame:
    lighting/exposure change resets the baseline instead of flood-painting the
    room, and only animal-sized blobs are kept. View it as a still (🌈 Show
    trail) or live: the **🌈 Trail overlay** checkbox by the live feed paints it
-   onto the stream, updating as the cat moves. Movement inside a detected
+   onto the stream, updating as the cat moves. Next to it, **📍 Last known**
+   (on by default) keeps a grey, age-labelled box at the newest recorded
+   sighting — "where was she last?" stays answered even when nothing is
+   detected right now (it fades out after 30 min). Movement inside a detected
    **person** box is excluded (and scrubbed retroactively once the net names the
    mover), so your arm's cat-sized gestures don't paint the trail — it stays a
    *cat* trail.
@@ -167,7 +170,13 @@ makes sense and look again**, cheapest step first, stopping at the first
 
 If nothing is confirmed but the trail ends *inside* the room (not at a door/
 frame edge), you get the honest **"probable location"**: *no confirmed
-detection, but the last movement ended here.* Run it on an uploaded test frame
+detection, but the last movement ended here.* A VLM-flavoured lead also fires a
+**targeted boost**: for the next ~10 s the camera's forced scans additionally
+zoom a full-resolution crop around the lead's box and run the **heaviest model
+on disk** there (26x > 26m > the camera's own — the benchmark's answer: a
+heavier model helps, a bigger raw input doesn't; the crop is the resolution
+lever that works). While it runs, the feed shows the spot as an orange
+"checking (lead)" box. Run the ladder on an uploaded test frame
 anytime, or against a **live camera** once **Live-camera escalation** is
 enabled (see toggles). **🌈 Show trail** and **🔥 Heat map** on the same row
 show the movement trail and the room's historical hot-spots.

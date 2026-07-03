@@ -133,6 +133,32 @@ def model_path(variant: str = DEFAULT_VARIANT) -> str:
     return os.path.join(_MODELS_DIR, MODELS[variant]["file"])
 
 
+# Targeted-boost model preference (0.42.0), strongest first per #70: 26x (91%/0%)
+# > 26m (82%/0%) > the 11n floor. FP16 variants only pay on CUDA (2.2× there,
+# nothing elsewhere); "auto" may resolve to CPU, so it gets the FP32 list — always
+# correct, merely slower if CUDA happens to be active.
+_BOOST_ORDER_CUDA = ("yolo26x_fp16", "yolo26x", "yolo26m_fp16", "yolo26m")
+_BOOST_ORDER = ("yolo26x", "yolo26m")
+
+
+def boost_variant(current: str, accelerator: str = "cpu",
+                  exists=os.path.exists) -> str | None:
+    """The strongest *available* model to run a targeted boost with, or ``None``
+    when the camera's own ``current`` model is already the best on disk.
+
+    Walks the #70 strength order and stops at ``current`` — a boost must never
+    *downgrade* (a 26x camera doesn't "boost" with 26m). ``exists`` is injectable
+    for tests.
+    """
+    order = _BOOST_ORDER_CUDA if accelerator == "onnx-cuda" else _BOOST_ORDER
+    for variant in order:
+        if variant == current:
+            return None                      # everything after this is weaker
+        if exists(model_path(variant)):
+            return variant
+    return None
+
+
 def input_size(variant: str = DEFAULT_VARIANT) -> int:
     """The fixed square input size the given variant was exported at."""
     return MODELS[variant]["size"]

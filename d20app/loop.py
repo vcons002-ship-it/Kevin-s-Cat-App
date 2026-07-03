@@ -31,6 +31,11 @@ _MOTION_LOG_INTERVAL = 10.0
 # live feed keeps drawing a box around the cat (even a still one) while the user looks.
 _CAT_BOOST_SECONDS = 20.0
 
+# How long a camera's newest recorded sighting stays on the live feed as the grey
+# "last known location" box (0.42.0). Long-ish on purpose: stale-but-labelled beats
+# absent — the box carries its own age, so 25 minutes old reads as 25 minutes old.
+_LAST_KNOWN_TTL = 1800.0
+
 # How long a camera stays pinned-active after the GUI last fetched a frame of it, so a
 # camera you're watching never sleeps under round-robin (refreshed each streamed frame).
 _VIEW_TTL = 8.0
@@ -196,14 +201,35 @@ class DetectionLoop:
         Used by the on-demand escalation endpoint (#66) — NOT a fallback lookup."""
         return self._detectors.get(name)
 
-    def live_jpeg(self, name: str | None = None, trail: bool = False) -> bytes | None:
+    def live_jpeg(self, name: str | None = None, trail: bool = False,
+                  last_known: bool = True) -> bytes | None:
         """Annotated frame from a camera's detector (defaults to the streamed one).
 
-        ``trail=True`` composites the live cat-trail overlay (0.39.0). ``None``
-        when the loop isn't running or that camera hasn't read a frame.
+        ``trail=True`` composites the live cat-trail overlay (0.39.0).
+        ``last_known`` (default on, 0.42.0) draws the camera's newest recorded
+        sighting as a grey, age-labelled box — "where was she last?" stays
+        answered even when nothing is detected right now. ``None`` when the loop
+        isn't running or that camera hasn't read a frame.
         """
         det = self._pick(name)
-        return det.live_jpeg(trail=trail) if det is not None else None
+        if det is None:
+            return None
+        return det.live_jpeg(trail=trail,
+                             last_known=self._last_known(name) if last_known else None)
+
+    def _last_known(self, name: str | None) -> dict | None:
+        """The streamed camera's newest sighting as an overlay payload, or None
+        (none recorded, older than :data:`_LAST_KNOWN_TTL`, or no camera)."""
+        cam = name if name and name in self._detectors else self._live_name
+        if not cam:
+            return None
+        s = self.cats.last_for(cam)
+        if not s or not s.get("box"):
+            return None
+        age = time.time() - s.get("ts", 0.0)
+        if not 0 <= age <= _LAST_KNOWN_TTL:
+            return None
+        return {"box": s["box"], "label": s.get("label", "cat"), "age_s": age}
 
     def live_version(self, name: str | None = None) -> int:
         """Frame/box version of a camera's detector (0 if not running)."""
@@ -288,10 +314,16 @@ class DetectionLoop:
             image=snap)
         return sighting
 
-    def boost_detection(self, name: str, seconds: float | None = None) -> bool:
+    def boost_detection(self, name: str, seconds: float | None = None,
+                        box=None) -> bool:
         """Run the net continuously on ``name`` for ``seconds`` (default
         :data:`_CAT_BOOST_SECONDS`), so the live feed keeps drawing a box around the
         cat — even a motionless one between periodic scans — while the user looks.
+
+        ``box`` (0.42.0) makes the boost **targeted**: forced scans additionally
+        zoom a full-resolution crop around that spot and run the heaviest model
+        on disk there — for leads that name a *place* (a VLM "yes" box). The
+        feed draws the box as "checking (lead)" while it's live.
 
         Returns False if that camera isn't currently being watched. The worker reads
         the deadline lock-free (one float key per camera; the GIL makes the dict
@@ -301,6 +333,8 @@ class DetectionLoop:
             return False
         dur = _CAT_BOOST_SECONDS if seconds is None else max(0.0, float(seconds))
         self._cat_boost[name] = time.monotonic() + dur
+        if box is not None:
+            self._detectors[name].set_boost_hint(box, dur)
         return True
 
     def cam_status(self) -> list:
