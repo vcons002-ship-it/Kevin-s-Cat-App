@@ -11,6 +11,23 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.42.1] — 2026-07-03
+
+### Changed
+- **"Last known location" is now live-tracked and self-effacing** (from the
+  hard-mode demo review): the grey box previously followed the *sightings
+  log*, which is throttled on purpose (~10 s between motion records,
+  rising-edge still scans) — so it could lag mid-room while the cat was
+  visibly boxed elsewhere, reading like a second cat. Now (a) the detector
+  keeps a drawing-level track updated on **every** ≥`cat_confidence`
+  detection (and track-fusion confirm) — no extra log writes, the log keeps
+  its throttled cadence — and the overlay draws from that, falling back to
+  the log only when the track is empty (e.g. right after a restart); and
+  (b) the grey box is **suppressed while a fresh cat box is on screen** —
+  a live detection *is* the answer; a stale grey echo of it isn't. Net
+  effect: cat visible → no grey box; cat vanishes → the grey box appears
+  exactly where she was last confirmed, seconds-fresh.
+
 ## [0.42.0] — 2026-07-03
 
 ### Added

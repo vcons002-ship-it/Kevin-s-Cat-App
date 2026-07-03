@@ -170,6 +170,82 @@ def test_live_feed_draws_the_lead_box_while_boosting(tmp_path):
     assert loop.live_jpeg("Room") != plain          # orange "checking (lead)" box
 
 
+# ---- 0.42.1: live-tracked last-known + suppression while the cat is on screen -
+def test_last_confirmed_tracks_every_confirming_hit():
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+    det = _det_reading_list(frames)
+    hits = [("cat", 0.8, (100, 100, 180, 180))]
+    det._run_net = lambda img, floor, size=None: list(hits)
+    det.read_and_detect(detect=True)                 # motion baseline, net skipped
+    assert det.last_confirmed() is None
+    _move(frames)
+    det.read_and_detect(detect=True)
+    got = det.last_confirmed()
+    assert got and got["box"] == (100, 100, 180, 180) and got["age_s"] < 5
+    hits[0] = ("cat", 0.7, (400, 120, 480, 200))     # she moved; weaker but confirmed
+    _move(frames)
+    det.read_and_detect(detect=True)
+    assert det.last_confirmed()["box"] == (400, 120, 480, 200)
+    hits[0] = ("cat", 0.3, (500, 120, 580, 200))     # below cat_confidence: no update
+    _move(frames)
+    det.read_and_detect(detect=True)
+    assert det.last_confirmed()["box"] == (400, 120, 480, 200)
+
+
+def _det_reading_list(frames):
+    det = PersonDetector(source="unused", cat_scan_frames=1)
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    return det
+
+
+def _move(frames):
+    """Append a frame that differs enough to trip the motion pre-filter."""
+    f = frames[-1].copy()
+    x = 40 + 60 * (len(frames) % 8)
+    f[200:280, x:x + 70] = 220 if frames[-1][240, x + 30, 0] < 200 else 30
+    frames.append(f)
+
+
+def test_last_known_prefers_the_live_track_over_the_log(tmp_path):
+    loop, det = _running_loop(tmp_path)
+    loop.cats.record("Room", (10, 10, 40, 40), (640, 360), 0.8)   # old log entry
+    assert loop._last_known("Room")["box"] == [10, 10, 40, 40]    # log fallback
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: [("cat", 0.8, (400, 120, 480, 200))]
+    det.read_and_detect(detect=True)                              # baseline frame
+    _move(frames)
+    det.read_and_detect(detect=True)
+    assert loop._last_known("Room")["box"] == (400, 120, 480, 200)  # live track wins
+
+
+def test_last_known_suppressed_while_a_cat_box_is_live(tmp_path):
+    import time as _time
+
+    loop, det = _running_loop(tmp_path)
+    det._publish_frame(np.full((360, 640, 3), 110, np.uint8))
+    loop.cats.record("Room", (280, 100, 360, 180), (640, 360), 0.8)
+    # a fresh locator-class box on screen → the grey box must NOT be drawn
+    with det._live_lock:
+        det._last_boxes = [("cat", 0.8, (280, 100, 360, 180))]
+        det._live_boxes_at = _time.monotonic()
+    assert loop.live_jpeg("Room") == loop.live_jpeg("Room", last_known=False)
+    # the box goes stale (cat gone) → the grey box reappears
+    with det._live_lock:
+        det._live_boxes_at = _time.monotonic() - 60.0
+    assert loop.live_jpeg("Room") != loop.live_jpeg("Room", last_known=False)
+
+
 def test_stream_last_known_param(monkeypatch):
     app = create_app()
     loop = app.config["loop"]

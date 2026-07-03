@@ -422,6 +422,10 @@ class PersonDetector:
         self._boost_size = 0
         self._boost_model = ""
         self._boost_tried = False
+        # Newest confirmed cat position (box, label, score, wall ts) — feeds the
+        # "last known location" overlay at per-detection freshness (0.42.1).
+        # Guarded by _live_lock; never written to the sightings log from here.
+        self._cat_live_confirmed = None
 
     # -- model / stream lifecycle -------------------------------------------
     def _ensure_net(self):
@@ -743,6 +747,22 @@ class PersonDetector:
     # camera that dies after a good frame is still noticed, not silently frozen).
     _GRAB_STALE_SECONDS = 2.0
 
+    def last_confirmed(self):
+        """The newest cat position this detector *confirmed* (any locator-class
+        box ≥ ``cat_confidence``, or a track-fusion confirm), or ``None``.
+
+        ``{"box", "label", "score", "age_s"}`` — the drawing-level track behind
+        the "last known location" overlay (0.42.1): seconds-fresh, updated on
+        every confirming detection, and entirely separate from the throttled
+        sightings log."""
+        with self._live_lock:
+            rec = self._cat_live_confirmed
+        if rec is None:
+            return None
+        box, label, score, ts = rec
+        return {"box": box, "label": label, "score": score,
+                "age_s": max(0.0, time.time() - ts)}
+
     @staticmethod
     def _age_label(seconds: float) -> str:
         """'42s' / '7m' / '3h' — compact age for on-feed overlay labels."""
@@ -766,10 +786,13 @@ class PersonDetector:
         while the detection loop writes the underlying frame.
 
         ``last_known`` (0.42.0) — ``{"box", "label", "age_s"}`` for the camera's
-        newest *recorded* sighting: drawn as a grey box with an age label, so the
-        feed always answers "where was she last?" even when nothing is detected
-        now. A live targeted-boost hint is drawn too (orange, "checking (lead)"),
-        so you can see where the boost is aiming. Live detection boxes go on top.
+        newest *confirmed* cat position: drawn as a grey box with an age label,
+        so the feed always answers "where was she last?" even when nothing is
+        detected now. Suppressed while a fresh locator-class box is on screen
+        (0.42.1) — a live cat box IS the answer; a grey echo of it would read
+        as a second cat. A live targeted-boost hint is drawn too (orange,
+        "checking (lead)"), so you can see where the boost is aiming. Live
+        detection boxes go on top.
         """
         import cv2
 
@@ -786,7 +809,9 @@ class PersonDetector:
             overlaid = self._trail.render(img)
             if overlaid is not None:
                 img = overlaid
-        if last_known:
+        cat_on_screen = fresh and any(
+            self._is_locator_hit(lab, s) for lab, s, _ in boxes)
+        if last_known and not cat_on_screen:
             x1, y1, x2, y2 = (int(v) for v in last_known["box"])
             cv2.rectangle(img, (x1, y1), (x2, y2), (170, 170, 170), 1)
             cv2.putText(img,
@@ -1192,11 +1217,24 @@ class PersonDetector:
             # person's just-made stamps retroactively (0.41.0).
             self._trail.erase_recent(person_boxes)
         cat_seen = any(self._is_locator_hit(lab, score) for lab, score, _ in boxes)
+        # Track the newest confirmed cat position for the "last known" overlay
+        # (0.42.1): every ≥cat_confidence hit updates it — a drawing-level track,
+        # NOT a log write, so the sightings log keeps its throttled cadence. A
+        # fused (track) confirmation counts too; a real box outranks it.
+        best_cat = None
+        for lab, score, box in boxes:
+            if self._is_locator_hit(lab, score) and (best_cat is None
+                                                     or score > best_cat[2]):
+                best_cat = (tuple(box), lab, score)
+        if best_cat is None and fused:
+            best_cat = (tuple(fused["box"]), "cat", fused["score"])
         with self._live_lock:
             self._last_boxes = boxes           # fresh detections (possibly empty)
             self._live_boxes_at = now
             if cat_seen or fused:
                 self._cat_last_seen = now
+            if best_cat is not None:
+                self._cat_live_confirmed = (*best_cat, time.time())
             if fused:
                 self._fused_hit = fused        # claimed (and recorded) by the loop
             self._live_version += 1            # boxes changed → stream re-renders

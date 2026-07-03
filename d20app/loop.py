@@ -218,11 +218,24 @@ class DetectionLoop:
                              last_known=self._last_known(name) if last_known else None)
 
     def _last_known(self, name: str | None) -> dict | None:
-        """The streamed camera's newest sighting as an overlay payload, or None
-        (none recorded, older than :data:`_LAST_KNOWN_TTL`, or no camera)."""
+        """The streamed camera's newest confirmed cat position as an overlay
+        payload, or None (nothing known, older than :data:`_LAST_KNOWN_TTL`, or
+        no camera).
+
+        Prefers the detector's live confirmation track (0.42.1) — updated on
+        every ≥cat_confidence detection, so the grey box points at the *true*
+        last confirmed spot instead of lagging the throttled sightings log by
+        up to a record interval. The log is the fallback (it survives a loop
+        restart; the live track doesn't)."""
         cam = name if name and name in self._detectors else self._live_name
         if not cam:
             return None
+        det = self._detectors.get(cam)
+        if det is not None:
+            live = det.last_confirmed()
+            if live and live["age_s"] <= _LAST_KNOWN_TTL:
+                return {"box": live["box"], "label": live["label"],
+                        "age_s": live["age_s"]}
         s = self.cats.last_for(cam)
         if not s or not s.get("box"):
             return None
