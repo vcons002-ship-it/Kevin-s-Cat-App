@@ -11,6 +11,43 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.40.0] — 2026-07-03
+
+### Fixed
+- **The default model now ships at its benchmarked size** (#80): the bundled
+  `yolo11n` was a **320** export wearing the **640** benchmark's numbers
+  (75%/0% — measured on the 640 golden 11n only; the 320 was never benchmarked
+  and performed far worse). The bundled file is now a 640 raw-head export and
+  the registry/labels/docs say 640 everywhere. Slightly more CPU per frame,
+  honest accuracy. *(NAS: run the batch benchmark once against the full set to
+  pin this exact file's numbers — the weights are the same as the golden 11n;
+  the export flags may differ cosmetically.)*
+
+### Changed
+- **Dropped models now fail loudly** (#79, answering the design question):
+  `yolo11m` (+ its `_960`/`_1280` locator exports), `yolo11x`, `yolo26n`, and
+  `mobilenet_ssd` names raise an actionable error ("dropped in #71 — pick
+  yolo26m/yolo11n…") at load and stop the loop like any config error, instead
+  of quietly running a worse detector — the 0.25.0 no-silent-fallback stance
+  applied consistently, as the issue argued. `yolo11m.onnx` and
+  `yolo11m_960.onnx` are removed from the tree (~160 MB less checkout; git
+  *history* is deliberately left unrewritten — see the #79 reply).
+- **The >640 "locator input" knob is retired** (#79/#70 §5): 960/1280 input
+  measured *worse* than 640 across the board, so the per-camera "Cat input
+  size" select is gone and `cat_scan_imgsz` is a legacy no-op (old configs
+  still load; any value falls back to native + tiling). Tiling is the
+  resolution lever.
+
+### Notes
+- Suite: **319 tests** (+2 net: the dropped-model coverage replaced the old
+  yolo11m variant tests — dropped names raise the actionable error,
+  a dropped model in a detector is fatal-not-retried, the 640 floor is
+  asserted, decode parity now runs at the export's true size).
+- Old configs: a camera that names `yolo11m*` will now stop with a clear
+  message naming the replacement — that's the intended behaviour per #79
+  (two-person setup, no silent degradation). Everything else coerces as
+  before.
+
 ## [0.39.0] — 2026-07-03
 
 ### Fixed

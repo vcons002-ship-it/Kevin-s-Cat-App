@@ -338,7 +338,7 @@ class PersonDetector:
         self.contrast = float(contrast)
         self.saturation = float(saturation)
         # Which YOLO model to run: "yolo11n" (default — low light/odd poses, ~1.4x
-        # CPU), "yolo11m"/"yolo26m"/"yolo26x" (bigger/stronger), etc. A model that
+        # CPU), "yolo26m"/"yolo26x" (bigger/stronger), etc. A model that
         # can't load raises a clear error (MobileNet-SSD was removed in 0.25.0).
         self.model = model or "yolo11n"
         # Where the YOLO conv layers run: "cpu" (default), "opencl" (iGPU via
@@ -349,7 +349,7 @@ class PersonDetector:
         self._yolo_size = None  # the loaded variant's fixed input size
         self.roi = roi          # optional [x, y, w, h]
         # Legacy MobileNet-SSD net input size. Ignored since 0.25.0 — YOLO uses its
-        # exported fixed size; pick resolution via the model name (e.g. yolo11m_960).
+        # exported fixed size; every deployed model is a 640 export (#70/#80).
         # Kept as a no-op so old callers/configs don't break.
         self.detect_size = int(detect_size) if detect_size else 300
         # Min confidence to NAME a non-person mover (cat/pottedplant/…) in the log
@@ -415,6 +415,11 @@ class PersonDetector:
         from . import yolo
         try:
             self._yolo = yolo.load_net(self.model, self.accelerator)
+        except ValueError as exc:
+            # Unknown or DROPPED model (#79): a config error, not a camera hiccup —
+            # surface it through the loop's fatal path (same as a missing file) so
+            # it stops loudly instead of retrying forever.
+            raise FileNotFoundError(str(exc)) from exc
         except Exception as exc:            # noqa: BLE001 — degrade the *accelerator*…
             # A failed accelerator (e.g. no GPU/driver) shouldn't cost the model:
             # retry the same YOLO on CPU. If even that fails, raise clearly — there's

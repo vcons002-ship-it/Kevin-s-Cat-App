@@ -67,8 +67,9 @@ off-by-default privacy toggle.
 
 ### The recommended upgrade (one-time, on the GPU box)
 
-Out of the box the app uses the bundled **yolo11n** (the benchmark "floor":
-75% recall / 0% FP, tiny). The **proven workhorse** is **yolo26x FP16 @ 3×3**
+Out of the box the app uses the bundled **yolo11n at 640** (the benchmark
+"floor": 75% recall / 0% FP — the 640 export is the one those numbers belong
+to, #80). The **proven workhorse** is **yolo26x FP16 @ 3×3**
 (91% / 0%, 167 ms warm on the deployment 3070). It's too big to bundle, so
 export it once where your `.pt` weights live:
 

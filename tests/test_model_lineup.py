@@ -49,9 +49,9 @@ def test_selectable_lineup_excludes_dropped_models():
     import os
     if not os.path.exists(yolo.model_path("yolo26x")):
         assert "yolo26x" not in values
-    # ...but old configs still load: the registry entry survives
-    assert "yolo11m" in yolo.MODELS
-    assert yolo.MODELS["yolo11m"]["selectable"] is False
+    # ...and a config naming one gets a loud, actionable error (#79/#80)
+    assert "yolo11m" in yolo.DROPPED_MODELS
+    assert yolo.MODELS["yolo11n"]["size"] == 640    # the benchmarked floor (#80)
 
 
 def test_benchmark_settled_defaults():

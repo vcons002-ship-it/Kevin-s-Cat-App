@@ -120,12 +120,12 @@ def test_hard_pose_people_are_detected():
 def test_distant_cats_are_identified_at_high_detail():
     """A cat ~1/4 of the frame is recognised by the bundled medium model.
 
-    The locator path uses a higher-resolution model (yolo11m, 640) to resolve a
+    The locator path uses a stronger model (yolo26m, 640) to resolve a
     small/distant cat; assert that capability explicitly.
     """
     import numpy as np
 
-    det = _detector(confidence=0.4, model="yolo11m")
+    det = _detector(confidence=0.4, model="yolo26m")
     hits = 0
     for p in CATS:
         cat = cv2.imread(p)

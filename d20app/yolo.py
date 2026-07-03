@@ -14,9 +14,11 @@ The selectable lineup is benchmark-settled (#70/#71; see :data:`MODELS`):
 - ``yolo26x`` — the workhorse: 91% recall / 0% FP at 3×3/0.20 tiling. Export-only
   (~213 MB); FP16 makes it the everyday pick on CUDA (167 ms warm on a 3070).
 - ``yolo26m`` — the lightweight: 82%/0% at 2×2/0.20, 64 ms FP16.
-- ``yolo11n`` — the floor: 75%/0% at 3×3, tiny and CPU-friendly. The default.
-- ``yolo11m`` variants remain loadable for old configs but aren't selectable —
-  golden-exported 26m beats 11m (#71 reversed the earlier ``.pt``-era call).
+- ``yolo11n`` — the floor: 75%/0% at 3×3, small and CPU-friendly. The default.
+  Bundled at **640** (#80: the earlier 320 export was never benchmarked and ran
+  far below the 640 numbers it was labelled with).
+- Dropped models (``yolo11m`` and friends) now raise a loud, actionable error
+  (#79) — the no-silent-worse-detector stance of 0.25.0, applied consistently.
 
 Each model is exported from its Ultralytics ``*.pt`` to a fixed-size ONNX (see
 d20app/models/README.md). Raw output is ``(1, 84, N)``: 4 box coords (cx, cy, w,
@@ -32,8 +34,8 @@ Acceleration (``accelerator`` argument to :func:`load_net`):
 - ``openvino-gpu`` / ``openvino-auto`` — run the ONNX through Intel's **OpenVINO**
   runtime (optional ``openvino`` package) on the ``GPU`` device, or ``AUTO`` which
   picks GPU and falls back to CPU itself. The dependable iGPU path — typically
-  2–4× CPU on Intel hardware and the thing that makes the heavier ``yolo11m``
-  practical. **Intel-only**; needs the host Intel GPU compute drivers.
+  2–4× CPU on Intel hardware — useful headroom for the heavier models.
+  **Intel-only**; needs the host Intel GPU compute drivers.
 
 Whatever the backend, inference returns the same ``(1, 84, N)`` tensor, so the
 letterbox + NMS decode below is shared. ``load_net`` returns a small *runner*
@@ -71,9 +73,9 @@ _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 # The benchmark-settled lineup (#70/#71, full 199-cat + 43-null set, golden exports):
 # 26x = workhorse (91% recall / 0% FP @ 3×3/0.20), 26m = lightweight (82%/0% @
 # 2×2/0.20), 11n = floor (75%/0%). 11m and 26n were dropped — with the golden export
-# 26m beats 11m and 11n beats 26n (11x was tested and rejected: FP-prone). Dropped
-# models keep registry entries (``selectable: False``) so a saved camera naming one
-# still loads; they just can't be picked for new configs. FP16 exports cost ~0
+# 26m beats 11m and 11n beats 26n (11x was tested and rejected: FP-prone). A config
+# naming a dropped model gets a loud error (DROPPED_MODELS below, #79) — never a
+# silent worse detector. FP16 exports cost ~0
 # accuracy and run up to 2.2× faster on CUDA (#70 §4) — benchmark-verified on
 # onnxruntime-CUDA only; cv2.dnn's handling of FP16 weights is NOT verified, so use
 # them with the auto / onnx-cuda accelerators. Every model must be GOLDEN-exported:
@@ -81,8 +83,11 @@ _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 # an end2end (1, 300, 6) export mis-decodes and detect_boxes() now rejects it loudly.
 # Files not committed (26x, fp16 variants) appear in the picker once exported.
 MODELS = {
-    "yolo11n": {"file": "yolo11n.onnx", "size": 320,
-                "label": "YOLO11n (320) — floor, lowest CPU", "selectable": True},
+    # The floor ships at 640 (#80): the earlier bundled 320 export was never
+    # benchmarked and performed far below the 640 numbers it was labelled with —
+    # the 75%/0% figures belong to the 640 golden 11n, which is what's bundled now.
+    "yolo11n": {"file": "yolo11n.onnx", "size": 640,
+                "label": "YOLO11n (640) — floor, low CPU", "selectable": True},
     "yolo26m": {"file": "yolo26m.onnx", "size": 640,
                 "label": "YOLO26m (640) — lightweight", "selectable": True},
     "yolo26m_fp16": {"file": "yolo26m_fp16.onnx", "size": 640,
@@ -93,15 +98,22 @@ MODELS = {
     "yolo26x_fp16": {"file": "yolo26x_fp16.onnx", "size": 640,
                      "label": "YOLO26x FP16 (640) — workhorse, CUDA",
                      "selectable": True},
-    # Legacy (dropped by #71): loadable for existing configs, not selectable for new.
-    "yolo11m": {"file": "yolo11m.onnx", "size": 640,
-                "label": "YOLO11m (640) — legacy", "selectable": False},
-    "yolo11m_960": {"file": "yolo11m_960.onnx", "size": 960,
-                    "label": "YOLO11m (960) — legacy locator", "selectable": False},
-    "yolo11m_1280": {"file": "yolo11m_1280.onnx", "size": 1280,
-                     "label": "YOLO11m (1280) — legacy locator", "selectable": False},
 }
 DEFAULT_VARIANT = "yolo11n"
+
+# Models DROPPED after the golden benchmark (#70/#71, revisited in #79): naming one
+# raises a loud, actionable error instead of quietly running a worse detector —
+# the same no-silent-fallback stance as the MobileNet-SSD removal (0.25.0). The
+# 960/1280 "locator" exports also embodied a rejected hypothesis: >640 input
+# measured WORSE than 640 on the full set; tiling is the resolution lever.
+DROPPED_MODELS = {
+    "yolo11m": "dropped in #71 — golden-exported yolo26m beats it",
+    "yolo11m_960": "dropped in #79 — >640 input measured worse than 640 (#70); use 3x3 tiling",
+    "yolo11m_1280": "dropped in #79 — >640 input measured worse than 640 (#70); use 3x3 tiling",
+    "yolo11x": "rejected in #70 — false-positive-prone",
+    "yolo26n": "dropped in #71 — golden-exported yolo11n beats it",
+    "mobilenet_ssd": "removed in 0.25.0 (#57) — lost every benchmark to YOLO",
+}
 
 # Where each accelerator runs the conv layers.
 #   cpu / opencl                 — OpenCV cv2.dnn (CPU, or an OpenCL iGPU target)
@@ -239,6 +251,12 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
     """
     import cv2
 
+    if variant in DROPPED_MODELS:
+        raise ValueError(
+            f"model {variant!r} was {DROPPED_MODELS[variant]}. Pick one of "
+            f"{[v for v, m in MODELS.items() if m.get('selectable', True)]} instead "
+            "(see the benchmark, issue #70)."
+        )
     if variant not in MODELS:
         raise ValueError(f"unknown YOLO variant {variant!r}; known: {sorted(MODELS)}")
     accel = (accelerator or "cpu").lower()

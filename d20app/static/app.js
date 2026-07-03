@@ -52,7 +52,8 @@ async function loadModelOptions() {
 const ACCEL_OPTS = [["auto", "Auto — CUDA if available (rec.)"], ["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"], ["onnx-cuda", "NVIDIA CUDA (onnxruntime-gpu)"]];
 const SENS_OPTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"]];
 const TILING_OPTS = [["off", "Off"], ["2x2", "2×2"], ["3x3", "3×3"], ["4x4", "4×4"]];
-const IMGSZ_OPTS = [["0", "Native"], ["640", "640"], ["960", "960"], ["1280", "1280"]];
+// (The "Cat input size" 960/1280 knob was removed in 0.40.0 — the benchmark (#70)
+// measured >640 input as WORSE than 640; tiling is the resolution lever.)
 const optsHTML = (list, val) => list.map(([v, l]) =>
   `<option value="${v}" ${String(v) === String(val) ? "selected" : ""}>${l}</option>`).join("");
 
@@ -133,7 +134,6 @@ function cameraCardHTML(cam) {
         <label class="checkbox" title="count a 'dog' as the cat — for a no-dog household where the model mislabels the cat"><input type="checkbox" data-dog ${(cam.locator_classes || []).includes("dog") ? "checked" : ""}/> Count dogs as the cat</label>
         <label>Motion sensitivity <select data-f="motion_sensitivity">${optsHTML(SENS_OPTS, cam.motion_sensitivity)}</select></label>
         <label title="still-cat scan: tile the frame so a small/distant cat fills more of the net">Cat tiling <select data-f="cat_scan_tiling">${optsHTML(TILING_OPTS, cam.cat_scan_tiling)}</select></label>
-        <label title="still-cat scan input size (YOLO needs a matching exported model, e.g. yolo11m_960)">Cat input size <select data-f="cat_scan_imgsz">${optsHTML(IMGSZ_OPTS, cam.cat_scan_imgsz)}</select></label>
         <label title="still-cat scan: average this many back-to-back frames before the net — cuts sensor noise on a still scene (helps dim rooms); any movement mid-burst falls back to a single frame. 1 = off">Scan frames <input type="number" min="1" max="8" data-f="cat_scan_frames" value="${cam.cat_scan_frames}"/></label>
         <label class="checkbox" title="temporal fusion: a string of weak cat detections that chain smoothly and actually move across the frame is confirmed as one sighting (source 'track') — catches a walking cat no single frame can confirm. The movement requirement keeps cat-shaped decoys out."><input type="checkbox" data-f="track_fusion" ${cam.track_fusion !== false ? "checked" : ""}/> Track fusion</label>
       </div>
