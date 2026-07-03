@@ -395,6 +395,11 @@ class PersonDetector:
         # every frame read. Cheap (capped working resolution) and thread-safe.
         from .trail import TrailTracker
         self._trail = TrailTracker(diff_threshold=motion_diff_threshold)
+        # Person exclusion for the trail (0.41.0): the freshest person boxes the
+        # net produced, so human movement doesn't stamp cat-sized blobs. Written
+        # and read on the camera worker thread only — no lock needed.
+        self._person_boxes: list = []
+        self._person_boxes_at = 0.0
         # Frame ring buffer (#68): the last few seconds of (downscaled) frames for
         # the temporal VLM mosaic ("did a cat pass through?"). ~8 frames spaced ≥1 s
         # at ≤480 px ≈ well under 3 MB per camera. Guarded by _live_lock.
@@ -407,6 +412,20 @@ class PersonDetector:
         from .fusion import TrackFuser
         self._fusion = TrackFuser()
         self._fused_hit = None          # last unclaimed confirmation (see take_fused_hit)
+        # Targeted boost (0.42.0): an unconfirmed lead's box — forced scans zoom a
+        # full-resolution crop around it and run the heaviest available model on
+        # it (#70: heavier model helps; raw >640 input doesn't — the crop is the
+        # resolution lever that measured well). Hint written by web threads, read
+        # by the worker: the tuple is rebound, never mutated (lock-free pattern).
+        self._boost_hint = None         # ((x1, y1, x2, y2), monotonic deadline)
+        self._boost_runner = None       # heavier net, loaded once on first use
+        self._boost_size = 0
+        self._boost_model = ""
+        self._boost_tried = False
+        # Newest confirmed cat position (box, label, score, wall ts) — feeds the
+        # "last known location" overlay at per-detection freshness (0.42.1).
+        # Guarded by _live_lock; never written to the sightings log from here.
+        self._cat_live_confirmed = None
 
     # -- model / stream lifecycle -------------------------------------------
     def _ensure_net(self):
@@ -556,6 +575,68 @@ class PersonDetector:
                     collected.append((label, score, (a + x0, b + y0, c + x0, d + y0)))
         return yolo.merge_nms(collected, floor)
 
+    # -- targeted boost: zoom + the heaviest available model (0.42.0) ----------
+    def set_boost_hint(self, box, seconds: float) -> None:
+        """Aim forced scans at ``box`` (ROI-crop coords) for ``seconds``.
+
+        Used when an unconfirmed lead (a VLM "yes") names a *place*: the boost
+        shouldn't just look harder everywhere, it should look hardest there."""
+        self._boost_hint = (tuple(int(v) for v in box),
+                            time.monotonic() + max(0.0, float(seconds)))
+
+    def boost_hint(self):
+        """The live targeted-boost box (ROI-crop coords), or None if expired."""
+        hint = self._boost_hint
+        if hint and time.monotonic() < hint[1]:
+            return hint[0]
+        return None
+
+    def _boost_net(self):
+        """The heaviest available model for targeted boosts, or ``None`` to use
+        the camera's own net. Picked per #70 (heavier model beats bigger input),
+        loaded once, and degrades with a logged warning — never crashes a scan."""
+        if not self._boost_tried:
+            self._boost_tried = True
+            from . import yolo
+            variant = yolo.boost_variant(self.model, self.accelerator)
+            if variant:
+                try:
+                    self._boost_runner = yolo.load_net(variant, self.accelerator)
+                    self._boost_size = yolo.input_size(variant)
+                    self._boost_model = variant
+                    _log.info("targeted boost runs %s (camera model: %s)",
+                              variant, self.model)
+                except Exception as exc:   # noqa: BLE001 — degrade to the camera's net
+                    _log.warning("boost model %s unavailable (%s) — targeted "
+                                 "boost uses %s", variant, exc, self.model)
+        return self._boost_runner
+
+    def _detect_hint(self, cropped, hint_box, floor: float, boxes: list) -> list:
+        """Zoom-scan a full-res crop around ``hint_box`` and merge the mapped-back
+        results into ``boxes``.
+
+        The crop makes the suspected cat large in the net's input — the
+        resolution lever #70 proved out (tiling/zoom), where raw >640 input
+        measured worse — and the pass runs on the heaviest model on disk."""
+        from . import yolo
+        from .escalation import map_box_to_frame, square_crop_box
+
+        h, w = cropped.shape[:2]
+        cx1, cy1, cx2, cy2 = square_crop_box(hint_box, (w, h))
+        crop = cropped[cy1:cy2, cx1:cx2]
+        if crop.size == 0:
+            return boxes
+        runner = self._boost_net()
+        if runner is not None:
+            found = yolo.detect_boxes(runner, crop, floor, size=self._boost_size)
+        else:
+            found = self._run_net(crop, floor)
+        if not found:
+            return boxes
+        mapped = [(lab, s, map_box_to_frame(b, (cx1, cy1, cx2, cy2)))
+                  for lab, s, b in found]
+        return yolo.merge_nms(list(boxes) + mapped, floor)
+
     @staticmethod
     def _best(boxes, label: str) -> float:
         return max((s for lab, s, _ in boxes if lab == label), default=0.0)
@@ -666,7 +747,32 @@ class PersonDetector:
     # camera that dies after a good frame is still noticed, not silently frozen).
     _GRAB_STALE_SECONDS = 2.0
 
-    def live_jpeg(self, trail: bool = False) -> bytes | None:
+    def last_confirmed(self):
+        """The newest cat position this detector *confirmed* (any locator-class
+        box ≥ ``cat_confidence``, or a track-fusion confirm), or ``None``.
+
+        ``{"box", "label", "score", "age_s"}`` — the drawing-level track behind
+        the "last known location" overlay (0.42.1): seconds-fresh, updated on
+        every confirming detection, and entirely separate from the throttled
+        sightings log."""
+        with self._live_lock:
+            rec = self._cat_live_confirmed
+        if rec is None:
+            return None
+        box, label, score, ts = rec
+        return {"box": box, "label": label, "score": score,
+                "age_s": max(0.0, time.time() - ts)}
+
+    @staticmethod
+    def _age_label(seconds: float) -> str:
+        """'42s' / '7m' / '3h' — compact age for on-feed overlay labels."""
+        if seconds < 90:
+            return f"{int(seconds)}s"
+        if seconds < 5400:
+            return f"{int(round(seconds / 60))}m"
+        return f"{int(round(seconds / 3600))}h"
+
+    def live_jpeg(self, trail: bool = False, last_known=None) -> bytes | None:
         """JPEG of the most recent frame, with recent detection boxes overlaid.
 
         Drives the live GUI stream. Returns the latest read frame (not just the
@@ -678,6 +784,15 @@ class PersonDetector:
         top; no trail this episode simply shows the plain feed. ``None`` until a
         frame has been read. Thread-safe: the web request thread calls this
         while the detection loop writes the underlying frame.
+
+        ``last_known`` (0.42.0) — ``{"box", "label", "age_s"}`` for the camera's
+        newest *confirmed* cat position: drawn as a grey box with an age label,
+        so the feed always answers "where was she last?" even when nothing is
+        detected now. Suppressed while a fresh locator-class box is on screen
+        (0.42.1) — a live cat box IS the answer; a grey echo of it would read
+        as a second cat. A live targeted-boost hint is drawn too (orange,
+        "checking (lead)"), so you can see where the boost is aiming. Live
+        detection boxes go on top.
         """
         import cv2
 
@@ -694,6 +809,23 @@ class PersonDetector:
             overlaid = self._trail.render(img)
             if overlaid is not None:
                 img = overlaid
+        cat_on_screen = fresh and any(
+            self._is_locator_hit(lab, s) for lab, s, _ in boxes)
+        if last_known and not cat_on_screen:
+            x1, y1, x2, y2 = (int(v) for v in last_known["box"])
+            cv2.rectangle(img, (x1, y1), (x2, y2), (170, 170, 170), 1)
+            cv2.putText(img,
+                        f"last known: {last_known.get('label', 'cat')} "
+                        f"({self._age_label(last_known.get('age_s', 0))} ago)",
+                        (x1, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (190, 190, 190), 1, cv2.LINE_AA)
+        hint = self.boost_hint()
+        if hint is not None:
+            x1, y1, x2, y2 = hint
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 165, 255), 1)
+            cv2.putText(img, "checking (lead)", (x1, max(14, y1 - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1,
+                        cv2.LINE_AA)
         if fresh:
             self._draw_boxes(img, boxes)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -782,6 +914,14 @@ class PersonDetector:
     # (#70's measured detection floor was 0.25; 0.2 keeps a little headroom for the
     # genuinely-weak-but-real hits fusion exists to accumulate).
     _FUSE_FLOOR = 0.2
+
+    # Trail person-exclusion freshness (0.41.0): person boxes older than this stop
+    # masking the trail. Short on purpose — long enough to ride out a per-frame
+    # detection flicker, short enough that a spot a person just left is trail-able
+    # again quickly. Honest limit: during the cooldown detection-pause the net is
+    # skipped, so no fresh boxes exist and a person moving through the pause can
+    # still stamp (erase_recent() cleans up what detection sees when it resumes).
+    _PERSON_EXCLUDE_SECS = 3.0
 
     def take_fused_hit(self):
         """Pop the latest temporal-fusion confirmation (or None). The loop claims it
@@ -1027,7 +1167,16 @@ class PersonDetector:
         cropped = self._crop(frame)
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         moved = self._motion.update(gray)      # keep the baseline fresh even when paused
-        self._trail.update(gray, moved)        # cat-trail silhouettes + endpoint (#67)
+        # Cat-trail silhouettes + endpoint (#67). Fresh person boxes are blanked
+        # out of the stamp (0.41.0): a human arm moves in cat-sized blobs, and
+        # the trail is a cat trail. The boxes are the PREVIOUS net run's (the net
+        # goes after the trail each frame) — erase_recent() below scrubs the
+        # frame or two that slip through when a person first appears.
+        exclude = ()
+        if self._person_boxes and (time.monotonic() - self._person_boxes_at
+                                   <= self._PERSON_EXCLUDE_SECS):
+            exclude = self._person_boxes
+        self._trail.update(gray, moved, exclude=exclude)
         self._push_ring(cropped)               # temporal-mosaic frame history (#68)
         # Run the net on real motion, or when a forced still-cat scan asks for it.
         if not force and (not detect or not moved):
@@ -1039,6 +1188,11 @@ class PersonDetector:
         fused = None
         if force:
             boxes = self._detect_locator(frame, floor)
+            hint = self.boost_hint()
+            if hint is not None:
+                # Targeted boost (0.42.0): also zoom the suspected spot at full
+                # resolution with the heaviest available model.
+                boxes = self._detect_hint(cropped, hint, floor, boxes)
         elif self.track_fusion:
             # Temporal fusion (0.37.0): decode down to the weak floor in the SAME
             # forward pass (the floor is a post-filter, not extra inference). Weak
@@ -1055,12 +1209,32 @@ class PersonDetector:
             boxes = self._detect_boxes(frame, floor)
         self._last_frame = cropped             # what the net saw (box coords match)
         now = time.monotonic()
+        person_boxes = [b for lab, _s, b in boxes if lab == "person"]
+        if person_boxes:
+            self._person_boxes = person_boxes
+            self._person_boxes_at = now
+            # The trail stamped this frame BEFORE the net ran — scrub the
+            # person's just-made stamps retroactively (0.41.0).
+            self._trail.erase_recent(person_boxes)
         cat_seen = any(self._is_locator_hit(lab, score) for lab, score, _ in boxes)
+        # Track the newest confirmed cat position for the "last known" overlay
+        # (0.42.1): every ≥cat_confidence hit updates it — a drawing-level track,
+        # NOT a log write, so the sightings log keeps its throttled cadence. A
+        # fused (track) confirmation counts too; a real box outranks it.
+        best_cat = None
+        for lab, score, box in boxes:
+            if self._is_locator_hit(lab, score) and (best_cat is None
+                                                     or score > best_cat[2]):
+                best_cat = (tuple(box), lab, score)
+        if best_cat is None and fused:
+            best_cat = (tuple(fused["box"]), "cat", fused["score"])
         with self._live_lock:
             self._last_boxes = boxes           # fresh detections (possibly empty)
             self._live_boxes_at = now
             if cat_seen or fused:
                 self._cat_last_seen = now
+            if best_cat is not None:
+                self._cat_live_confirmed = (*best_cat, time.time())
             if fused:
                 self._fused_hit = fused        # claimed (and recorded) by the loop
             self._live_version += 1            # boxes changed → stream re-renders

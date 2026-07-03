@@ -211,6 +211,15 @@ class CatTracker:
         with self._lock:
             return dict(self._sightings[-1]) if self._sightings else None
 
+    def last_for(self, camera: str) -> dict | None:
+        """Newest sighting recorded for ``camera``, or None. Drives the live
+        feed's "last known location" overlay (0.42.0)."""
+        with self._lock:
+            for s in reversed(self._sightings):
+                if s.get("camera") == camera:
+                    return dict(s)
+        return None
+
     def count_since(self, ts: float) -> int:
         with self._lock:
             return sum(1 for s in self._sightings if s.get("ts", 0) >= ts)

@@ -24,6 +24,13 @@ Design notes, honestly:
   the cat plausibly *didn't leave*: the escalation ladder uses it as its
   highest-priority "look here" hint, and the endpoint drives the honest
   **"probable location"** state when detection still fails.
+- **People don't leave trails** (0.41.0): a human arm moves in cat-sized blobs, so
+  fresh person boxes are blanked out of the mask before stamping, and — because
+  the trail stamps each frame *before* the net runs — `erase_recent()` scrubs the
+  stamps a person made just before the net named them. Honest limit: while the
+  net is paused (the cooldown detection-pause) there are no fresh person boxes,
+  so a person moving through *during the pause* can still stamp until detection
+  resumes and the erase catches whatever falls inside the then-current box.
 - Work happens at a capped resolution (`MAX_DIM`) — a fraction of a megabyte per
   camera and a few small-image ops per frame; boxes are mapped back to the
   detector's (ROI-cropped) frame coordinates.
@@ -51,6 +58,13 @@ MAX_SILHOUETTE_FRAC = 0.25  # a single blob bigger than this isn't an animal eit
 MAX_BLOBS = 4               # keep only the largest few plausible blobs per frame
 PATH_MAX_POINTS = 400       # centroid path memory per episode (draws the route line)
 TINT_ALPHA = 0.35           # silhouette tint strength (0.55 was unreadable on real footage)
+# Person exclusion (0.41.0): a human arm moves in cat-sized blobs, so the trail is
+# blind wherever a person box stands. Boxes are padded (clothes/shadows spill past
+# the detector's box) and applied two ways: `exclude=` blanks the mask before
+# stamping, and `erase_recent()` scrubs stamps made just before the net named the
+# mover a person (the trail stamps BEFORE detection runs each frame).
+EXCLUDE_PAD_FRAC = 0.10     # person boxes grown by this fraction on each side
+ERASE_WINDOW_SECS = 5.0     # erase_recent() scrubs stamps newer than this
 
 
 class TrailTracker:
@@ -83,6 +97,24 @@ class TrailTracker:
         small = cv2.resize(gray, (int(round(w / scale)), int(round(h / scale))))
         return cv2.medianBlur(small, 5)
 
+    def _small_boxes(self, boxes) -> list:
+        """Frame-coord ``(x1, y1, x2, y2)`` boxes → padded, clamped boxes in the
+        small working resolution. Call with the lock held (reads ``_shape``)."""
+        if self._shape is None:
+            return []
+        h, w = self._shape
+        out = []
+        for (x1, y1, x2, y2) in boxes:
+            s = self._scale
+            x1, y1, x2, y2 = x1 / s, y1 / s, x2 / s, y2 / s
+            px = (x2 - x1) * EXCLUDE_PAD_FRAC
+            py = (y2 - y1) * EXCLUDE_PAD_FRAC
+            bx1, by1 = int(max(0.0, x1 - px)), int(max(0.0, y1 - py))
+            bx2, by2 = int(min(float(w), x2 + px)) + 1, int(min(float(h), y2 + py)) + 1
+            if bx2 > bx1 and by2 > by1:
+                out.append((bx1, by1, min(bx2, w), min(by2, h)))
+        return out
+
     def _reset_for(self, shape) -> None:
         import numpy as np
 
@@ -94,8 +126,13 @@ class TrailTracker:
         self._path = []              # [(ts, cx, cy)] silhouette centroids, small coords
 
     # -- update (camera worker thread) ----------------------------------------
-    def update(self, gray, moved: bool, now: float | None = None) -> None:
-        """Feed one (ROI-cropped, full-res) grayscale frame + the motion verdict."""
+    def update(self, gray, moved: bool, now: float | None = None,
+               exclude=()) -> None:
+        """Feed one (ROI-cropped, full-res) grayscale frame + the motion verdict.
+
+        ``exclude`` — frame-coord boxes (fresh **person** detections) whose pixels
+        must not stamp the trail: a person's arm movements are cat-sized blobs,
+        and the trail is a *cat* trail (0.41.0)."""
         import cv2
         import numpy as np
 
@@ -127,6 +164,12 @@ class TrailTracker:
             mask = cv2.morphologyEx(
                 mask, cv2.MORPH_OPEN,
                 cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+
+            # Person exclusion (0.41.0): blank person boxes BEFORE the flood
+            # guard, so a close-up human neither stamps the trail nor reads as
+            # a lighting event.
+            for (ex1, ey1, ex2, ey2) in self._small_boxes(exclude):
+                mask[ey1:ey2, ex1:ex2] = 0
 
             # Global-change guard (0.39.0): a diff covering most of the frame is a
             # lighting/exposure/white-balance event, not an animal — the first NAS
@@ -172,6 +215,67 @@ class TrailTracker:
             self._path.append((now, float(xs.mean()), float(ys.mean())))
             if len(self._path) > PATH_MAX_POINTS:
                 del self._path[:len(self._path) - PATH_MAX_POINTS]
+
+    def erase_recent(self, boxes, now: float | None = None,
+                     window: float = ERASE_WINDOW_SECS) -> None:
+        """Scrub trail stamped within the last ``window`` seconds inside
+        ``boxes`` (frame-coord person detections).
+
+        The trail stamps each frame *before* the net runs, so when the net then
+        reports a person, that person's silhouette is already in the buffer —
+        this removes it (pixels, route points, and the endpoint if it was the
+        person) while leaving older, genuinely-cat trail untouched."""
+        import numpy as np
+
+        now = time.time() if now is None else now
+        cutoff = now - window
+        with self._lock:
+            if self._ts_buf is None:
+                return
+            small = self._small_boxes(boxes)
+            if not small:
+                return
+
+            def inside(x: float, y: float) -> bool:
+                return any(x1 <= x < x2 and y1 <= y < y2
+                           for (x1, y1, x2, y2) in small)
+
+            def stamp_box(ts: float):
+                """Bounding box + centroid of the pixels stamped at exactly
+                ``ts`` (stamps store exact clock values, so equality is safe)."""
+                ys, xs = np.nonzero(self._ts_buf == ts)
+                if not len(xs):
+                    return None, None
+                return ((int(xs.min()), int(ys.min()),
+                         int(xs.max()) + 1, int(ys.max()) + 1),
+                        (float(xs.mean()), float(ys.mean())))
+
+            for (x1, y1, x2, y2) in small:
+                region = self._ts_buf[y1:y2, x1:x2]
+                region[region > cutoff] = 0.0
+            # Route points from the window: drop the ones inside a person box.
+            self._path = [(t, x, y) for (t, x, y) in self._path
+                          if t <= cutoff or not inside(x, y)]
+            if self._last_ts > cutoff:
+                # The newest stamp may have mixed person + cat pixels — rebuild
+                # its box/centroid from what the scrub left, or fall back to the
+                # previous stamp if it was entirely the person.
+                box, centroid = stamp_box(self._last_ts)
+                if box is not None:
+                    self._last_box = box
+                    if self._path and self._path[-1][0] == self._last_ts:
+                        self._path[-1] = (self._last_ts, *centroid)
+                else:
+                    if self._path and self._path[-1][0] == self._last_ts:
+                        self._path.pop()
+                    self._last_ts = self._path[-1][0] if self._path else 0.0
+                    self._last_box, _ = (stamp_box(self._last_ts)
+                                         if self._last_ts else (None, None))
+            if not self._path and not self._ts_buf.any():
+                # The whole episode was the person: forget it entirely.
+                self._episode_start = 0.0
+                self._last_box = None
+                self._last_ts = 0.0
 
     # -- reads (web threads) ---------------------------------------------------
     def endpoint(self, now: float | None = None):

@@ -326,6 +326,9 @@ def test_escalate_live_vlm_lead_probable_boosts_and_never_records(monkeypatch, t
     assert "3/3" in body["probable"]["note"]
     assert len(loop.cats.recent(limit=500)) == before   # no sighting recorded
     assert loop._cat_boost.get("Room")                  # YOLO gets its chance
+    # Targeted (0.42.0): the boost carries the lead's box, so forced scans zoom
+    # that exact spot with the heaviest available model.
+    assert det.boost_hint() == tuple(body["probable"]["box"])
 
 
 def test_vlm_status_exposes_escalation_flag():

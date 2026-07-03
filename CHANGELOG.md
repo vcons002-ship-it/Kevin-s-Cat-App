@@ -11,6 +11,65 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.42.1] — 2026-07-03
+
+### Changed
+- **"Last known location" is now live-tracked and self-effacing** (from the
+  hard-mode demo review): the grey box previously followed the *sightings
+  log*, which is throttled on purpose (~10 s between motion records,
+  rising-edge still scans) — so it could lag mid-room while the cat was
+  visibly boxed elsewhere, reading like a second cat. Now (a) the detector
+  keeps a drawing-level track updated on **every** ≥`cat_confidence`
+  detection (and track-fusion confirm) — no extra log writes, the log keeps
+  its throttled cadence — and the overlay draws from that, falling back to
+  the log only when the track is empty (e.g. right after a restart); and
+  (b) the grey box is **suppressed while a fresh cat box is on screen** —
+  a live detection *is* the answer; a stale grey echo of it isn't. Net
+  effect: cat visible → no grey box; cat vanishes → the grey box appears
+  exactly where she was last confirmed, seconds-fresh.
+
+## [0.42.0] — 2026-07-03
+
+### Added
+- **Targeted boost**: when an unconfirmed VLM lead names a *place*, the
+  10-second confirm-boost now aims at it instead of just looking harder
+  everywhere — forced scans additionally run a **full-resolution zoom crop**
+  around the lead's box through the **heaviest model on disk** (26x > 26m >
+  the camera's own; FP16 variants only on CUDA). Both choices are #70's
+  answer to "heavier model or higher resolution?": heavier model measured
+  better (91% vs 82% vs 75%), while raw >640 input measured *worse* — the
+  zoom crop **is** the resolution lever that works. The boost never
+  downgrades (a 26x camera keeps its 26x), degrades loudly to the camera's
+  own net if the heavier file is missing, and its results confirm/record
+  through the ordinary YOLO paths only. The feed shows the spot as an orange
+  **"checking (lead)"** box while it runs.
+- **"Last known location" on the live feed** (default **on**): a grey,
+  age-labelled box at the camera's newest recorded sighting, so "where was
+  she last?" stays answered even when nothing is detected right now. Fades
+  out after 30 min (the age label keeps older boxes honest until then);
+  toggled by the **📍 Last known** checkbox by the feed
+  (`/api/stream?last_known=0` to hide). Only *confirmed, recorded* sightings
+  draw it — an unconfirmed lead shows as the orange "checking" box during
+  its window and is never promoted to "last known".
+  *(NAS: watch a lead → targeted boost → confirm round-trip on real footage,
+  and eyeball 26x latency per forced scan on the 3070/CPU.)*
+
+## [0.41.0] — 2026-07-03
+
+### Changed
+- **People don't leave cat trails**: the trail now blanks out the region of any
+  fresh **person** detection before stamping silhouettes — a human arm moves in
+  cat-sized blobs, and the trail is a *cat* trail. Because the trail stamps each
+  frame *before* the net runs, the net's person verdict also **retroactively
+  erases** stamps made in the previous few seconds inside the person's box
+  (pixels, route points, and the endpoint — which falls back to the previous
+  genuinely-cat stamp). Exclusion boxes are padded 10% and expire after 3 s
+  without a fresh person hit. *Honest limit:* during the cooldown
+  detection-pause the net is skipped, so a person moving through the pause can
+  still stamp until detection resumes and the erase catches what falls inside
+  the then-current box. *(NAS: watch a real "human in frame" episode — the arm
+  test — and confirm the trail stays cat-only.)*
+
 ## [0.40.0] — 2026-07-03
 
 ### Fixed
