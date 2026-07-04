@@ -88,6 +88,12 @@ MODELS = {
     # the 75%/0% figures belong to the 640 golden 11n, which is what's bundled now.
     "yolo11n": {"file": "yolo11n.onnx", "size": 640,
                 "label": "YOLO11n (640) — floor, low CPU", "selectable": True},
+    # FP16 for lineup consistency (#86): every model gets a CUDA-precision onnx.
+    # 11n barely speeds up in FP16 (not compute-bound, #70 §4) — this exists so
+    # the CUDA path never has to fall back to FP32 just for the floor model.
+    "yolo11n_fp16": {"file": "yolo11n_fp16.onnx", "size": 640,
+                     "label": "YOLO11n FP16 (640) — floor, CUDA",
+                     "selectable": True},
     "yolo26m": {"file": "yolo26m.onnx", "size": 640,
                 "label": "YOLO26m (640) — lightweight", "selectable": True},
     "yolo26m_fp16": {"file": "yolo26m_fp16.onnx", "size": 640,
@@ -179,8 +185,11 @@ def engine_path(variant: str = DEFAULT_VARIANT) -> str:
     """Absolute path to a variant's TensorRT engine (no existence check).
 
     Engines are **GPU-specific** — built once per machine by
-    ``models/export_trt_engine.py`` and cached (#82); they are never committed."""
-    return os.path.join(_MODELS_DIR, f"{variant}.engine")
+    ``models/export_trt_engine.py`` and cached (#82); they are never committed.
+    One engine per base model (#86): our engines are always built FP16 (the
+    settled precision), so ``yolo26x`` and ``yolo26x_fp16`` share
+    ``yolo26x.engine``."""
+    return os.path.join(_MODELS_DIR, f"{variant.replace('_fp16', '')}.engine")
 
 
 class _CvDnnRunner:

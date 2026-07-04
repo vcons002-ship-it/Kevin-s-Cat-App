@@ -1,0 +1,18 @@
+{
+ "yolo11n.onnx": {
+  "imgsz": 640,
+  "kind": "onnx",
+  "note": "bundled; 640 golden export verified in #80; golden head (onnx metadata)",
+  "precision": "fp32",
+  "sha256": "b205249180efc45f991a46990f90784de8c5a28c08924b6565f086199d2bdb5b",
+  "ts": 0
+ },
+ "yolo26m.onnx": {
+  "imgsz": 640,
+  "kind": "onnx",
+  "note": "bundled; golden export verified in #71; golden head (onnx metadata)",
+  "precision": "fp32",
+  "sha256": "cd270198622251ffe493c2385767d13af8b2c3141545abe4e727c48103ea4d3e",
+  "ts": 0
+ }
+}

@@ -19,8 +19,10 @@ def test_tensorrt_is_a_known_accelerator():
     assert "tensorrt" in yolo.ACCELERATORS
 
 
-def test_engine_path_is_per_variant():
-    assert yolo.engine_path("yolo26x_fp16").endswith("yolo26x_fp16.engine")
+def test_engine_path_is_one_per_base_model():
+    # engines are always built FP16 (#86), so the precision variants share one
+    assert yolo.engine_path("yolo26x_fp16").endswith("yolo26x.engine")
+    assert yolo.engine_path("yolo26x") == yolo.engine_path("yolo26x_fp16")
 
 
 # ---- driver-capability parsing --------------------------------------------------

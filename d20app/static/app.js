@@ -50,6 +50,39 @@ async function loadModelOptions() {
     if (MODEL_OPTS.some(([v]) => v === prev)) sel.value = prev;
   }
 }
+// ---- model provisioning (#86): audit table + generate button ----------------
+let provisionPoll = null;
+
+async function loadModelsAudit() {
+  const { body } = await api("/api/models/audit");
+  if (!body || !Array.isArray(body.items)) return;
+  const badge = (st) => st === "ok" ? "✅ ok"
+    : st === "missing" ? "⬜ missing"
+    : `⚠ ${st}`;
+  $("models-audit").innerHTML = `<table class="bench-tbl"><tr>
+      <th>file</th><th>kind</th><th>precision</th><th>status</th><th></th></tr>
+    ${body.items.map((r) => `<tr><td>${esc(r.file)}</td><td>${r.kind}${r.optional ? " (opt.)" : ""}</td>
+      <td>${r.precision}</td><td>${badge(r.status)}</td><td class="hint">${esc(r.note || "")}</td></tr>`).join("")}
+    </table>`;
+  const btn = $("models-provision");
+  btn.disabled = !body.can_provision || body.running;
+  $("models-provision-note").textContent = body.running ? "generating…"
+    : body.can_provision ? ""
+    : "needs `pip install ultralytics` on this machine (build-time only)";
+}
+
+async function pollProvision() {
+  const { body } = await api("/api/models/provision/status");
+  if (!body) return;
+  const log = $("models-provision-log");
+  log.classList.remove("hidden");
+  log.textContent = (body.log || []).join("\n") + (body.error ? `\nERROR: ${body.error}` : "");
+  if (!body.running) {
+    clearInterval(provisionPoll); provisionPoll = null;
+    loadModelsAudit(); loadModelOptions();     // refresh dropdowns with new files
+  }
+}
+
 const ACCEL_OPTS = [["auto", "Auto — CUDA if available (rec.)"], ["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"], ["onnx-cuda", "NVIDIA CUDA (onnxruntime-gpu)"], ["tensorrt", "TensorRT engine — fastest (CUDA 13+ driver, prebuilt engine)"]];
 const SENS_OPTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"]];
 const TILING_OPTS = [["off", "Off"], ["2x2", "2×2"], ["3x3", "3×3"], ["4x4", "4×4"]];
@@ -1561,6 +1594,15 @@ function wire() {
   // The tester/benchmark Accelerator dropdown is GENERATED from ACCEL_OPTS
   // (#87) — it was a hardcoded HTML list that silently missed tensorrt.
   $("t_accelerator").innerHTML = optsHTML(ACCEL_OPTS, "cpu");
+
+  $("models-provision").onclick = async () => {
+    const { body } = await api("/api/models/provision", postJSON({}));
+    if (body && body.error) { $("models-provision-note").textContent = body.error; return; }
+    $("models-provision").disabled = true;
+    $("models-provision-note").textContent = "generating… (minutes; downloads weights on first run)";
+    provisionPoll = setInterval(pollProvision, 2000);
+  };
+  loadModelsAudit();
 
   $("live-enabled").onchange = () => refreshStatus();
   const tov = $("trail-overlay");

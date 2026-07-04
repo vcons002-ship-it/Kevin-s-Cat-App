@@ -140,6 +140,20 @@ finally:
 PY
 )"
 
+# Model provisioning (#86): if the (optional, build-time) ultralytics package is
+# already installed, generate/refresh the settled model lineup now — otherwise
+# just say how. The bundled 11n/26m always work; this adds the 26x workhorse,
+# the FP16 variants, and (on a CUDA-13 driver with tensorrt) the engines.
+if ./venv/bin/python -c "import ultralytics" >/dev/null 2>&1; then
+  echo "ultralytics found — provisioning the settled model lineup (may download weights)…"
+  ./venv/bin/python -m d20app.provision || echo "model provisioning failed — the bundled models still work; see d20app/models/README.md"
+else
+  echo "Optional: for the full model lineup (26x workhorse + FP16 + TensorRT engines):"
+  echo "    ./venv/bin/pip install ultralytics   # build-time only"
+  echo "    ./venv/bin/python -m d20app.provision"
+  echo "(or use the GUI's '🧰 Model files' card once the app is running)"
+fi
+
 cat <<EOF
 
 ============================================================

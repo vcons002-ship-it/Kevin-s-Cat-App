@@ -11,6 +11,33 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.44.0] — 2026-07-04
+
+### Added
+- **Model provisioning** (#86): the app now knows what model files *should*
+  exist and whether the bytes on disk are the ones that were vetted — closing
+  the gap where a stale June FP32 26x was silently benchmarked as "the 26x".
+  - `models_manifest.json` records each vetted file's sha256 + precision +
+    golden-head verdict; the **audit** (GUI "🧰 Model files" card,
+    `GET /api/models/audit`, `python -m d20app.provision --audit`) reports
+    every settled file as ok / missing / **unverified** (present, unknown
+    provenance) / **stale** (changed since vetting). The two bundled models
+    ship manifested + golden-verified.
+  - **Generate from the GUI or CLI**: the card's button (or
+    `python -m d20app.provision`, also run by `setup.sh` when ultralytics is
+    present) builds whatever is flagged — golden `end2end=False` head, FP32 +
+    FP16 onnx per model, TensorRT engines where the #82 driver gate passes —
+    verifies the head (onnx metadata, or a real cv2 forward for FP32), and
+    stamps the manifest. `ultralytics` stays a build-time-only dep: without
+    it you get instructions, never a surprise install.
+  - **Never silent**: a present-but-unverified/stale model's GUI label carries
+    a ⚠ flag pointing at the Model files card.
+  - `yolo11n_fp16` is now a registered variant (the #86 registry gap), and
+    engines are one-per-base-model (`yolo26x` and `yolo26x_fp16` share
+    `yolo26x.engine` — engines are always built FP16, the settled precision).
+  *(NAS: run one provisioning pass — generation itself needs ultralytics and,
+  for engines, the CUDA-13 driver; CI verifies everything around it.)*
+
 ## [0.43.2] — 2026-07-04
 
 ### Fixed

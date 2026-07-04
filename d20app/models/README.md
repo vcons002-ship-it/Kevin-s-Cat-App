@@ -185,3 +185,17 @@ the NAS 3070 (175 ms → 111 ms at 3×3/0.20) with identical 91%/0% accuracy
   #82's benchmark harness. First NAS run: compare a few frames' boxes against
   the onnx-cuda runner before trusting it (the runner raises loudly on any
   CUDA error rather than guessing).
+
+### Provisioning & the manifest (#86)
+
+`models_manifest.json` records the sha256 / precision / golden-head verdict of
+every vetted model file. The **audit** (GUI "🧰 Model files" card, or
+`python -m d20app.provision --audit`) compares disk against it: a file that's
+missing, changed since vetting (*stale*), or of unknown provenance
+(*unverified* — e.g. an old manual export) is flagged, and its GUI label says
+so. **Generate/refresh** from the GUI card, the CLI
+(`python -m d20app.provision`), or `setup.sh` (runs it automatically when
+`ultralytics` is installed): golden head everywhere, FP32 + FP16 onnx per
+model, TensorRT engines where the CUDA-13 driver gate passes. `ultralytics`
+is a build-time dep only — the lean install keeps working on the bundled,
+manifested models, and the app never pip-installs anything itself.
