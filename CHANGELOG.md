@@ -11,6 +11,18 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.43.1] — 2026-07-04
+
+### Fixed
+- **TensorRT driver guard no longer blocks the drivers that enable it** (#85):
+  newer NVIDIA drivers (610.x) relabelled `nvidia-smi`'s header field to
+  `CUDA UMD Version:`, which the 0.43.0 regex missed — so the guard read
+  "CUDA None" on a CUDA-13.3 driver and refused. The parser now accepts both
+  labels, and because the header is fragile by nature (relabelled once
+  already), a torch that is *actually running* CUDA is accepted as a
+  secondary signal (torch only runs if the driver supports its toolkit, so
+  `torch.version.cuda` is a valid lower bound).
+
 ## [0.43.0] — 2026-07-03
 
 ### Added

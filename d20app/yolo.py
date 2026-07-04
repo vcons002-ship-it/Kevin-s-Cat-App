@@ -287,25 +287,43 @@ class _OnnxRuntimeRunner:
 
 
 def _parse_cuda_version(text: str):
-    """The driver's max CUDA version out of ``nvidia-smi`` header text, or None."""
+    """The driver's max CUDA version out of ``nvidia-smi`` header text, or None.
+
+    Newer drivers (610.x) relabelled the field ``CUDA UMD Version:`` (#85) —
+    the optional ``UMD`` matches both spellings, old and new."""
     import re
 
-    m = re.search(r"CUDA Version:\s*([0-9]+(?:\.[0-9]+)?)", text or "")
+    m = re.search(r"CUDA(?: UMD)? Version:\s*([0-9]+(?:\.[0-9]+)?)", text or "")
     return float(m.group(1)) if m else None
 
 
 def _driver_cuda_version():
     """The installed NVIDIA driver's CUDA capability (e.g. 13.3), or None when
     there's no working driver/nvidia-smi. This is the **driver's** ceiling, not
-    the toolkit version — exactly what gates TensorRT (#82)."""
+    the toolkit version — exactly what gates TensorRT (#82).
+
+    The ``nvidia-smi`` header is a fragile signal (it was relabelled once
+    already, #85), so a working CUDA torch is accepted as a secondary source:
+    torch only *runs* CUDA if the driver supports its toolkit version, so
+    ``torch.version.cuda`` is a valid lower bound on the driver's ceiling."""
     import subprocess
 
     try:
         out = subprocess.run(["nvidia-smi"], capture_output=True, text=True,
                              timeout=10).stdout
     except Exception:       # noqa: BLE001 — no driver, no binary, no GPU: all "no"
-        return None
-    return _parse_cuda_version(out)
+        out = ""
+    ver = _parse_cuda_version(out)
+    if ver is not None:
+        return ver
+    try:
+        import torch
+
+        if torch.cuda.is_available() and torch.version.cuda:
+            return _parse_cuda_version(f"CUDA Version: {torch.version.cuda}")
+    except Exception:       # noqa: BLE001 — torch optional/broken: no signal
+        pass
+    return None
 
 
 def _strip_engine_metadata(data: bytes) -> bytes:

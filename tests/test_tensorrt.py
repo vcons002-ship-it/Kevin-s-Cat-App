@@ -33,6 +33,13 @@ def test_parse_cuda_version_from_nvidia_smi_header():
     assert yolo._parse_cuda_version("") is None
 
 
+def test_parse_cuda_version_accepts_the_new_umd_label():
+    # Driver 610.x relabelled the header field (#85) — the guard must read both.
+    header = ("| NVIDIA-SMI 610.43.02    KMD Version: 610.43.02    "
+              "CUDA UMD Version: 13.3 |")
+    assert yolo._parse_cuda_version(header) == 13.3
+
+
 def test_driver_probe_survives_missing_nvidia_smi(monkeypatch):
     import subprocess
 
@@ -40,7 +47,24 @@ def test_driver_probe_survives_missing_nvidia_smi(monkeypatch):
         raise FileNotFoundError("nvidia-smi")
 
     monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setitem(sys.modules, "torch", None)   # no torch fallback either
     assert yolo._driver_cuda_version() is None
+
+
+def test_driver_probe_falls_back_to_a_working_cuda_torch(monkeypatch):
+    # The nvidia-smi header is fragile (relabelled once already, #85): a torch
+    # that is actually RUNNING CUDA proves the driver's ceiling as a fallback.
+    import subprocess
+
+    def no_smi(*a, **k):
+        raise FileNotFoundError("nvidia-smi")
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+    fake_torch.version = types.SimpleNamespace(cuda="13.0")
+    monkeypatch.setattr(subprocess, "run", no_smi)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert yolo._driver_cuda_version() == 13.0
 
 
 # ---- ultralytics engine metadata header ------------------------------------------
