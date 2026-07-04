@@ -166,6 +166,7 @@ class DetectionLoop:
         self._cat_boost: dict[str, float] = {}          # name -> monotonic deadline for forced detection
         self._viewing: dict[str, float] = {}            # name -> deadline; the GUI is streaming this camera
         self._active_cams: set[str] | None = None       # round-robin: which cameras detect now (None = all)
+        self._scan_last: dict[str, dict] = {}           # name -> {ts, found}: last still-scan (#94)
 
     def _caster_for(self, cfg) -> Caster:
         """A single long-lived Caster so speaker connections stay open."""
@@ -380,6 +381,10 @@ class DetectionLoop:
                     row["ran_on"] = eff
                     if why:
                         row["fallback"] = why
+            scan = self._scan_last.get(row["name"])
+            if scan:
+                row["scan_ago_s"] = round(time.time() - scan["ts"], 1)
+                row["scan_found"] = bool(scan["found"])
         return rows
 
     def set_smooth(self, on: bool) -> None:
@@ -454,6 +459,7 @@ class DetectionLoop:
                 cat_scan_tile_overlap=spec["cat_scan_tile_overlap"],
                 cat_scan_imgsz=spec["cat_scan_imgsz"],
                 cat_scan_frames=spec["cat_scan_frames"],
+                cat_scan_model=spec.get("cat_scan_model", ""),
                 track_fusion=spec["track_fusion"],
                 cat_confidence=spec["cat_confidence"],
                 locator_classes=spec["locator_classes"],
@@ -524,6 +530,7 @@ class DetectionLoop:
             self._detectors = {}       # stop serving the live feed
             self._threads = []
             self._cat_boost = {}       # drop any pending detection boosts
+            self._scan_last = {}
             self._viewing = {}
             self._active_cams = None
             caster.close()             # drop held speaker connections when we stop
@@ -657,6 +664,10 @@ class DetectionLoop:
                 if (force_scan or gate_off) and not outcome.motion:
                     streak = 0
                     cat = _locator_hit(detector, outcome) if track_cats else None
+                    if force_scan:
+                        # glanceable proof the scan is firing (#94)
+                        self._scan_last[name] = {"ts": time.time(),
+                                                 "found": cat is not None}
                     if cat is not None:
                         if not cat_seen_still:
                             label, score, box = cat

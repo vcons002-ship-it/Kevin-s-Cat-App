@@ -182,6 +182,7 @@ function cameraCardHTML(cam) {
         <button type="button" class="ghost" data-zone title="named spots ('the couch') label sightings; mark doorways as exits to sharpen the trail's left-the-room check">🚪 Add zone…</button>
         <span data-zonelist>${zoneChipsHTML(cam.zones || [])}</span>
       </div>
+      <div class="muted" data-scanline style="font-size:12px"></div>
       <div class="row">
         <button type="button" class="primary" data-save>Save camera</button>
         <button type="button" class="stop" data-delete>Delete</button>
@@ -593,6 +594,12 @@ function renderCamChips(cams) {
       chip.className = "cam-chip chip-ok"; chip.title = "";
     }
     else { chip.textContent = "… connecting"; chip.className = "cam-chip muted"; }
+    // #94: glanceable last-run for the still-cat scan
+    const line = card.querySelector("[data-scanline]");
+    if (line) {
+      line.textContent = (c.scan_ago_s === undefined) ? ""
+        : `still scan: ${c.scan_ago_s < 90 ? Math.round(c.scan_ago_s) + "s" : Math.round(c.scan_ago_s / 60) + "m"} ago — ${c.scan_found ? "cat found" : "no cat"}`;
+    }
   }
 }
 

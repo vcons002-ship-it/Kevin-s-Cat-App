@@ -310,7 +310,7 @@ class PersonDetector:
                  contrast: float = 1.0, saturation: float = 1.0,
                  cat_scan_tiling: str = "off", cat_scan_tile_overlap: float = 0.2,
                  cat_scan_imgsz: int = 0, cat_scan_frames: int = 1,
-                 cat_confidence: float = 0.5,
+                 cat_scan_model: str = "", cat_confidence: float = 0.5,
                  locator_classes=None, track_fusion: bool = True) -> None:
         self.source = source
         self.confidence = confidence
@@ -326,6 +326,10 @@ class PersonDetector:
         self.cat_scan_imgsz = int(cat_scan_imgsz or 0)
         self.cat_scan_frames = max(1, min(int(cat_scan_frames or 1),
                                           self._AVG_MAX_FRAMES))
+        # #94: the still-cat scan's own model ("" = the camera's). The scan gets
+        # ONE hard, static look (a sleeping cat in a dark corner) — it wants the
+        # heavy model even when live detection runs the cheap fast one.
+        self.cat_scan_model = (cat_scan_model or "").strip()
         self.track_fusion = bool(track_fusion)
         self._locator_runner = None     # lazily-loaded larger-input YOLO net (Option A)
         self._locator_size = None
@@ -541,24 +545,25 @@ class PersonDetector:
         return self._TILE_GRID.get(str(self.cat_scan_tiling or "off"), 1)
 
     def _locator_net(self):
-        """A larger-input YOLO runner for the locator scan, or ``None`` to use the
-        camera's normal net. Loaded once; missing/failed export → ``None`` (the scan
-        then leans on tiling at the native size)."""
-        if self.cat_scan_imgsz <= 0:
-            return None
-        variant = f"{self.model}_{self.cat_scan_imgsz}"
-        from . import yolo
-        if variant not in yolo.MODELS:
+        """The still-scan's dedicated runner (#94, ``cat_scan_model``), or
+        ``None`` to use the camera's own net. Loaded once; a failure degrades
+        loudly to the camera's model. (This slot previously served the >640
+        "locator input" hypothesis, retired in 0.40.0 — the model, not the
+        input size, is now the still-scan's quality lever.)"""
+        want = self.cat_scan_model
+        if not want or want == self.model:
             return None
         if not self._locator_tried:
             self._locator_tried = True
+            from . import yolo
             try:
-                self._locator_runner = yolo.load_net(variant, self.accelerator)
-                self._locator_size = yolo.input_size(variant)
-                self._locator_model = variant
-            except Exception as exc:        # noqa: BLE001 — degrade to tiling, don't crash
-                _log.warning("locator model %s unavailable (%s) — using %s + tiling",
-                             variant, exc, self.model)
+                resolved = yolo.resolve_variant(want, self.accelerator)
+                self._locator_runner = yolo.load_net(resolved, self.accelerator)
+                self._locator_size = yolo.input_size(resolved)
+                self._locator_model = resolved
+            except Exception as exc:        # noqa: BLE001 — degrade, don't crash scans
+                _log.warning("still-scan model %s unavailable (%s) — scans use %s",
+                             want, exc, self.model)
         return self._locator_runner
 
     def _detect_locator(self, frame, floor: float) -> list:
@@ -748,7 +753,9 @@ class PersonDetector:
         floor = min(self.label_floor, self.confidence, self.cat_confidence)
         # Use the locator (tiled / larger-input) path when either is enabled, so the
         # tester measures exactly what the still-cat scan would do.
-        use_locator = self._tiling_grid() > 1 or self.cat_scan_imgsz > 0
+        use_locator = (self._tiling_grid() > 1 or self.cat_scan_imgsz > 0
+                       or bool(self.cat_scan_model
+                               and self.cat_scan_model != self.model))
         boxes = self._detect_locator(adjusted, floor) if use_locator else self._detect_boxes(adjusted, floor)
         img = self._crop(adjusted).copy()
         self._draw_boxes(img, boxes)

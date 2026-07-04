@@ -11,6 +11,21 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.46.0] — 2026-07-04
+
+### Added
+- **The still-cat scan gets its own model** (#94): a per-camera **Scan model**
+  select (`cat_scan_model`, default "same as camera") — the asymmetry the
+  issue nailed: live detection gets many frames of a moving cat (a fast model
+  is fine), the still scan gets ONE hard static look at a sleeping cat in a
+  dark corner (it wants the heavy tiled model). Runs through the existing
+  locator slot, resolved to the right precision per the accelerator (#90),
+  degrading loudly to the camera's net if the file is missing. The **tile
+  overlap** knob is now exposed in the camera card alongside tiling/frames.
+- **Still-scan last-run indicator** (#94): each camera card shows
+  "still scan: Ns ago — cat found / no cat", fed from the worker via
+  `cam_status` — glanceable proof the scan is actually firing.
+
 ## [0.45.1] — 2026-07-04
 
 ### Fixed
