@@ -266,6 +266,41 @@
     </section>
 
     <!-- ===== Cat-presence (VLM) tester — moondream "is there a cat?" (#48) ===== -->
+    <section class="card" id="escalation-card">
+      <h2>🔍 Escalation ladder <span class="muted">— zoom in and look again (an active experiment; uses the VLM below when enabled)</span></h2>
+      <!-- Escalation ladder: motion/last-seen/predicted zoom crops -> YOLO ->
+           VLM detect + confirm -> VLM query (#66). On-demand only. -->
+      <details id="vlm-escalate">
+        <summary class="muted">open the ladder controls</summary>
+        <p class="help" style="font-size:13px">
+          When the normal look misses a small/distant cat, the ladder <strong>zooms in
+          where it makes sense</strong> — around recent motion, the last sighting, and a
+          CPU-predicted next position — and re-checks with YOLO first (free), asking the
+          VLM to point (<code>detect</code>) and to confirm only when the cheap rungs fail.
+          A bare VLM guess is never trusted without confirmation.
+        </p>
+        <div class="row">
+          <button id="esc-run" class="ghost" type="button" disabled>🔍 Run escalation ladder</button>
+          <label class="inline" title="off = zoom+YOLO rung only (no VLM, no GPU)"><input type="checkbox" id="esc-use-vlm" checked/> use VLM rungs</label>
+          <span id="esc-note" class="muted"></span>
+        </div>
+        <div class="row" id="esc-camera-row" hidden>
+          <label class="inline">Camera <select id="esc-camera"></select></label>
+          <button id="esc-run-camera" class="ghost" type="button">📷 Check camera now</button>
+          <button id="esc-trail-btn" class="ghost" type="button" title="the movement trail: whole-cat silhouettes coloured blue (entered) → red (latest position)">🌈 Show trail</button>
+          <button id="esc-heatmap-btn" class="ghost" type="button" title="sighting-density heat map: this camera's hot spots from the sighting history">🔥 Heat map</button>
+          <button id="esc-temporal-btn" class="ghost" type="button" title="ask the VLM 'did a cat pass through?' over the camera's last few seconds (a numbered frame grid)">🎞 Temporal</button>
+        </div>
+        <div id="esc-results" class="hidden">
+          <p><span id="esc-verdict" class="vlm-badge"></span> <span id="esc-summary" class="muted"></span></p>
+          <table class="bench-tbl" id="esc-rungs"></table>
+          <div id="esc-crops" class="row" style="flex-wrap:wrap"></div>
+          <img id="esc-annotated" style="max-width:100%;border-radius:6px;cursor:zoom-in" alt="" />
+          <img id="esc-trail" class="hidden" style="max-width:100%;border-radius:6px;cursor:zoom-in" alt="" title="cat trail — blue: entered, red: latest" />
+        </div>
+      </details>
+    </section>
+
     <section class="card" id="vlm-card">
       <div class="test-head">
         <h2>🌙 Cat-presence (VLM) <span class="muted">— the AI second opinion: on-demand only, and it never confirms a sighting by itself (YOLO decides)</span></h2>
@@ -340,37 +375,7 @@
         <div id="vlm-batch-results"></div>
       </details>
 
-      <!-- Escalation ladder: motion/last-seen/predicted zoom crops -> YOLO ->
-           VLM detect + confirm -> VLM query (#66). On-demand only. -->
-      <details id="vlm-escalate">
-        <summary class="muted">escalation: zoom in and look again (find a missed cat)</summary>
-        <p class="help" style="font-size:13px">
-          When the normal look misses a small/distant cat, the ladder <strong>zooms in
-          where it makes sense</strong> — around recent motion, the last sighting, and a
-          CPU-predicted next position — and re-checks with YOLO first (free), asking the
-          VLM to point (<code>detect</code>) and to confirm only when the cheap rungs fail.
-          A bare VLM guess is never trusted without confirmation.
-        </p>
-        <div class="row">
-          <button id="esc-run" class="ghost" type="button" disabled>🔍 Run escalation ladder</button>
-          <label class="inline" title="off = zoom+YOLO rung only (no VLM, no GPU)"><input type="checkbox" id="esc-use-vlm" checked/> use VLM rungs</label>
-          <span id="esc-note" class="muted"></span>
-        </div>
-        <div class="row" id="esc-camera-row" hidden>
-          <label class="inline">Camera <select id="esc-camera"></select></label>
-          <button id="esc-run-camera" class="ghost" type="button">📷 Check camera now</button>
-          <button id="esc-trail-btn" class="ghost" type="button" title="the movement trail: whole-cat silhouettes coloured blue (entered) → red (latest position)">🌈 Show trail</button>
-          <button id="esc-heatmap-btn" class="ghost" type="button" title="sighting-density heat map: this camera's hot spots from the sighting history">🔥 Heat map</button>
-          <button id="esc-temporal-btn" class="ghost" type="button" title="ask the VLM 'did a cat pass through?' over the camera's last few seconds (a numbered frame grid)">🎞 Temporal</button>
-        </div>
-        <div id="esc-results" class="hidden">
-          <p><span id="esc-verdict" class="vlm-badge"></span> <span id="esc-summary" class="muted"></span></p>
-          <table class="bench-tbl" id="esc-rungs"></table>
-          <div id="esc-crops" class="row" style="flex-wrap:wrap"></div>
-          <img id="esc-annotated" style="max-width:100%;border-radius:6px;cursor:zoom-in" alt="" />
-          <img id="esc-trail" class="hidden" style="max-width:100%;border-radius:6px;cursor:zoom-in" alt="" title="cat trail — blue: entered, red: latest" />
-        </div>
-      </details>
+
       <p class="help">
         A small <strong>vision-language model</strong> (moondream) <em>reasons</em> about
         the whole frame to answer “is there a cat?” — a different angle from the box
@@ -400,22 +405,8 @@
     </section>
 
     <!-- ===== Setup & settings (saved — set once, rarely touched) ===== -->
-    <h2 class="section-divider">⚙ Setup &amp; settings <span class="muted">— saved automatically; set these once</span></h2>
+    <h2 class="section-divider">⚙ Setup &amp; settings <span class="muted">— the numbered steps, in order. Cameras save with their <b>Save camera</b> button; everything else saves as you change it.</span></h2>
 
-    <section class="card" id="models-card">
-      <h2>🧰 Model files <span class="muted">— audit &amp; generate the settled detection lineup (#86)</span></h2>
-      <p class="hint">Every model the benchmark settled on, checked against the vetted manifest —
-        <b>ok</b> = present &amp; verified · <b>missing</b> = not generated yet ·
-        <b>unverified / stale</b> = on disk but not what we vetted (regenerate, don't trust it silently).
-        Generating needs <code>ultralytics</code> installed on this machine (build-time only; engines also need
-        a CUDA-13 driver + <code>tensorrt</code>, see the models README) — the app never installs packages itself.</p>
-      <div id="models-audit"></div>
-      <div class="row">
-        <button id="models-provision" class="primary" type="button">⟳ Generate missing / refresh flagged</button>
-        <span id="models-provision-note" class="hint"></span>
-      </div>
-      <pre id="models-provision-log" class="hidden" style="font-size:0.78rem; white-space:pre-wrap;"></pre>
-    </section>
 
     <section class="card" id="cameras-card">
       <h2>1. Cameras <span class="muted">(watch one or several — each with its own role &amp; settings)</span></h2>
@@ -548,6 +539,21 @@
         <strong>won't play the chime</strong>. Leave both blank to disable. A
         window like 22:00 → 07:00 correctly spans midnight.
       </p>
+    </section>
+
+    <section class="card" id="models-card">
+      <h2>🧰 Model files <span class="muted">— advanced: audit &amp; generate the settled detection lineup (#86)</span></h2>
+      <p class="hint">Every model the benchmark settled on, checked against the vetted manifest —
+        <b>ok</b> = present &amp; verified · <b>missing</b> = not generated yet ·
+        <b>unverified / stale</b> = on disk but not what we vetted (regenerate, don't trust it silently).
+        Generating needs <code>ultralytics</code> installed on this machine (build-time only; engines also need
+        a CUDA-13 driver + <code>tensorrt</code>, see the models README) — the app never installs packages itself.</p>
+      <div id="models-audit"></div>
+      <div class="row">
+        <button id="models-provision" class="primary" type="button">⟳ Generate missing / refresh flagged</button>
+        <span id="models-provision-note" class="hint"></span>
+      </div>
+      <pre id="models-provision-log" class="hidden" style="font-size:0.78rem; white-space:pre-wrap;"></pre>
     </section>
 
     <section class="actions">

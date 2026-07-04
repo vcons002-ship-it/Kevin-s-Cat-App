@@ -11,6 +11,24 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.47.1] — 2026-07-04
+
+### Changed
+- **Escalation gets its own GUI section** (#95): the ladder controls moved out
+  of the VLM/API-key card into a standalone "🔍 Escalation ladder" card —
+  placement only; the (work-in-progress) behavior is untouched, and it stays
+  independent of the Find-my-cat button by design.
+- **GUI layout & consistency pass** (#97): button rows no longer touch
+  adjacent boxes/sections (camera actions, activity Clear, Model-files
+  Generate); head quick-toggles align across camera rows; long `<select>`
+  text no longer collides with the dropdown arrow or its neighbours; the
+  camera Edit button's arrow now flips (▾/▴) like every collapsible; **"Cat
+  tiling" is renamed "Tiling"** and the still-scan group (Scan model, Tiling,
+  Tile overlap, Scan frames) sits directly under Model/Accelerator; the
+  setup divider now says exactly what auto-saves ("cameras save with their
+  Save button; everything else saves as you change it") and the Model files
+  card moved below the numbered setup steps as an advanced tool.
+
 ## [0.47.0] — 2026-07-04
 
 ### Added

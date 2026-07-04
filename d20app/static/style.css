@@ -54,7 +54,10 @@ select, input[type=text], input[type=password], input[type=number] {
   font-size: 0.95rem;
   min-width: 0;
 }
-select { flex: 1; min-width: 180px; }
+/* #97: long option text was colliding with the native dropdown arrow, and
+   wide selects were overlapping neighbours in tight rows. */
+select { flex: 1; min-width: 140px; max-width: 100%; padding-right: 26px;
+         text-overflow: ellipsis; }
 .grid label input, .grid label select { width: 100%; }
 select.multi { width: 100%; min-height: 92px; flex: none; }
 .odds-msg { color: var(--accent); font-weight: 600; margin: 8px 0 0; font-size: 0.95rem; }
@@ -211,6 +214,10 @@ footer { margin-top: 20px; }
 #camera-list { margin-top: 10px; }
 .cam-card { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 8px 10px; }
 .cam-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* #97: the head quick-toggles inherit .checkbox's 12px top margin, which made
+   each row's toggles sit at slightly different heights — align them. */
+.cam-head .checkbox { margin-top: 0; }
+.cam-chip { min-width: 92px; text-align: center; }
 .cam-head > strong { font-size: 1.02rem; }
 .cam-body { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
 .cam-chip { font-size: 0.8rem; }
@@ -227,6 +234,9 @@ footer { margin-top: 20px; }
 
 /* Activity log */
 .log-head { justify-content: space-between; }
+/* #97: breathing room — button rows were touching adjacent boxes/sections. */
+.cam-body .row, #models-card .row, .test-actions { margin-top: 12px; }
+.log-head { margin-bottom: 10px; }
 .log-head h2 { margin: 0; }
 .log-list {
   max-height: 300px;

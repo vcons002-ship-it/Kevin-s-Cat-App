@@ -64,7 +64,11 @@ measured, not guessed. Per watched camera, for every frame:
 5. **Still-cat scan** *(default: every 30 s per cat-tracking camera)* — a
    sleeping cat makes no motion, so the net is forced periodically with the
    heavy settings: **3×3 tiling at 0.35 overlap** (the benchmark's clean
-   recall-per-ms winner) and **frame averaging ×3** (a short burst of frames is
+   recall-per-ms winner) and **frame averaging ×3**. The scan can run its own
+   **Scan model** (heavier than the live one — it gets one hard static look,
+   where live detection gets many frames of a moving cat), and each camera
+   card shows *"still scan: Ns ago — cat found / no cat"* so you can see it
+   firing. Averaging: a short burst of frames is
    averaged first — sensor noise drops, a dim sleeping cat gets cleaner pixels;
    any movement mid-burst falls back to a single sharp frame).
 
