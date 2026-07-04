@@ -109,7 +109,11 @@ summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
 }
 .help code { color: #b9c4e6; }
 .checkbox { flex-direction: row; align-items: center; gap: 8px; margin-top: 12px; }
-.checkbox input { flex: none; }
+/* #88: `.grid label input { width:100% }` was stretching the checkbox ITSELF to the
+   full cell width — the tick floated away from its text and long labels ("Count dogs
+   as the cat", "Track fusion") overflowed the card. label.checkbox matches .grid
+   label's specificity so the auto width actually wins. */
+label.checkbox input { flex: none; width: auto; }
 .status { display: flex; align-items: center; gap: 10px; }
 .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
 .dot.running { background: var(--go); box-shadow: 0 0 8px var(--go); }

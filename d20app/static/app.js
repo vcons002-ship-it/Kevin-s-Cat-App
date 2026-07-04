@@ -29,10 +29,11 @@ const MOTION_PRESETS = {
 // the export (320/640/960/1280).
 // Fallback only — the real list comes from /api/models (the registry-backed source
 // shared with the benchmark, so the live picker can never drift again). #50
+// (#87: only the two BUNDLED models, with their registry labels — never a
+// dropped model or a stale size, even for the pre-load flash.)
 let MODEL_OPTS = [
-  ["yolo11n", "YOLO11n (320) — low light, rec."],
-  ["yolo11m", "YOLO11m (640) — heavier"],
-  ["yolo11m_960", "YOLO11m (960) — max"],
+  ["yolo11n", "YOLO11n (640) — floor, low CPU"],
+  ["yolo26m", "YOLO26m (640) — lightweight"],
 ];
 
 // Load the canonical model list and build every model dropdown from it (the Test card's
@@ -1556,6 +1557,10 @@ function wire() {
     await api("/api/stop", { method: "POST" });
     refreshStatus(); loadLog();
   };
+
+  // The tester/benchmark Accelerator dropdown is GENERATED from ACCEL_OPTS
+  // (#87) — it was a hardcoded HTML list that silently missed tensorrt.
+  $("t_accelerator").innerHTML = optsHTML(ACCEL_OPTS, "cpu");
 
   $("live-enabled").onchange = () => refreshStatus();
   const tov = $("trail-overlay");

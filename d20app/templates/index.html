@@ -170,13 +170,9 @@
           <input id="t_tile_overlap" type="range" min="0" max="0.5" step="0.05" />
         </label>
         <label>Accelerator
-          <select id="t_accelerator">
-            <option value="cpu">CPU</option>
-            <option value="opencl">OpenCL (iGPU)</option>
-            <option value="openvino-gpu">OpenVINO GPU</option>
-            <option value="openvino-auto">OpenVINO AUTO</option>
-            <option value="onnx-cuda">NVIDIA CUDA (onnxruntime-gpu)</option>
-          </select>
+          <!-- populated from ACCEL_OPTS in app.js (#87): one source of truth,
+               so this list can never drift from the camera dropdown again -->
+          <select id="t_accelerator"></select>
         </label>
       </div>
       <div class="row test-actions">

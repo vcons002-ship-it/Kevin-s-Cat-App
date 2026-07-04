@@ -11,6 +11,23 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.43.2] — 2026-07-04
+
+### Fixed
+- **The tester/benchmark Accelerator dropdown is now generated from
+  `ACCEL_OPTS`** (#87) — it was a hardcoded HTML list that silently missed
+  TensorRT (the exact place you'd benchmark it). One source of truth; it can't
+  drift again. The stale hardcoded `MODEL_OPTS` pre-load fallback (dropped
+  `yolo11m`/`yolo11m_960`, the old "320" label) is replaced by the two bundled
+  models with their registry labels — the real list still comes from
+  `/api/models`.
+- **Checkbox labels no longer overflow the camera card** (#88): the `.grid`'s
+  `input { width: 100% }` rule was stretching the checkbox *itself* to the
+  full cell width, shoving "Count dogs as the cat" / "Track fusion" text off
+  the card and detaching the tick from its label (measured: a 13 px checkbox
+  in a 327 px layout box). A specificity-matched `label.checkbox input
+  { width: auto }` restores a normal aligned row; long labels wrap.
+
 ## [0.43.1] — 2026-07-04
 
 ### Fixed
