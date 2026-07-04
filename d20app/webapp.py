@@ -42,6 +42,9 @@ from .loop import DetectionLoop, _camera_source
 
 ALLOWED_SOUND_EXT = {".wav", ".mp3", ".ogg", ".m4a", ".aac"}
 
+# Model provisioning (#86): one background run at a time; the GUI polls the log.
+_PROVISION = {"running": False, "log": [], "error": None, "done": False}
+
 # --- "Test detection" tool: upload a photo/video, run the net with adjustable
 # settings, draw boxes. Frames are kept briefly in memory keyed by a session id so
 # the GUI can re-run on each slider tweak without re-uploading. ---------------
@@ -290,11 +293,23 @@ def _model_options() -> list:
     the fp16 variants appear once their file exists), and #71's dropped models
     (11m and friends) are registered-but-not-selectable: old configs load, new
     configs can't pick them. Order = the registry's lightest-to-heaviest."""
-    from . import yolo
+    from . import provision, yolo
 
-    return [{"value": v, "label": m.get("label", v)}
-            for v, m in yolo.MODELS.items()
-            if m.get("selectable", True) and os.path.exists(yolo.model_path(v))]
+    # #86: a present file the manifest can't vouch for (unknown provenance or
+    # changed since vetting) is offered but SAYS SO — never silently run a
+    # model that may not be the settled precision/head.
+    flags = {r["file"]: r["status"] for r in provision.audit()
+             if r["kind"] == "onnx" and r["status"] in ("unverified", "stale")}
+    out = []
+    for v, m in yolo.MODELS.items():
+        if not m.get("selectable", True) or not os.path.exists(yolo.model_path(v)):
+            continue
+        label = m.get("label", v)
+        flag = flags.get(m["file"])
+        if flag:
+            label += f" ⚠ {flag} — refresh in Model files"
+        out.append({"value": v, "label": label})
+    return out
 
 
 def _benchmark_models():
@@ -946,6 +961,49 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         # The canonical [{value,label}] model list (present-checked), so every GUI
         # dropdown is built from the same registry the benchmark uses — no drift (#50).
         return jsonify({"models": _model_options()})
+
+    # -- model provisioning (#86): audit the settled lineup, generate from GUI --
+    @app.get("/api/models/audit")
+    def api_models_audit():
+        from . import provision, yolo
+
+        return jsonify({"items": provision.audit(),
+                        "can_provision": provision.ultralytics_available(),
+                        "driver_cuda": yolo._driver_cuda_version(),
+                        "running": _PROVISION["running"]})
+
+    @app.post("/api/models/provision")
+    def api_models_provision():
+        from . import provision
+
+        if _PROVISION["running"]:
+            return jsonify({"error": "A provisioning run is already going."}), 409
+        if not provision.ultralytics_available():
+            return jsonify({"error": (
+                "Provisioning needs the 'ultralytics' package on this machine "
+                "(build-time only): pip install ultralytics — the app never "
+                "installs it for you. Engines additionally need tensorrt + "
+                "cuda-python on a CUDA-13 driver (#82).")}), 503
+        body = request.get_json(silent=True) or {}
+        _PROVISION.update({"running": True, "log": [], "error": None, "done": False})
+
+        def run():
+            try:
+                provision.provision(targets=body.get("targets") or None,
+                                    force=bool(body.get("force")),
+                                    progress=_PROVISION["log"].append)
+            except Exception as exc:      # noqa: BLE001 — surfaced to the GUI
+                _PROVISION["error"] = str(exc)
+            finally:
+                _PROVISION["running"] = False
+                _PROVISION["done"] = True
+
+        threading.Thread(target=run, daemon=True).start()
+        return jsonify({"started": True})
+
+    @app.get("/api/models/provision/status")
+    def api_models_provision_status():
+        return jsonify(dict(_PROVISION))
 
     # -- detection snapshots (annotated images shown in the activity log) ----
     @app.get("/snapshots/<path:name>")

@@ -170,13 +170,9 @@
           <input id="t_tile_overlap" type="range" min="0" max="0.5" step="0.05" />
         </label>
         <label>Accelerator
-          <select id="t_accelerator">
-            <option value="cpu">CPU</option>
-            <option value="opencl">OpenCL (iGPU)</option>
-            <option value="openvino-gpu">OpenVINO GPU</option>
-            <option value="openvino-auto">OpenVINO AUTO</option>
-            <option value="onnx-cuda">NVIDIA CUDA (onnxruntime-gpu)</option>
-          </select>
+          <!-- populated from ACCEL_OPTS in app.js (#87): one source of truth,
+               so this list can never drift from the camera dropdown again -->
+          <select id="t_accelerator"></select>
         </label>
       </div>
       <div class="row test-actions">
@@ -388,6 +384,21 @@
 
     <!-- ===== Setup & settings (saved — set once, rarely touched) ===== -->
     <h2 class="section-divider">⚙ Setup &amp; settings <span class="muted">— saved automatically; set these once</span></h2>
+
+    <section class="card" id="models-card">
+      <h2>🧰 Model files <span class="muted">— audit &amp; generate the settled detection lineup (#86)</span></h2>
+      <p class="hint">Every model the benchmark settled on, checked against the vetted manifest —
+        <b>ok</b> = present &amp; verified · <b>missing</b> = not generated yet ·
+        <b>unverified / stale</b> = on disk but not what we vetted (regenerate, don't trust it silently).
+        Generating needs <code>ultralytics</code> installed on this machine (build-time only; engines also need
+        a CUDA-13 driver + <code>tensorrt</code>, see the models README) — the app never installs packages itself.</p>
+      <div id="models-audit"></div>
+      <div class="row">
+        <button id="models-provision" class="primary" type="button">⟳ Generate missing / refresh flagged</button>
+        <span id="models-provision-note" class="hint"></span>
+      </div>
+      <pre id="models-provision-log" class="hidden" style="font-size:0.78rem; white-space:pre-wrap;"></pre>
+    </section>
 
     <section class="card" id="cameras-card">
       <h2>1. Cameras <span class="muted">(watch one or several — each with its own role &amp; settings)</span></h2>

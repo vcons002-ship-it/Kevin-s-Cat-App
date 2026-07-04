@@ -11,6 +11,62 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.44.0] — 2026-07-04
+
+### Added
+- **Model provisioning** (#86): the app now knows what model files *should*
+  exist and whether the bytes on disk are the ones that were vetted — closing
+  the gap where a stale June FP32 26x was silently benchmarked as "the 26x".
+  - `models_manifest.json` records each vetted file's sha256 + precision +
+    golden-head verdict; the **audit** (GUI "🧰 Model files" card,
+    `GET /api/models/audit`, `python -m d20app.provision --audit`) reports
+    every settled file as ok / missing / **unverified** (present, unknown
+    provenance) / **stale** (changed since vetting). The two bundled models
+    ship manifested + golden-verified.
+  - **Generate from the GUI or CLI**: the card's button (or
+    `python -m d20app.provision`, also run by `setup.sh` when ultralytics is
+    present) builds whatever is flagged — golden `end2end=False` head, FP32 +
+    FP16 onnx per model, TensorRT engines where the #82 driver gate passes —
+    verifies the head (onnx metadata, or a real cv2 forward for FP32), and
+    stamps the manifest. `ultralytics` stays a build-time-only dep: without
+    it you get instructions, never a surprise install.
+  - **Never silent**: a present-but-unverified/stale model's GUI label carries
+    a ⚠ flag pointing at the Model files card.
+  - `yolo11n_fp16` is now a registered variant (the #86 registry gap), and
+    engines are one-per-base-model (`yolo26x` and `yolo26x_fp16` share
+    `yolo26x.engine` — engines are always built FP16, the settled precision).
+  *(NAS: run one provisioning pass — generation itself needs ultralytics and,
+  for engines, the CUDA-13 driver; CI verifies everything around it.)*
+
+## [0.43.2] — 2026-07-04
+
+### Fixed
+- **The tester/benchmark Accelerator dropdown is now generated from
+  `ACCEL_OPTS`** (#87) — it was a hardcoded HTML list that silently missed
+  TensorRT (the exact place you'd benchmark it). One source of truth; it can't
+  drift again. The stale hardcoded `MODEL_OPTS` pre-load fallback (dropped
+  `yolo11m`/`yolo11m_960`, the old "320" label) is replaced by the two bundled
+  models with their registry labels — the real list still comes from
+  `/api/models`.
+- **Checkbox labels no longer overflow the camera card** (#88): the `.grid`'s
+  `input { width: 100% }` rule was stretching the checkbox *itself* to the
+  full cell width, shoving "Count dogs as the cat" / "Track fusion" text off
+  the card and detaching the tick from its label (measured: a 13 px checkbox
+  in a 327 px layout box). A specificity-matched `label.checkbox input
+  { width: auto }` restores a normal aligned row; long labels wrap.
+
+## [0.43.1] — 2026-07-04
+
+### Fixed
+- **TensorRT driver guard no longer blocks the drivers that enable it** (#85):
+  newer NVIDIA drivers (610.x) relabelled `nvidia-smi`'s header field to
+  `CUDA UMD Version:`, which the 0.43.0 regex missed — so the guard read
+  "CUDA None" on a CUDA-13.3 driver and refused. The parser now accepts both
+  labels, and because the header is fragile by nature (relabelled once
+  already), a torch that is *actually running* CUDA is accepted as a
+  secondary signal (torch only runs if the driver supports its toolkit, so
+  `torch.version.cuda` is a valid lower bound).
+
 ## [0.43.0] — 2026-07-03
 
 ### Added
