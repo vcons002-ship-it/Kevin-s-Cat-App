@@ -442,6 +442,7 @@ class DetectionLoop:
                 motion_min_area_frac=spec["motion_min_area_frac"],
                 motion_diff_threshold=spec["motion_diff_threshold"],
                 motion_min_blob_px=spec["motion_min_blob_px"],
+                motion_gate=str(spec.get("motion_sensitivity", "")) != "off",
                 model=spec["model"],
                 accelerator=spec["accelerator"],
                 smooth_feed=spec["smooth_feed"],
@@ -652,7 +653,8 @@ class DetectionLoop:
                 # scan); the live flash/rotation are driven by cats_present_cameras().
                 # Never rolls — a no-motion frame breaks the consecutive-motion person
                 # streak, same as any idle frame.
-                if force_scan and not outcome.motion:
+                gate_off = str(spec.get("motion_sensitivity", "")) == "off"
+                if (force_scan or gate_off) and not outcome.motion:
                     streak = 0
                     cat = _locator_hit(detector, outcome) if track_cats else None
                     if cat is not None:

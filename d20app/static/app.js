@@ -84,7 +84,7 @@ async function pollProvision() {
 }
 
 const ACCEL_OPTS = [["auto", "Auto — CUDA if available (rec.)"], ["cpu", "CPU"], ["opencl", "OpenCL iGPU"], ["openvino-auto", "OpenVINO AUTO"], ["openvino-gpu", "OpenVINO GPU"], ["onnx-cuda", "NVIDIA CUDA (onnxruntime-gpu)"], ["tensorrt", "TensorRT engine — fastest (CUDA 13+ driver, prebuilt engine)"]];
-const SENS_OPTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"]];
+const SENS_OPTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"], ["off", "Off — detect every frame"]];
 const TILING_OPTS = [["off", "Off"], ["2x2", "2×2"], ["3x3", "3×3"], ["4x4", "4×4"]];
 // (The "Cat input size" 960/1280 knob was removed in 0.40.0 — the benchmark (#70)
 // measured >640 input as WORSE than 640; tiling is the resolution lever.)
@@ -167,6 +167,9 @@ function cameraCardHTML(cam) {
         <label>Notify floor <input type="number" step="0.05" min="0.1" max="1" data-f="label_floor" value="${cam.label_floor}"/></label>
         <label class="checkbox" title="count a 'dog' as the cat — for a no-dog household where the model mislabels the cat"><input type="checkbox" data-dog ${(cam.locator_classes || []).includes("dog") ? "checked" : ""}/> Count dogs as the cat</label>
         <label>Motion sensitivity <select data-f="motion_sensitivity">${optsHTML(SENS_OPTS, cam.motion_sensitivity)}</select></label>
+        <label class="mcustom" title="fraction of the frame that must change to count as motion (higher = less sensitive)" style="${cam.motion_sensitivity === "custom" ? "" : "display:none"}">Motion min area <input type="number" step="0.0005" min="0" max="0.05" data-f="motion_min_area_frac" value="${cam.motion_min_area_frac}"/></label>
+        <label class="mcustom" title="per-pixel brightness change that counts as different (lower = more sensitive)" style="${cam.motion_sensitivity === "custom" ? "" : "display:none"}">Motion diff threshold <input type="number" min="1" max="80" data-f="motion_diff_threshold" value="${cam.motion_diff_threshold}"/></label>
+        <label class="mcustom" title="reject change regions thinner than this many pixels (kills artifact lines)" style="${cam.motion_sensitivity === "custom" ? "" : "display:none"}">Motion min blob px <input type="number" min="1" max="80" data-f="motion_min_blob_px" value="${cam.motion_min_blob_px}"/></label>
         <label title="still-cat scan: tile the frame so a small/distant cat fills more of the net">Cat tiling <select data-f="cat_scan_tiling">${optsHTML(TILING_OPTS, cam.cat_scan_tiling)}</select></label>
         <label title="still-cat scan: average this many back-to-back frames before the net — cuts sensor noise on a still scene (helps dim rooms); any movement mid-burst falls back to a single frame. 1 = off">Scan frames <input type="number" min="1" max="8" data-f="cat_scan_frames" value="${cam.cat_scan_frames}"/></label>
         <label class="checkbox" title="temporal fusion: a string of weak cat detections that chain smoothly and actually move across the frame is confirmed as one sighting (source 'track') — catches a walking cat no single frame can confirm. The movement requirement keeps cat-shaped decoys out."><input type="checkbox" data-f="track_fusion" ${cam.track_fusion !== false ? "checked" : ""}/> Track fusion</label>
@@ -232,6 +235,13 @@ function wireCameraCard(card) {
   card.querySelector("[data-toggle]").onclick = () =>
     card.querySelector(".cam-body").classList.toggle("hidden");
   card.querySelector("[data-watch]").onchange = saveActiveCameras;
+  // #96: "custom" motion is only usable if its knobs are editable — reveal them.
+  const sens = card.querySelector('[data-f="motion_sensitivity"]');
+  if (sens) sens.onchange = () => {
+    card.querySelectorAll(".mcustom").forEach((el) => {
+      el.style.display = sens.value === "custom" ? "" : "none";
+    });
+  };
   // Quick-toggles on the collapsed row auto-save on click (#91): they have no
   // visible Save button, and unsaved DOM state was silently wiped whenever any
   // OTHER camera saved (the save re-renders every card from the server). Each

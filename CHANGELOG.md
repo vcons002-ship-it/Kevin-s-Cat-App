@@ -11,6 +11,23 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.45.1] — 2026-07-04
+
+### Fixed
+- **Motion "custom" is actually configurable** (#96): selecting Custom now
+  reveals the three knobs the detector reads (min area fraction, per-pixel
+  diff threshold, min blob px), seeded from the camera's stored values. It
+  was a selectable dead end.
+
+### Added
+- **Motion gating can be turned OFF** (#96): a new "Off — detect every frame"
+  sensitivity runs the net continuously (practical now the accelerated
+  workhorse is ~tens of ms). Honesty preserved: the motion pre-filter still
+  runs — `outcome.motion` stays true-to-life (rolls still require a real
+  entrance), the trail/null-frame bookkeeping keep their real verdicts, and
+  the cooldown pause still skips the net. No-motion frames with the gate off
+  record cats through the still-scan path (rising edge, never a roll).
+
 ## [0.45.0] — 2026-07-04
 
 ### Fixed

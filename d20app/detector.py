@@ -303,7 +303,8 @@ class PersonDetector:
     def __init__(self, source: str, confidence: float = 0.5, roi=None,
                  detect_size: int = 300, label_floor: float = _LABEL_FLOOR,
                  motion_min_area_frac: float = 0.003, motion_diff_threshold: int = 25,
-                 motion_min_blob_px: int = 14, model: str = "yolo11n",
+                 motion_min_blob_px: int = 14, motion_gate: bool = True,
+                 model: str = "yolo11n",
                  accelerator: str = "cpu", smooth_feed: bool = False,
                  gamma: float = 1.0, brightness: int = 0,
                  contrast: float = 1.0, saturation: float = 1.0,
@@ -386,6 +387,11 @@ class PersonDetector:
         self._grab_stop = threading.Event()
         self._grab_error = ""
         self._grab_fails = 0    # grab thread's own empty-read counter (not shared)
+        # #96: motion-gate off = run the net on EVERY frame (cheap with the
+        # accelerated models). The motion pre-filter still runs — its verdict
+        # still feeds outcome.motion (rolls need a real entrance), the trail,
+        # and the null-frame bookkeeping — it just stops gating the net.
+        self.motion_gate = bool(motion_gate)
         self._motion = MotionPrefilter(
             min_area_frac=motion_min_area_frac,
             diff_threshold=motion_diff_threshold,
@@ -1197,8 +1203,9 @@ class PersonDetector:
             exclude = self._person_boxes
         self._trail.update(gray, moved, exclude=exclude)
         self._push_ring(cropped)               # temporal-mosaic frame history (#68)
-        # Run the net on real motion, or when a forced still-cat scan asks for it.
-        if not force and (not detect or not moved):
+        # Run the net on real motion, when a forced still-cat scan asks for it,
+        # or on every frame when the motion gate is off (#96).
+        if not force and (not detect or not (moved or not self.motion_gate)):
             return FrameOutcome(motion=False, person=False)
 
         floor = min(self.label_floor, self.confidence, self.cat_confidence)
