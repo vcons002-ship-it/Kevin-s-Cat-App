@@ -48,6 +48,23 @@
         </label>
         <button id="cats-clear" class="ghost" type="button">Clear log</button>
       </div>
+      <details id="find-settings">
+        <summary>⚙ Find-my-cat settings</summary>
+        <div class="row" style="margin-top:8px">
+          <label class="checkbox" title="on click, run a real detection pass across the find cameras — finds a STILL cat in a motionless room instead of jumping to the last sighting (#92)">
+            <input type="checkbox" id="find_scan"/> Active scan on click
+          </label>
+          <label class="inline" title="the model the find pass runs — the heavy one is worth it here">Find model
+            <select id="find_model"></select>
+          </label>
+        </div>
+        <p class="hint">With active scan off, the button jumps to where a cat is
+          (or was last) seen — a still cat in a motionless room won't be found.</p>
+      </details>
+      <details id="cat-sightings-box">
+        <summary>🐾 Recent sightings</summary>
+        <div id="cat-sightings"><p class="muted">No sightings yet.</p></div>
+      </details>
       <p class="help">
         Cats never trigger a treat — only people roll — but every sighting is
         tracked here: <strong>when</strong>, on <strong>which camera</strong>, and

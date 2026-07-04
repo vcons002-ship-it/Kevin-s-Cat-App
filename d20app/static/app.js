@@ -528,6 +528,10 @@ async function loadConfig() {
     ? cfg.speaker_names.slice()
     : (cfg.speaker_name ? [cfg.speaker_name] : []);
   savedSound = cfg.sound_file || "";
+  if ($("find_scan")) $("find_scan").checked = !!cfg.find_scan;
+  if ($("find_model")) {
+    $("find_model").innerHTML = optsHTML([["", "each camera's own"]].concat(MODEL_OPTS), cfg.find_model || "");
+  }
   activeCameras = Array.isArray(cfg.active_cameras) ? cfg.active_cameras.slice() : [];
   // Defaults for a brand-new camera = the current global detection settings.
   camDefaults = {
@@ -684,8 +688,8 @@ async function loadCats() {
   const where = (s.zone || s.region) ? ` — ${esc(s.zone || s.region)}` : "";
   const cam = s.camera ? ` on <strong>${esc(s.camera)}</strong>` : "";
   const thumb = s.image
-    ? `<a href="/snapshots/${s.image}" target="_blank">
-         <img class="cat-thumb" src="/snapshots/${s.image}" alt="last cat sighting" /></a>`
+    ? `<img class="cat-thumb" src="/snapshots/${s.image}" alt="last cat sighting"
+         title="click to enlarge" style="cursor:zoom-in" onclick="zoomImg(this.src)"/>`
     : "";
   const today = `${body.today} sighting${body.today === 1 ? "" : "s"} today`;
   // The time-of-day prior (#68): where the cats usually are around now — a hint
@@ -698,9 +702,54 @@ async function loadCats() {
       <div><strong>Last seen</strong> ${fmtTime(s.ts)}${cam}${where}
         <span class="muted">(score ${s.score})</span></div>
       <div class="muted">${today}</div>${likelyLine}</div>`;
+  renderSightings(body.recent || []);
+}
+
+// #93: the cats-only sightings log — every entry tagged with HOW it was found
+// (motion / still-scan / track / find / zoom+yolo…), images open in the lightbox.
+function renderSightings(recent) {
+  const box = $("cat-sightings");
+  if (!box) return;
+  if (!recent.length) { box.innerHTML = '<p class="muted">No sightings yet.</p>'; return; }
+  box.innerHTML = recent.slice(0, 30).map((r) => {
+    const spot = r.zone || r.region || "";
+    const src = r.source || "yolo";
+    const img = r.image
+      ? `<img class="cat-thumb" src="/snapshots/${r.image}" style="height:42px;cursor:zoom-in" onclick="zoomImg(this.src)"/>`
+      : "";
+    return `<div class="row" style="gap:8px;align-items:center;margin:3px 0">
+      ${img}<span>${fmtTime(r.ts)}</span>
+      <strong>${esc(r.camera || "")}</strong>
+      <span class="muted">${esc(spot)}</span>
+      <span class="cam-chip muted" title="how this sighting was detected">${esc(src)}</span>
+      <span class="muted">${(r.score || 0).toFixed ? (r.score).toFixed(2) : r.score}</span>
+    </div>`;
+  }).join("");
 }
 
 async function showCat() {
+  // #92: active scan first, when enabled — search, don't just jump.
+  if ($("find_scan") && $("find_scan").checked) {
+    $("show-cat-label").textContent = "Scanning…";
+    const { ok, body } = await api("/api/cats/find", postJSON({}));
+    if (ok && body && body.best) {
+      const sel = $("live-camera");
+      if (watchableCam(body.best)) sel.value = body.best;
+      await loadCats();
+      $("live-enabled").checked = true;
+      if (liveOn) liveOn = false;
+      await refreshStatus();
+      document.getElementById(isRunning ? "live-stage" : "cat-last")
+        .scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    $("show-cat-label").textContent = "No cat found — showing last sighting";
+    // fall through to the jump-to-last behavior below
+  }
+  return showCatJump();
+}
+
+async function showCatJump() {
   const { body } = await api("/api/cats");
   const sel = $("live-camera");
   // Prefer a camera seeing a cat right now; fall back to the last sighting's camera.
@@ -1548,7 +1597,8 @@ async function loadLog() {
     row.append(t, m);
     if (e.image) {
       const a = document.createElement("a");
-      a.href = `/snapshots/${e.image}`; a.target = "_blank"; a.title = "Open full snapshot";
+      a.href = "javascript:void(0)"; a.title = "Click to enlarge";
+      a.onclick = () => zoomImg(`/snapshots/${e.image}`);
       const img = document.createElement("img");
       img.className = "log-thumb"; img.src = `/snapshots/${e.image}`; img.alt = "detection snapshot";
       a.appendChild(img); row.appendChild(a);
@@ -1671,6 +1721,10 @@ function wire() {
   };
 
   $("show-cat").onclick = showCat;
+  if ($("find_scan")) $("find_scan").onchange = () =>
+    api("/api/config", postJSON({ find_scan: $("find_scan").checked }));
+  if ($("find_model")) $("find_model").onchange = () =>
+    api("/api/config", postJSON({ find_model: $("find_model").value }));
   $("cats-clear").onclick = async () => { await api("/api/cats/clear", { method: "POST" }); loadCats(); };
 
   // Test-detection tool

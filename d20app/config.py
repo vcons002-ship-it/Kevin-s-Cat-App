@@ -74,6 +74,12 @@ class Config:
 
     # --- Motion pre-filter (cheap gate before the neural net runs) ---
     cat_scan_model: str = ""             # still-cat scan model (#94) — "" = the camera's own; the scan wants the heavy model
+
+    # --- "Show me the cat" active find-scan (#92): search on click, don't just
+    # jump to the last sighting. Off by default (click keeps today's behavior).
+    find_scan: bool = False              # run a real detection pass across the find cameras on click
+    find_model: str = ""                 # the model the find pass runs — "" = each camera's own
+    find_cameras: list = field(default_factory=list)   # cameras to sweep; [] = all watched
     motion_sensitivity: str = "medium"   # "low"|"medium"|"high"|"custom"|"off" — GUI preset that drives the three knobs below ("off" = detect every frame, #96)
     motion_min_area_frac: float = 0.003  # fraction of the frame that must change to count as motion (higher = less sensitive)
     motion_diff_threshold: int = 25      # per-pixel brightness change to count a pixel as moved (higher = less sensitive)

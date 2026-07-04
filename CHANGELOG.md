@@ -11,6 +11,28 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.47.0] — 2026-07-04
+
+### Added
+- **"Show me the cat" can actually search** (#92): with the new **Active scan
+  on click** setting, the button runs a real detection pass across the find
+  cameras (`POST /api/cats/find`) — a still cat in a motionless room is
+  *found*, not guessed at. The pass runs a selectable **Find model** (default:
+  each camera's own) with thorough tiling on each camera's latest frame via
+  the tester's separate net cache — never the worker's net, so no race with
+  the live loop. Finds are recorded (source `find`), the best camera is
+  boosted, and the feed jumps there. Off by default: the button then behaves
+  exactly as before (jump to current/last sighting). No escalation ladder in
+  this button — deliberately, per the issue.
+- **Cats-only sightings log** (#93, first slice): a **🐾 Recent sightings**
+  block in the Cat-cam card — timestamp, camera, zone/region, score, and a
+  **detection-source tag** on every entry (`motion` / `still-scan` / `track` /
+  `find` / escalation's rungs), so you can verify each feature is actually
+  firing. Worker sightings are now tagged at the source.
+- **In-page lightbox everywhere** (#93): sighting thumbnails and activity-log
+  snapshots open in the existing click-anywhere-to-dismiss overlay instead of
+  a new browser tab.
+
 ## [0.46.0] — 2026-07-04
 
 ### Added

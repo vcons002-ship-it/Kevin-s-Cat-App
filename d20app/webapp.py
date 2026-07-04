@@ -1341,6 +1341,77 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             return jsonify({"error": "Couldn't encode the heat map."}), 500
         return Response(buf.tobytes(), mimetype="image/jpeg")
 
+    @app.post("/api/cats/find")
+    def api_cats_find():
+        # "Show me the cat" ACTIVE scan (#92): a real detection pass across the
+        # find cameras on click, so a still cat in a motionless room is found —
+        # search, don't just jump to the last sighting. Runs the tester's cached
+        # per-(model, accelerator) nets on each camera's LATEST frame — never the
+        # worker's net, so there's no race with the live loop. Finds are recorded
+        # (source "find") and the best camera is boosted so the feed shows the box.
+        import cv2  # noqa: F401 — via detect_image
+
+        loop = app.config["loop"]
+        cfg = config_mod.load()
+        if not cfg.find_scan:
+            return jsonify({"error": "Active find-scan is off — enable it in the "
+                            "Find-my-cat settings (the button then jumps to the "
+                            "last sighting as before)."}), 403
+        if not loop.is_running():
+            return jsonify({"error": "Detection isn't running."}), 409
+        wanted = {c for c in (cfg.find_cameras or []) if c}
+        zones_by_cam = {c.get("name"): c.get("zones") or []
+                        for c in (cfg.cameras or []) if isinstance(c, dict)}
+        results = []
+        for name, det in loop._detectors.items():
+            if wanted and name not in wanted:
+                continue
+            raw = det.latest_frame()
+            if raw is None:
+                results.append({"camera": name, "found": False, "score": 0.0,
+                                "note": "no frame yet"})
+                continue
+            frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+            grid_on = det._tiling_grid() > 1
+            settings = {
+                "model": cfg.find_model or det.model,
+                "accelerator": det.accelerator,
+                "person_confidence": det.confidence,
+                "cat_confidence": det.cat_confidence,
+                "label_floor": det.label_floor,
+                "locator_classes": list(det.locator_classes),
+                # a thorough look: the camera's scan tiling, else the 3×3 winner
+                "tiling": det.cat_scan_tiling if grid_on else "3x3",
+                "tile_overlap": det.cat_scan_tile_overlap if grid_on else 0.35,
+            }
+            annotated, dets, ms = _run_test_detection(frame, settings)
+            best = max((d for d in dets if d["label"] in det.locator_classes),
+                       key=lambda d: d["score"], default=None)
+            found = bool(best and best["score"] >= det.cat_confidence)
+            row = {"camera": name, "found": found, "ms": ms,
+                   "score": round(best["score"], 3) if best else 0.0}
+            if found:
+                snap = loop.snapshots.save(annotated)
+                h, w = frame.shape[:2]
+                sighting = loop.cats.record(
+                    name, best["box"], (w, h), best["score"], image=snap,
+                    label=best["label"], source="find",
+                    zone=zone_for(best["box"], zones_by_cam.get(name), det.roi))
+                spot = sighting.get("zone") or sighting["region"]
+                row["where"] = spot or ""
+                loop.activity.add(
+                    "motion",
+                    f"🔎 Find-scan: cat found{f' ({spot})' if spot else ''} on "
+                    f"{name}.", image=snap)
+            results.append(row)
+        hits = [r for r in results if r["found"]]
+        best_cam = max(hits, key=lambda r: r["score"], default=None)
+        if best_cam:
+            loop.boost_detection(best_cam["camera"], 10.0)
+        return jsonify({"results": results,
+                        "found": [r["camera"] for r in hits],
+                        "best": best_cam["camera"] if best_cam else None})
+
     @app.post("/api/cats/clear")
     def api_cats_clear():
         app.config["loop"].cats.clear()

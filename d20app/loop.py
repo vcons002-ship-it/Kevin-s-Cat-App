@@ -674,6 +674,7 @@ class DetectionLoop:
                             snap = self.snapshots.save(detector.annotated_jpeg())
                             sighting = self.cats.record(
                                 name, box, detector.frame_size, score, image=snap, label=label,
+                                source="still-scan",
                                 zone=zone_for(box, spec.get("zones"), spec.get("roi")))
                             spot = sighting.get("zone") or sighting["region"]
                             where = f" ({spot})" if spot else ""
@@ -706,6 +707,7 @@ class DetectionLoop:
                             label, score, box = cat
                             sighting = self.cats.record(
                                 name, box, detector.frame_size, score, image=snap, label=label,
+                                source="motion",
                                 zone=zone_for(box, spec.get("zones"), spec.get("roi")))
                             spot = sighting.get("zone") or sighting["region"]
                             where = f" ({spot})" if spot else ""
