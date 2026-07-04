@@ -91,19 +91,22 @@ MODELS = {
     # FP16 for lineup consistency (#86): every model gets a CUDA-precision onnx.
     # 11n barely speeds up in FP16 (not compute-bound, #70 §4) — this exists so
     # the CUDA path never has to fall back to FP32 just for the floor model.
+    # (#90: precision is NOT a user-facing choice — the _fp16 entries are
+    # registered for old configs + provisioning, hidden from pickers, and
+    # resolve_variant() picks the right file from the accelerator.)
     "yolo11n_fp16": {"file": "yolo11n_fp16.onnx", "size": 640,
                      "label": "YOLO11n FP16 (640) — floor, CUDA",
-                     "selectable": True},
+                     "selectable": False},
     "yolo26m": {"file": "yolo26m.onnx", "size": 640,
                 "label": "YOLO26m (640) — lightweight", "selectable": True},
     "yolo26m_fp16": {"file": "yolo26m_fp16.onnx", "size": 640,
                      "label": "YOLO26m FP16 (640) — lightweight, CUDA",
-                     "selectable": True},
+                     "selectable": False},
     "yolo26x": {"file": "yolo26x.onnx", "size": 640,
                 "label": "YOLO26x (640) — workhorse", "selectable": True},
     "yolo26x_fp16": {"file": "yolo26x_fp16.onnx", "size": 640,
                      "label": "YOLO26x FP16 (640) — workhorse, CUDA",
-                     "selectable": True},
+                     "selectable": False},
 }
 DEFAULT_VARIANT = "yolo11n"
 
@@ -148,6 +151,35 @@ _NMS_IOU = 0.45
 def model_path(variant: str = DEFAULT_VARIANT) -> str:
     """Absolute path to a variant's ONNX file (no existence check)."""
     return os.path.join(_MODELS_DIR, MODELS[variant]["file"])
+
+
+def resolve_variant(model: str, accelerator: str = "cpu",
+                    exists=os.path.exists) -> str:
+    """The concrete file variant to load for a (logical model, accelerator) pair.
+
+    Precision is an implementation detail of the runtime, not a user choice
+    (#90): cv2.dnn (cpu/opencl) needs FP32; onnxruntime (auto/onnx-cuda) wants
+    the FP16 onnx; tensorrt's engine is FP16 regardless, and its fallback runs
+    onnxruntime, so it prefers FP16 too; OpenVINO converts precision itself but
+    is faster fed FP16. Legacy configs naming a ``*_fp16`` model normalize to
+    the base — they can never force FP16 onto cv2.dnn."""
+    base = (model or "").replace("_fp16", "")
+    if base not in MODELS:
+        return model                        # unknown: let load_net raise clearly
+    accel = (accelerator or "cpu").lower()
+    if accel in ("auto", "onnx-cuda", "tensorrt", "openvino-gpu", "openvino-auto"):
+        fp16 = f"{base}_fp16"
+        if fp16 in MODELS and exists(model_path(fp16)):
+            return fp16
+    return base
+
+
+def _annotate(runner, effective: str, reason: str = ""):
+    """Stamp what actually ran onto the runner (#90) — callers surface it, so a
+    fallback is never silently labelled as the requested accelerator."""
+    runner.effective_accelerator = effective
+    runner.fallback_reason = reason
+    return runner
 
 
 # Targeted-boost model preference (0.42.0), strongest first per #70: 26x (91%/0%)
@@ -497,6 +529,7 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
     if accel not in ACCELERATORS:
         raise ValueError(f"unknown accelerator {accel!r}; known: {list(ACCELERATORS)}")
 
+    fb_reason = ""          # why a fallback happened (#90): surfaced, never silent
     if accel == "tensorrt":
         # Opt-in engine path (#82). Runs BEFORE the ONNX existence check — a
         # machine can legitimately hold only the .engine (26x's ONNX is
@@ -504,10 +537,11 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
         # CPU — both say so out loud): same model, same accuracy, just slower,
         # which is the established accelerator-degradation stance.
         try:
-            return _load_tensorrt(variant)
+            return _annotate(_load_tensorrt(variant), "tensorrt")
         except RuntimeError as exc:
             _log.warning("tensorrt unavailable (%s) — falling back to 'auto' "
                          "(verified CUDA, else CPU)", exc)
+            fb_reason = f"requested tensorrt — unavailable: {exc}"
             accel = "auto"
 
     path = model_path(variant)
@@ -523,17 +557,20 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
         # the runner below verifies the provider actually selected, so "auto"
         # can never silently run slow — else CPU, said out loud.
         try:
-            return _OnnxRuntimeRunner(path)
+            return _annotate(_OnnxRuntimeRunner(path), "onnx-cuda", fb_reason)
         except Exception as exc:            # noqa: BLE001 — any CUDA absence → CPU
             _log.warning(
                 "accelerator 'auto': CUDA unavailable (%s) — running %s on CPU",
                 exc, variant)
-            return _CvDnnRunner(cv2.dnn.readNetFromONNX(path))
+            reason = "; ".join(r for r in
+                               (fb_reason, f"CUDA unavailable: {exc}") if r)
+            return _annotate(_CvDnnRunner(cv2.dnn.readNetFromONNX(path)),
+                             "cpu", reason)
 
     if accel in ("openvino-gpu", "openvino-auto"):
         device = "GPU" if accel == "openvino-gpu" else "AUTO"
         try:
-            return _OpenVinoRunner(path, device)
+            return _annotate(_OpenVinoRunner(path, device), accel)
         except Exception as exc:            # noqa: BLE001 — surface a clear, actionable error
             raise RuntimeError(
                 f"OpenVINO {device} backend unavailable ({exc}). Install the optional "
@@ -543,7 +580,7 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
 
     if accel == "onnx-cuda":
         try:
-            return _OnnxRuntimeRunner(path)
+            return _annotate(_OnnxRuntimeRunner(path), "onnx-cuda")
         except ImportError as exc:          # onnxruntime not installed at all
             raise RuntimeError(
                 "onnx-cuda needs the optional 'onnxruntime-gpu' package (CUDA-12 build). "
@@ -555,8 +592,9 @@ def load_net(variant: str = DEFAULT_VARIANT, accelerator: str = "cpu"):
     net = cv2.dnn.readNetFromONNX(path)
     if accel == "opencl":
         # OpenCV silently runs on CPU if there's no OpenCL device, so this is safe.
-        return _CvDnnRunner(net, target=cv2.dnn.DNN_TARGET_OPENCL_FP16)
-    return _CvDnnRunner(net)
+        return _annotate(_CvDnnRunner(net, target=cv2.dnn.DNN_TARGET_OPENCL_FP16),
+                         "opencl")
+    return _annotate(_CvDnnRunner(net), "cpu")
 
 
 def _letterbox(frame, size: int):

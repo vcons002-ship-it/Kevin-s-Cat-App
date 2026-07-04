@@ -11,6 +11,34 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.45.0] — 2026-07-04
+
+### Fixed
+- **Camera quick-toggles persist on click** (#91): the collapsed-row 🎲/🐱/👁
+  toggles now auto-save immediately (a minimal `{name, url, field}` merge —
+  they have no visible Save button, so unsaved state used to be silently
+  wiped whenever any *other* camera saved and re-rendered the list). A failed
+  save flips the toggle back and says so. Saving one camera has never touched
+  another's stored settings; now there's no unsaved state to lose either.
+- **The log says "cat", not "dog"** (#98): a detection counted as the cat via
+  the dog-as-cat toggle was logged as "Still dog seen" under a 🐱. The
+  sentence now says cat; the stored sighting keeps the raw label (data stays
+  honest — only the wording matches the intent you configured).
+
+### Changed
+- **Precision is no longer a model choice** (#90): the model pickers (camera,
+  tester/benchmark, sweep) offer the **3 logical models** (26x / 26m / 11n);
+  `resolve_variant()` picks the file from the **accelerator** — FP32 for
+  cv2.dnn (cpu/opencl), FP16 for onnxruntime/TensorRT/OpenVINO paths when the
+  file exists. Legacy configs naming `*_fp16` normalize to the base (and can
+  never force FP16 onto cv2.dnn). The `_fp16` registry entries stay for
+  provisioning + old configs, hidden from pickers.
+- **Fallbacks are visible, never re-labelled** (#90): every runner is stamped
+  with what it *actually* ran on and why. The benchmark table shows "ran on X
+  (requested Y — reason)" on any fallback; camera chips show `● live · accel`
+  and flag a degraded camera (`● live (cpu!)` + tooltip); `cam_status` carries
+  `ran_on`/`fallback` for the API.
+
 ## [0.44.0] — 2026-07-04
 
 ### Added

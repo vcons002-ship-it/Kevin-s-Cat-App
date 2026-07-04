@@ -232,6 +232,27 @@ function wireCameraCard(card) {
   card.querySelector("[data-toggle]").onclick = () =>
     card.querySelector(".cam-body").classList.toggle("hidden");
   card.querySelector("[data-watch]").onchange = saveActiveCameras;
+  // Quick-toggles on the collapsed row auto-save on click (#91): they have no
+  // visible Save button, and unsaved DOM state was silently wiped whenever any
+  // OTHER camera saved (the save re-renders every card from the server). Each
+  // sends a minimal {name, url, field} — the server merges into the saved
+  // entry, so nothing else about the camera (or any other camera) is touched.
+  for (const f of ["roll", "track_cats", "always_watch"]) {
+    const el = card.querySelector(`.cam-head [data-f="${f}"]`);
+    if (el) el.onchange = async () => {
+      const payload = { name, url: card.querySelector('[data-f="url"]').value };
+      payload[f] = el.checked;
+      const { ok, body } = await api("/api/cameras/saved", postJSON(payload));
+      if (!ok) {
+        el.checked = !el.checked;          // don't lie about a failed save
+        alert((body && body.error) || "Couldn't save the toggle.");
+        return;
+      }
+      const stored = cameras.find((c) => c.name === name);
+      if (stored) stored[f] = el.checked;  // keep the in-memory copy honest too
+      refreshStatus();                     // roles feed the status chips
+    };
+  }
   card.querySelector("[data-save]").onclick = async () => {
     const note = card.querySelector("[data-note]");
     note.textContent = "Saving…";
@@ -552,7 +573,15 @@ function renderCamChips(cams) {
     if (!chip) continue;
     if (c.last_error) { chip.textContent = "⚠ failing"; chip.className = "cam-chip chip-bad"; }
     else if (c.resting) { chip.textContent = "💤 resting"; chip.className = "cam-chip muted"; }
-    else if (c.connected) { chip.textContent = "● live"; chip.className = "cam-chip chip-ok"; }
+    else if (c.connected && c.fallback) {
+      // #90: a degraded accelerator must be visible, not a buried warning.
+      chip.textContent = `● live (${c.ran_on}!)`; chip.className = "cam-chip chip-bad";
+      chip.title = c.fallback;
+    }
+    else if (c.connected) {
+      chip.textContent = c.ran_on ? `● live · ${c.ran_on}` : "● live";
+      chip.className = "cam-chip chip-ok"; chip.title = "";
+    }
     else { chip.textContent = "… connecting"; chip.className = "cam-chip muted"; }
   }
 }
@@ -938,8 +967,15 @@ function renderBenchTable(runs, meta) {
     <td><strong>${r.combined_score.toFixed(2)}</strong></td>
     <td>${r.cat_score.toFixed(2)}</td><td>${r.dog_score.toFixed(2)}</td>
     <td>${r.detected ? "✓" : "·"}</td><td>${Math.round(r.inference_ms)} ms</td></tr>`).join("");
+  // #90: a fallback must be visible in the report — never fallback numbers
+  // silently labelled as the requested accelerator.
+  const fb = runs.find((r) => r.fallback);
+  const ranLine = fb
+    ? ` · <span class="warn">ran on ${esc(fb.ran_on)} (${esc(fb.fallback)})</span>`
+    : (runs[0] && runs[0].ran_on && runs[0].ran_on !== meta.accelerator
+       ? ` · ran on ${esc(runs[0].ran_on)}` : "");
   $("bench-table").innerHTML =
-    `<p class="muted">Best cat-or-dog score first · cat threshold ${meta.cat_threshold.toFixed(2)} · ${esc(meta.accelerator)}</p>
+    `<p class="muted">Best cat-or-dog score first · cat threshold ${meta.cat_threshold.toFixed(2)} · ${esc(meta.accelerator)}${ranLine}</p>
      <table class="bench-tbl"><tr><th>frame</th><th>model</th><th>size</th><th>tiling</th>
      <th>cat-or-dog</th><th>cat</th><th>dog</th><th>found?</th><th>time</th></tr>${rows}</table>`;
 }

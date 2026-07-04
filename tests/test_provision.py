@@ -13,13 +13,15 @@ from d20app.webapp import create_app
 
 
 # ---- lineup derives from the registry (no drift) --------------------------------
-def test_onnx_lineup_covers_every_selectable_variant():
+def test_onnx_lineup_is_both_precisions_of_every_base_model():
+    # #90 hid the _fp16 entries from pickers, but they stay in the LINEUP:
+    # base + fp16 for each of the 3 logical models.
     lineup = {i["variant"]: i for i in provision.onnx_lineup()}
     assert "yolo11n_fp16" in lineup            # the #86 registry gap, closed
     assert lineup["yolo26x_fp16"]["precision"] == "fp16"
     assert lineup["yolo26m"]["precision"] == "fp32"
-    selectable = {v for v, m in yolo.MODELS.items() if m.get("selectable", True)}
-    assert set(lineup) == selectable
+    assert set(lineup) == {"yolo11n", "yolo11n_fp16", "yolo26m", "yolo26m_fp16",
+                           "yolo26x", "yolo26x_fp16"}
 
 
 def test_engine_lineup_is_one_per_base_model():

@@ -74,6 +74,18 @@ class Status:
     rolls: int = 0
 
 
+def _shown_label(label: str) -> str:
+    """What a counted-as-the-cat sighting is CALLED in the log (#98): "cat".
+
+    A no-dog household opts into counting the model's dog-mislabels as the cat
+    (locator_classes = ["cat", "dog"]) — so the log saying "Still dog seen"
+    under a 🐱 surfaces exactly the misclassification the user asked us to
+    absorb. The stored sighting keeps the RAW label (data stays honest); only
+    the sentence says cat. Anything that reaches these log lines was already a
+    locator hit, so mapping every non-"cat" label is correct by construction."""
+    return "cat"
+
+
 def _cooldown_resume_delay(cfg) -> float:
     """Seconds before the cooldown ends at which to resume the neural net.
 
@@ -351,9 +363,24 @@ class DetectionLoop:
         return True
 
     def cam_status(self) -> list:
-        """Per-camera {name, connected, last_error, roll, track_cats} for the GUI."""
+        """Per-camera {name, connected, last_error, roll, track_cats} for the GUI.
+
+        Enriched with what the net ACTUALLY runs on (#90): ``ran_on`` (the
+        effective accelerator) and ``fallback`` (why, when it isn't the request)
+        — a degraded camera must be visible, not just a buried log line."""
         with self._cam_lock:
-            return [{"name": n, **dict(s)} for n, s in self._cam_status.items()]
+            rows = [{"name": n, **dict(s)} for n, s in self._cam_status.items()]
+        detectors = self._detectors
+        for row in rows:
+            det = detectors.get(row["name"])
+            probe = getattr(det, "effective_accelerator", None)   # stub-tolerant
+            if probe is not None:
+                eff, why = probe()
+                if eff:
+                    row["ran_on"] = eff
+                    if why:
+                        row["fallback"] = why
+        return rows
 
     def set_smooth(self, on: bool) -> None:
         """Request smooth-feed on/off on every running detector.
@@ -639,7 +666,7 @@ class DetectionLoop:
                             where = f" ({spot})" if spot else ""
                             self.activity.add(
                                 "motion",
-                                f"🐱 Still {label} seen{where} on {cam_label} — tracked, no roll.",
+                                f"🐱 Still {_shown_label(label)} seen{where} on {cam_label} — tracked, no roll.",
                                 image=snap)
                         cat_seen_still = True
                     else:
@@ -671,7 +698,7 @@ class DetectionLoop:
                             where = f" ({spot})" if spot else ""
                             self.activity.add(
                                 "motion",
-                                f"🐱 {label.capitalize()} seen{where} on {cam_label} — tracked, no roll.",
+                                f"🐱 {_shown_label(label).capitalize()} seen{where} on {cam_label} — tracked, no roll.",
                                 image=snap)
                         else:
                             what = outcome.labels[0] if outcome.labels else "something"

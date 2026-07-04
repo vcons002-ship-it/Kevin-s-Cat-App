@@ -432,8 +432,12 @@ class PersonDetector:
         if self._yolo is not None:
             return self._yolo
         from . import yolo
+        # Precision is resolved from the accelerator (#90): the logical model
+        # ("yolo26x") maps to the FP16 file on onnxruntime/TensorRT paths and
+        # the FP32 file on cv2.dnn — never a user-facing _fp16 choice.
+        resolved = yolo.resolve_variant(self.model, self.accelerator)
         try:
-            self._yolo = yolo.load_net(self.model, self.accelerator)
+            self._yolo = yolo.load_net(resolved, self.accelerator)
         except ValueError as exc:
             # Unknown or DROPPED model (#79): a config error, not a camera hiccup —
             # surface it through the loop's fatal path (same as a missing file) so
@@ -446,15 +450,30 @@ class PersonDetector:
             if self.accelerator != "cpu":
                 _log.warning("%s on %s unavailable (%s) — retrying on CPU",
                              self.model, self.accelerator, exc)
+                reason = f"requested {self.accelerator} — failed: {exc}"
                 self.accelerator = "cpu"
-                self._yolo = yolo.load_net(self.model, "cpu")
+                resolved = yolo.resolve_variant(self.model, "cpu")   # back to FP32
+                self._yolo = yolo.load_net(resolved, "cpu")
+                self._yolo.fallback_reason = reason
             else:
                 raise RuntimeError(
                     f"YOLO model {self.model!r} failed to load ({exc}). Check the "
                     "ONNX file in d20app/models/ (see models/README.md to export it)."
                 ) from exc
-        self._yolo_size = yolo.input_size(self.model)
+        self._yolo_size = yolo.input_size(resolved)
+        self._resolved_model = resolved
         return self._yolo
+
+    def effective_accelerator(self):
+        """``(effective, reason)`` for what the net ACTUALLY runs on (#90) —
+        ``("tensorrt", "")`` on a clean engine load, or e.g. ``("cpu",
+        "requested tensorrt — unavailable: …")`` after a fallback. ``(None, "")``
+        until the net has loaded. Fallbacks must be visible, never re-labelled."""
+        net = self._yolo
+        if net is None:
+            return None, ""
+        return (getattr(net, "effective_accelerator", self.accelerator),
+                getattr(net, "fallback_reason", ""))
 
     def _ensure_cap(self):
         import cv2

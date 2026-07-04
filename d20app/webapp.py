@@ -170,6 +170,14 @@ def _run_test_detection(frame, settings: dict):
         return annotated, dets, round((time.perf_counter() - t0) * 1000.0, 1)
 
 
+def _effective_accel(model: str, accel: str):
+    """What the cached test detector for (model, accel) actually ran on (#90):
+    ``(effective, reason)`` — or ``(None, "")`` before its first run."""
+    with _test_detect_lock:
+        det = _test_detectors.get((model, accel))
+    return det.effective_accelerator() if det is not None else (None, "")
+
+
 def _yolo_boxes_fn(settings: dict, floor: float):
     """A ``run_yolo(img) -> [(label, score, box)]`` callable for the escalation
     ladder (#66), reusing the Test tool's per-(model, accelerator) detector cache
@@ -295,6 +303,10 @@ def _model_options() -> list:
     configs can't pick them. Order = the registry's lightest-to-heaviest."""
     from . import provision, yolo
 
+    # #90: precision is not a user choice — the picker shows the 3 LOGICAL
+    # models; resolve_variant() maps (model, accelerator) to the FP32/FP16 file.
+    # A model is offered when either precision's file exists (the accelerator
+    # in use decides which one actually loads).
     # #86: a present file the manifest can't vouch for (unknown provenance or
     # changed since vetting) is offered but SAYS SO — never silently run a
     # model that may not be the settled precision/head.
@@ -302,12 +314,19 @@ def _model_options() -> list:
              if r["kind"] == "onnx" and r["status"] in ("unverified", "stale")}
     out = []
     for v, m in yolo.MODELS.items():
-        if not m.get("selectable", True) or not os.path.exists(yolo.model_path(v)):
+        if not m.get("selectable", True):
+            continue
+        files = [m["file"]]
+        fp16 = yolo.MODELS.get(f"{v}_fp16")
+        if fp16:
+            files.append(fp16["file"])
+        if not any(os.path.exists(os.path.join(
+                os.path.dirname(yolo.model_path(v)), f)) for f in files):
             continue
         label = m.get("label", v)
-        flag = flags.get(m["file"])
-        if flag:
-            label += f" ⚠ {flag} — refresh in Model files"
+        flagged = [f"{f}: {flags[f]}" for f in files if f in flags]
+        if flagged:
+            label += f" ⚠ {'; '.join(flagged)} — refresh in Model files"
         out.append({"value": v, "label": label})
     return out
 
@@ -415,9 +434,14 @@ def _run_benchmark(frame, models: list, tilings: list, cat_threshold: float,
             best_dog = max((d["score"] for d in dets if d["label"] == "dog"), default=0.0)
             combined = max(best_cat, best_dog)
             thumb, raw = _bench_thumb(annotated)
+            eff, why = _effective_accel(model, accelerator)
             runs.append({
                 "model": model, "size": _model_native_size(model), "tiling": tiling,
                 "tile_overlap": opts["tile_overlap"], "accelerator": accelerator,
+                # #90: what ACTUALLY ran — a fallback must be visible in the
+                # report, never its numbers silently labelled as the request.
+                "ran_on": eff or accelerator,
+                "fallback": why,
                 "cat_score": round(best_cat, 3), "dog_score": round(best_dog, 3),
                 "combined_score": round(combined, 3),
                 "detected": bool(combined >= cat_threshold),
