@@ -5,11 +5,33 @@ is a loop-integration concern covered by the multicamera suite.
 
 import numpy as np
 
+from d20app import dice
 from d20app.detector import PersonDetector
+from d20app.loop import DetectionLoop
 
 
 def _det(**kw):
     return PersonDetector(source="unused", **kw)
+
+
+class _Cfg:
+    def __init__(self, cooldown_seconds):
+        self.cooldown_seconds = cooldown_seconds
+
+
+# ---- #102: the shared cooldown gate hot-reloads (no silent watch restart) ----
+def test_shared_reload_updates_the_cooldown_gate():
+    loop = DetectionLoop()
+    loop._gate = dice.RollGate(300)          # built at start with the old value
+    loop._apply_shared_reload(_Cfg(30))       # a saved change comes in mid-watch
+    assert loop._gate.cooldown_s == 30.0      # applied live, no stop/start
+
+
+def test_shared_reload_is_a_noop_before_watching():
+    loop = DetectionLoop()
+    assert loop._gate is None
+    loop._apply_shared_reload(_Cfg(30))       # must not blow up when idle
+    assert loop._gate is None
 
 
 # ---- #100: reconfigure applies cheap knobs in place --------------------------
