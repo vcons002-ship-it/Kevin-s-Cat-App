@@ -74,6 +74,8 @@ class Config:
 
     # --- Motion pre-filter (cheap gate before the neural net runs) ---
     cat_scan_model: str = ""             # still-cat scan model (#94) — "" = the camera's own; the scan wants the heavy model
+    live_tiling: str = "off"             # live-detection tiling (#101) — independent of the scan's; default off (multiplies per-frame cost)
+    live_tile_overlap: float = 0.2       # overlap for live tiling when on
 
     # --- "Show me the cat" active find-scan (#92): search on click, don't just
     # jump to the last sighting. Off by default (click keeps today's behavior).
@@ -161,6 +163,8 @@ _CAMERA_FROM_CFG = {
     "cat_scan_imgsz": "cat_scan_imgsz",
     "cat_scan_frames": "cat_scan_frames",
     "cat_scan_model": "cat_scan_model",
+    "live_tiling": "live_tiling",
+    "live_tile_overlap": "live_tile_overlap",
     "track_fusion": "track_fusion",
     "motion_sensitivity": "motion_sensitivity",
     "motion_min_area_frac": "motion_min_area_frac",

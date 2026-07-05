@@ -11,6 +11,53 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.48.0] — 2026-07-04
+
+### Fixed
+- **Live setting changes apply without a stop/start** (#100): the worker used
+  to snapshot config at start and never re-read it, so edits (scan rate, model,
+  tiling, confidences, motion params, ROI…) needed a restart. Each worker now
+  re-reads the saved config every ~2 s and reconfigures its detector in place
+  (`PersonDetector.reconfigure`); a model/accelerator/ROI change resets the net
+  on the next frame. Roles (roll/track) update live too.
+- **"Motion off" runs the LIVE path, not the still-scan path** (#101): it was
+  routed through the heavy locator/scan branch (backwards — maximally
+  expensive) and mis-tagged detections as `still-scan` (#104). Motion-off now
+  runs the camera's live detection every frame, ungated; its finds are tagged
+  as the live path (`motion`), and only a genuine forced scan is tagged
+  `still-scan`.
+- **The live-feed selector never shows the wrong camera** (#103): a specific
+  camera request now returns that camera or nothing — it no longer silently
+  falls back to the streamed camera's feed when the requested one isn't
+  running.
+- **Find-my-cat only scans watched cameras** and gives **persistent feedback**
+  (#103): a status line under the button says whether it found a cat (where +
+  score) or fell back to the last sighting — no more too-fast flash.
+- **The workflow line reflects the saved settings** (#104): it re-renders after
+  a save, so "still-cat scan every 5s" no longer lingers when the scan is off.
+- **GUI pass #2** (#106, #105): the Live-camera escalation toggle moved into
+  the Escalation card (it was left behind in the VLM card); the camera **Edit**
+  arrow now flips ▾/▴; the status dot is round; the unverified-model label is
+  short (no overflow); the four feed toggles are shortened (🌈 Trail / 📍 Last /
+  🎞 Smooth / 📺 Live); the **last-known box is violet**, not grey; the API-key
+  label stays on one line; camera head toggles align across rows; Set region /
+  Add zone sit side by side; sightings thumbnails keep aspect ratio and the
+  last-seen image reserves its space (no load flicker).
+
+### Added
+- **Live-detection tiling** (#101): a per-camera **Live tiling** / **Live
+  overlap** setting, independent of the still-scan's — the live path can now
+  tile like the scan does. Default **off** (it multiplies per-frame cost by the
+  tile count); the still-scan keeps its own separate tiling.
+
+### Note
+The larger #101/#102 restructure — dedicated collapsible settings *sections*
+for each mode (live / still-scan / find) with full model+tiling+overlap+
+confidence, removing the per-camera scan-model in favour of a Cat-cam
+still-scan group, and moving the last-scan indicator there — is the remaining
+follow-up; the correctness bugs it named (tiling scan-only, motion-off
+routing) are fixed here.
+
 ## [0.47.1] — 2026-07-04
 
 ### Changed

@@ -31,6 +31,7 @@
         <span class="show-cat-emoji" aria-hidden="true">🐱</span>
         <span id="show-cat-label">Show me the cat!</span>
       </button>
+      <div id="find-feedback" class="muted" style="text-align:center;font-size:13px;min-height:1.1em"></div>
       <div id="cat-last" class="cat-last"><p class="muted">No cats seen yet.</p></div>
       <div class="cats-foot">
         <label class="inline" title="A sleeping cat doesn't move, so it never trips the motion filter. Periodically run the net anyway to catch a still cat. More often = a still cat shows up sooner, but uses more CPU.">
@@ -84,16 +85,16 @@
         <div class="row">
           <select id="live-camera" title="which camera to show"></select>
           <label class="checkbox" title="paint the cat trail onto the live feed: silhouettes and a route line coloured by recency (blue = older → red = newest), updating live as the cat moves. Purely visual — detection is unaffected.">
-            <input type="checkbox" id="trail-overlay" /> 🌈 Trail overlay
+            <input type="checkbox" id="trail-overlay" /> 🌈 Trail
           </label>
           <label class="checkbox" title="grey box at the cat’s newest confirmed position, with its age — hidden while a live cat box is on screen, shown the moment she vanishes (fades after 30 min). Purely visual — detection is unaffected.">
-            <input type="checkbox" id="lastknown-overlay" checked /> 📍 Last known
+            <input type="checkbox" id="lastknown-overlay" checked /> 📍 Last
           </label>
           <label class="checkbox">
-            <input type="checkbox" id="smooth_feed" /> Smooth feed
+            <input type="checkbox" id="smooth_feed" /> 🎞 Smooth
           </label>
           <label class="checkbox">
-            <input type="checkbox" id="live-enabled" checked /> Show live feed
+            <input type="checkbox" id="live-enabled" checked /> 📺 Live
           </label>
         </div>
       </div>
@@ -268,6 +269,9 @@
     <!-- ===== Cat-presence (VLM) tester — moondream "is there a cat?" (#48) ===== -->
     <section class="card" id="escalation-card">
       <h2>🔍 Escalation ladder <span class="muted">— zoom in and look again (an active experiment; uses the VLM below when enabled)</span></h2>
+      <label class="checkbox" title="allow the escalation ladder to run against live cameras on demand (the treat path never uses it)">
+        <input type="checkbox" id="vlm-escalation-toggle"/> Live-camera escalation
+      </label>
       <!-- Escalation ladder: motion/last-seen/predicted zoom crops -> YOLO ->
            VLM detect + confirm -> VLM query (#66). On-demand only. -->
       <details id="vlm-escalate">
@@ -311,14 +315,11 @@
       </div>
       <p id="vlm-unavailable" class="muted hidden"></p>
       <div class="row vlm-key-row">
-        <label class="inline" title="Authenticates the one-time local weight download AND cloud inference. Stored in config, never logged, never sent back to the browser.">
-          API key <input id="vlm-key" type="password" placeholder="paste your Moondream key" autocomplete="off" />
+        <label class="inline nowrap" title="Authenticates the one-time local weight download AND cloud inference. Stored in config, never logged, never sent back to the browser.">
+          API key <input id="vlm-key" type="password" placeholder="Moondream key" autocomplete="off" />
         </label>
         <button id="vlm-key-save" class="ghost" type="button">Save key</button>
         <span id="vlm-key-status" class="muted"></span>
-        <label class="inline" title="allow the escalation ladder to run against live cameras on demand (the treat path never uses it)">
-          <input type="checkbox" id="vlm-escalation-toggle"/> Live-camera escalation
-        </label>
       </div>
       <div id="vlm-frame-pick" class="test-video-tools hidden">
         <label class="inline">Frame <input id="vlm-frame" type="number" min="0" step="1" value="0" /></label>

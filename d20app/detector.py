@@ -311,6 +311,7 @@ class PersonDetector:
                  cat_scan_tiling: str = "off", cat_scan_tile_overlap: float = 0.2,
                  cat_scan_imgsz: int = 0, cat_scan_frames: int = 1,
                  cat_scan_model: str = "", cat_confidence: float = 0.5,
+                 live_tiling: str = "off", live_tile_overlap: float = 0.2,
                  locator_classes=None, track_fusion: bool = True) -> None:
         self.source = source
         self.confidence = confidence
@@ -330,6 +331,12 @@ class PersonDetector:
         # ONE hard, static look (a sleeping cat in a dark corner) — it wants the
         # heavy model even when live detection runs the cheap fast one.
         self.cat_scan_model = (cat_scan_model or "").strip()
+        # Live-detection tiling (#101): independent of the still-scan's tiling.
+        # Default OFF — live detection ran untiled for the app's whole history;
+        # tiling the live path is opt-in (it multiplies per-frame cost by the
+        # tile count). When on, the motion/treat path tiles like the scan does.
+        self.live_tiling = live_tiling or "off"
+        self.live_tile_overlap = float(live_tile_overlap)
         self.track_fusion = bool(track_fusion)
         self._locator_runner = None     # lazily-loaded larger-input YOLO net (Option A)
         self._locator_size = None
@@ -474,6 +481,75 @@ class PersonDetector:
         self._resolved_model = resolved
         return self._yolo
 
+    # Cheap per-frame knobs the running worker may hot-reload without a restart
+    # (#100). Model / accelerator / ROI are handled specially in reconfigure().
+    _LIVE_TUNABLES = (
+        "confidence", "cat_confidence", "label_floor", "cat_scan_tiling",
+        "cat_scan_tile_overlap", "cat_scan_frames", "cat_scan_model",
+        "live_tiling", "live_tile_overlap", "track_fusion", "gamma",
+        "brightness", "contrast", "saturation",
+    )
+
+    def reconfigure(self, spec: dict) -> bool:
+        """Apply saved setting changes to this running detector in place (#100).
+
+        Cheap knobs (confidences, tiling, adjustments, motion params) update
+        directly. Model / accelerator changes drop the cached net so the next
+        frame reloads it; ROI, motion-gate, and the still-scan net are reset
+        too. Returns True if anything changed. Called on the worker thread only.
+        """
+        changed = False
+        coerce = {
+            "confidence": float, "cat_confidence": float, "label_floor": float,
+            "cat_scan_tile_overlap": float, "live_tile_overlap": float,
+            "cat_scan_frames": int, "track_fusion": bool,
+            "gamma": float, "brightness": int, "contrast": float,
+            "saturation": float, "cat_scan_tiling": str, "live_tiling": str,
+            "cat_scan_model": lambda v: (v or "").strip(),
+        }
+        for key in self._LIVE_TUNABLES:
+            if key not in spec:
+                continue
+            new = coerce.get(key, lambda v: v)(spec[key])
+            if getattr(self, key, None) != new:
+                setattr(self, key, new)
+                changed = True
+                if key == "cat_scan_model":          # re-resolve the scan net
+                    self._locator_tried = False
+                    self._locator_runner = None
+
+        model = spec.get("model")
+        accel = spec.get("accelerator")
+        if (model and model != self.model) or (accel and accel != self.accelerator):
+            self.model = model or self.model
+            self.accelerator = accel or self.accelerator
+            self._yolo = None                        # next frame reloads the net
+            self._boost_tried = False; self._boost_runner = None
+            self._locator_tried = False; self._locator_runner = None
+            changed = True
+
+        roi = spec.get("roi")
+        roi = list(roi) if isinstance(roi, (list, tuple)) and len(roi) == 4 else None
+        if roi != self.roi:
+            self.roi = roi
+            changed = True
+
+        gate = str(spec.get("motion_sensitivity", "")) != "off"
+        if gate != self.motion_gate:
+            self.motion_gate = gate
+            changed = True
+
+        motion_map = {"motion_min_area_frac": ("min_area_frac", float),
+                      "motion_diff_threshold": ("diff_threshold", int),
+                      "motion_min_blob_px": ("min_blob_px", int)}
+        for mk, (mp, cast) in motion_map.items():
+            if mk in spec:
+                val = cast(spec[mk])
+                if getattr(self._motion, mp, None) != val:
+                    setattr(self._motion, mp, val)
+                    changed = True
+        return changed
+
     def effective_accelerator(self):
         """``(effective, reason)`` for what the net ACTUALLY runs on (#90) —
         ``("tensorrt", "")`` on a clean engine load, or e.g. ``("cpu",
@@ -535,14 +611,46 @@ class PersonDetector:
         return yolo.detect_boxes(net, img, floor, size=size or self._yolo_size)
 
     def _detect_boxes(self, frame, floor: float) -> list:
-        """Single full-frame detection on the ROI crop — the fast treat path."""
-        return self._run_net(self._crop(frame), floor)
+        """The fast treat/live path on the ROI crop.
+
+        Untiled by default; when live tiling is enabled (#101) it splits the
+        crop into an overlapping grid, exactly like the still-scan does, using
+        the camera's own net."""
+        cropped = self._crop(frame)
+        grid = self._TILE_GRID.get(str(self.live_tiling or "off"), 1)
+        if grid <= 1:
+            return self._run_net(cropped, floor)
+        return self._tiled_detect(cropped, grid, self.live_tile_overlap,
+                                  lambda img: self._run_net(img, floor), floor)
 
     # -- locator path: higher effective resolution for the still-cat scan -----
     _TILE_GRID = {"off": 1, "2x2": 2, "3x3": 3, "4x4": 4}
 
     def _tiling_grid(self) -> int:
         return self._TILE_GRID.get(str(self.cat_scan_tiling or "off"), 1)
+
+    def _tiled_detect(self, cropped, grid: int, overlap: float, single, floor):
+        """Run ``single(tile)`` over an overlapping ``grid``×``grid`` split of
+        ``cropped``, mapping boxes back to crop coords and NMS-merging. Shared by
+        the live path (#101) and the still-scan locator path."""
+        from . import yolo
+
+        h, w = cropped.shape[:2]
+        bw, bh = w / grid, h / grid
+        ow, oh = bw * overlap, bh * overlap
+        collected = []
+        for gy in range(grid):
+            for gx in range(grid):
+                x0 = int(max(0, gx * bw - ow))
+                y0 = int(max(0, gy * bh - oh))
+                x1 = int(min(w, (gx + 1) * bw + ow))
+                y1 = int(min(h, (gy + 1) * bh + oh))
+                tile = cropped[y0:y1, x0:x1]
+                if tile.size == 0:
+                    continue
+                for label, score, (a, b, c, d) in single(tile):
+                    collected.append((label, score, (a + x0, b + y0, c + x0, d + y0)))
+        return yolo.merge_nms(collected, floor)
 
     def _locator_net(self):
         """The still-scan's dedicated runner (#94, ``cat_scan_model``), or
@@ -587,23 +695,8 @@ class PersonDetector:
         grid = self._tiling_grid()
         if grid <= 1:
             return single(cropped)
-
-        h, w = cropped.shape[:2]
-        bw, bh = w / grid, h / grid
-        ow, oh = bw * self.cat_scan_tile_overlap, bh * self.cat_scan_tile_overlap
-        collected = []
-        for gy in range(grid):
-            for gx in range(grid):
-                x0 = int(max(0, gx * bw - ow))
-                y0 = int(max(0, gy * bh - oh))
-                x1 = int(min(w, (gx + 1) * bw + ow))
-                y1 = int(min(h, (gy + 1) * bh + oh))
-                tile = cropped[y0:y1, x0:x1]
-                if tile.size == 0:
-                    continue
-                for label, score, (a, b, c, d) in single(tile):
-                    collected.append((label, score, (a + x0, b + y0, c + x0, d + y0)))
-        return yolo.merge_nms(collected, floor)
+        return self._tiled_detect(cropped, grid, self.cat_scan_tile_overlap,
+                                  single, floor)
 
     # -- targeted boost: zoom + the heaviest available model (0.42.0) ----------
     def set_boost_hint(self, box, seconds: float) -> None:
@@ -844,13 +937,17 @@ class PersonDetector:
         cat_on_screen = fresh and any(
             self._is_locator_hit(lab, s) for lab, s, _ in boxes)
         if last_known and not cat_on_screen:
+            # A distinct violet (#106) — grey blended into the frame and matched
+            # other objects; it also needs to stand apart from the live green
+            # (person) / orange (cat) boxes.
             x1, y1, x2, y2 = (int(v) for v in last_known["box"])
-            cv2.rectangle(img, (x1, y1), (x2, y2), (170, 170, 170), 1)
+            violet = (230, 90, 190)   # BGR
+            cv2.rectangle(img, (x1, y1), (x2, y2), violet, 2)
             cv2.putText(img,
                         f"last known: {last_known.get('label', 'cat')} "
                         f"({self._age_label(last_known.get('age_s', 0))} ago)",
                         (x1, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                        (190, 190, 190), 1, cv2.LINE_AA)
+                        violet, 1, cv2.LINE_AA)
         hint = self.boost_hint()
         if hint is not None:
             x1, y1, x2, y2 = hint

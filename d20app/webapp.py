@@ -324,9 +324,11 @@ def _model_options() -> list:
                 os.path.dirname(yolo.model_path(v)), f)) for f in files):
             continue
         label = m.get("label", v)
-        flagged = [f"{f}: {flags[f]}" for f in files if f in flags]
-        if flagged:
-            label += f" ⚠ {'; '.join(flagged)} — refresh in Model files"
+        # #106: keep the flag SHORT so the dropdown doesn't overflow the app
+        # width — the detail lives in the Model files card.
+        statuses = {flags[f] for f in files if f in flags}
+        if statuses:
+            label += f" ⚠ {'/'.join(sorted(statuses))}"
         out.append({"value": v, "label": label})
     return out
 
@@ -1360,10 +1362,16 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         if not loop.is_running():
             return jsonify({"error": "Detection isn't running."}), 409
         wanted = {c for c in (cfg.find_cameras or []) if c}
+        # Only scan WATCHED cameras (#103): the live active-cameras set, not
+        # everything the loop happens to still hold. An empty active set means
+        # the single legacy camera (camera_targets handles that).
+        watched = {s.get("name") for s in config_mod.camera_targets(cfg)}
         zones_by_cam = {c.get("name"): c.get("zones") or []
                         for c in (cfg.cameras or []) if isinstance(c, dict)}
         results = []
         for name, det in loop._detectors.items():
+            if name not in watched:
+                continue
             if wanted and name not in wanted:
                 continue
             raw = det.latest_frame()

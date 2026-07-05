@@ -160,6 +160,8 @@ function cameraCardHTML(cam) {
         <label>Password <input type="password" data-f="password" autocomplete="off" placeholder="${cam.has_password ? "(unchanged)" : ""}"/></label>
         <label>Model <select data-f="model">${optsHTML(MODEL_OPTS, cam.model)}</select></label>
         <label>Accelerator <select data-f="accelerator">${optsHTML(ACCEL_OPTS, cam.accelerator)}</select></label>
+        <label title="LIVE detection tiling (#101), independent of the still-scan's — splits each live frame into an overlapping grid so a small/distant cat fills more of the net. Default off; on multiplies per-frame cost by the tile count (watch CPU/GPU at your scan rate).">Live tiling <select data-f="live_tiling">${optsHTML(TILING_OPTS, cam.live_tiling || "off")}</select></label>
+        <label title="overlap for live tiling when on (benchmark: 0.35 for 3×3, 0.20 for 2×2)">Live overlap <input type="number" step="0.05" min="0" max="0.5" data-f="live_tile_overlap" value="${cam.live_tile_overlap === undefined ? 0.2 : cam.live_tile_overlap}"/></label>
         <label title="still-cat scan: the model the periodic still-cat check runs — the scan gets ONE hard static look (a sleeping cat in a dark corner), so it wants the heavy model even when live detection runs a fast one (#94)">Scan model <select data-f="cat_scan_model">${optsHTML([["", "same as camera"]].concat(MODEL_OPTS), cam.cat_scan_model || "")}</select></label>
         <label title="still-cat scan: tile the frame so a small/distant cat fills more of the net">Tiling <select data-f="cat_scan_tiling">${optsHTML(TILING_OPTS, cam.cat_scan_tiling)}</select></label>
         <label title="still-cat scan: how much neighbouring tiles overlap (benchmark: 0.35 for 3×3, 0.20 for 2×2)">Tile overlap <input type="number" step="0.05" min="0" max="0.5" data-f="cat_scan_tile_overlap" value="${cam.cat_scan_tile_overlap}"/></label>
@@ -178,12 +180,10 @@ function cameraCardHTML(cam) {
       </div>
       <div class="row">
         <button type="button" class="ghost" data-roi>📷 Set region…</button>
+        <button type="button" class="ghost" data-zone title="named spots ('the couch') label sightings; mark doorways as exits to sharpen the trail's left-the-room check">🚪 Add zone…</button>
         <span class="muted" data-roinote>${roiTxt}</span>
       </div>
-      <div class="row">
-        <button type="button" class="ghost" data-zone title="named spots ('the couch') label sightings; mark doorways as exits to sharpen the trail's left-the-room check">🚪 Add zone…</button>
-        <span data-zonelist>${zoneChipsHTML(cam.zones || [])}</span>
-      </div>
+      <div class="row"><span data-zonelist>${zoneChipsHTML(cam.zones || [])}</span></div>
       <div class="muted" data-scanline style="font-size:12px"></div>
       <div class="row">
         <button type="button" class="primary" data-save>Save camera</button>
@@ -235,8 +235,12 @@ function renderCameras() {
 
 function wireCameraCard(card) {
   const name = card.dataset.name;
-  card.querySelector("[data-toggle]").onclick = () =>
-    card.querySelector(".cam-body").classList.toggle("hidden");
+  card.querySelector("[data-toggle]").onclick = (e) => {
+    const body = card.querySelector(".cam-body");
+    body.classList.toggle("hidden");
+    // #106: the arrow reflects expanded/collapsed state (▾ closed, ▴ open).
+    e.currentTarget.textContent = body.classList.contains("hidden") ? "Edit ▾" : "Edit ▴";
+  };
   card.querySelector("[data-watch]").onchange = saveActiveCameras;
   // #96: "custom" motion is only usable if its knobs are editable — reveal them.
   const sens = card.querySelector('[data-f="motion_sensitivity"]');
@@ -574,7 +578,11 @@ function gatherConfig() {
 async function saveConfig() {
   const note = $("save-note");
   note.textContent = "Saving…";
-  const { ok } = await api("/api/config", postJSON(gatherConfig()));
+  const gathered = gatherConfig();
+  const { ok } = await api("/api/config", postJSON(gathered));
+  // #104: keep the workflow line honest — reflect what was just saved, not the
+  // config snapshot from page load (the "still-scan every 5s when off" bug).
+  if (ok && lastCfg) { Object.assign(lastCfg, gathered); renderWorkflowLine(); }
   note.textContent = ok ? "Saved ✓" : "Save failed";
   setTimeout(() => (note.textContent = ""), 2500);
 }
@@ -729,12 +737,24 @@ function renderSightings(recent) {
   }).join("");
 }
 
+function findFeedback(msg) {
+  // #103: persistent, readable feedback for why find-my-cat navigated — a
+  // status line that stays put, not a label that flashes too fast to read.
+  const el = $("find-feedback");
+  if (el) el.textContent = msg || "";
+}
+
 async function showCat() {
   // #92: active scan first, when enabled — search, don't just jump.
   if ($("find_scan") && $("find_scan").checked) {
     $("show-cat-label").textContent = "Scanning…";
+    findFeedback("Scanning watched cameras…");
     const { ok, body } = await api("/api/cats/find", postJSON({}));
+    $("show-cat-label").textContent = "Show me the cat!";
     if (ok && body && body.best) {
+      const hit = (body.results || []).find((r) => r.camera === body.best) || {};
+      const where = hit.where ? ` (${hit.where})` : "";
+      findFeedback(`✅ Found a cat on ${body.best}${where} — score ${(hit.score || 0).toFixed(2)}. Showing it.`);
       const sel = $("live-camera");
       if (watchableCam(body.best)) sel.value = body.best;
       await loadCats();
@@ -745,7 +765,10 @@ async function showCat() {
         .scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
-    $("show-cat-label").textContent = "No cat found — showing last sighting";
+    const scanned = ok && body ? (body.results || []).length : 0;
+    findFeedback(ok
+      ? `No cat found on ${scanned} watched camera${scanned === 1 ? "" : "s"} — showing the last sighting instead.`
+      : `Scan failed: ${(body && body.error) || "unknown error"} — showing the last sighting.`);
     // fall through to the jump-to-last behavior below
   }
   return showCatJump();
@@ -1715,7 +1738,10 @@ function wire() {
   const lkv = $("lastknown-overlay");
   if (lkv) lkv.onchange = () => refreshStatus();   // rebuilds the stream URL (0.42.0)
   $("live-camera").onchange = () => { catRotate = false; if (liveOn) { liveOn = false; } refreshStatus(); };
-  $("cat_scan_interval").onchange = saveConfig;
+  $("cat_scan_interval").onchange = () => {
+    if (lastCfg) { lastCfg.cat_scan_interval = Number($("cat_scan_interval").value); renderWorkflowLine(); }
+    saveConfig();
+  };
   $("live-img").onerror = () => { if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); } };
   $("smooth_feed").onchange = async () => {
     await api("/api/live/smooth", postJSON({ on: $("smooth_feed").checked }));

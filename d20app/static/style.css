@@ -118,7 +118,8 @@ summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
    label's specificity so the auto width actually wins. */
 label.checkbox input { flex: none; width: auto; }
 .status { display: flex; align-items: center; gap: 10px; }
-.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block;
+       flex: none; aspect-ratio: 1 / 1; }
 .dot.running { background: var(--go); box-shadow: 0 0 8px var(--go); }
 .dot.stopped { background: var(--muted); }
 .warn { color: var(--warn); font-size: 0.86rem; margin: 6px 0 0; }
@@ -213,11 +214,13 @@ footer { margin-top: 20px; }
 /* Multi-camera manager */
 #camera-list { margin-top: 10px; }
 .cam-card { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 8px 10px; }
-.cam-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-/* #97: the head quick-toggles inherit .checkbox's 12px top margin, which made
-   each row's toggles sit at slightly different heights — align them. */
-.cam-head .checkbox { margin-top: 0; }
-.cam-chip { min-width: 92px; text-align: center; }
+.cam-head { display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap; }
+/* #97/#106: the head quick-toggles align (no inherited .checkbox top margin),
+   and the name/chip take a flexible leading column so the toggle group wraps
+   together — same layout on every camera row regardless of name length. */
+.cam-head .checkbox { margin-top: 0; white-space: nowrap; }
+.cam-head > strong { flex: 1 1 auto; min-width: 90px; word-break: break-word; }
+.cam-chip { flex: none; min-width: 92px; text-align: center; }
 .cam-head > strong { font-size: 1.02rem; }
 .cam-body { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
 .cam-chip { font-size: 0.8rem; }
@@ -228,9 +231,13 @@ footer { margin-top: 20px; }
 /* Cat sightings */
 .cat-last { display: flex; gap: 14px; align-items: center; justify-content: center; margin: 10px 0; flex-wrap: wrap; }
 .cat-thumb {
-  width: 180px; max-width: 45%; height: auto;
+  width: 180px; max-width: 45%; aspect-ratio: 16 / 9; height: auto;
+  object-fit: cover; background: #0f1424;
   border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in;
 }
+/* #105: sightings-list thumbnails keep their proportion (no stretch), and a
+   fixed box means a late image never reflows the row. */
+#cat-sightings .cat-thumb { width: 64px; height: 40px; aspect-ratio: auto; max-width: none; }
 
 /* Activity log */
 .log-head { justify-content: space-between; }
@@ -238,6 +245,8 @@ footer { margin-top: 20px; }
 .cam-body .row, #models-card .row, .test-actions { margin-top: 12px; }
 .log-head { margin-bottom: 10px; }
 .log-head h2 { margin: 0; }
+.inline.nowrap { white-space: nowrap; }
+.inline.nowrap input { min-width: 0; flex: 1 1 120px; }
 .log-list {
   max-height: 300px;
   overflow-y: auto;
