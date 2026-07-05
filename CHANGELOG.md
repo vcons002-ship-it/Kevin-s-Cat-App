@@ -11,6 +11,33 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.49.0] — 2026-07-04
+
+### Changed
+- **Per-mode detection settings** (#101/#102): the still-scan and find-my-cat
+  each get their own **complete, independent settings group** — model, tiling,
+  overlap, confidence (+ frames for the scan) — each with **"each camera's
+  own"** as the model option. They live as collapsible groups in the Cat-cam
+  section (they're global, one config for every camera), not scattered:
+  - **Still-scan settings** sit under "Check for a still cat": Scan model,
+    Tiling, Tile overlap, Scan frames, Scan confidence. The per-camera
+    **Scan model** setting is **removed** (it's global now); old configs that
+    still carry `cat_scan_*` per-camera keep loading, ignored.
+  - **Find-my-cat settings** gain Find tiling, Find overlap, Find confidence
+    (model already existed).
+  - The camera card keeps only its **live** settings (model, accelerator, and
+    the per-camera **Live tiling** from 0.48.0) — so "what does live detection
+    do vs the scan vs find" is now three separate, legible groups.
+- **One glanceable still-scan indicator** (#102): "Still scan: Ns ago on
+  <camera> — cat found / no cat" shows once under the frequency control (from
+  `/api/cats`), replacing the per-camera line. Combined with the 0.48.0
+  hot-reload, all of these apply live without a stop/start.
+
+### Note
+The still-scan can now run its own cat confidence (`cat_scan_confidence`,
+0 = use the camera's) — the forced-scan path gates on it and it joins the
+decode floor so nothing it wants is filtered early.
+
 ## [0.48.0] — 2026-07-04
 
 ### Fixed

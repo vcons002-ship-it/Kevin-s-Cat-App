@@ -72,15 +72,24 @@ class Config:
     contrast: float = 1.0            # multiply around mid-grey (0.5..2.0); 1.0 = off
     saturation: float = 1.0          # scale colour intensity (0 = greyscale, 1.0 = off, >1 = punchier)
 
-    # --- Motion pre-filter (cheap gate before the neural net runs) ---
-    cat_scan_model: str = ""             # still-cat scan model (#94) — "" = the camera's own; the scan wants the heavy model
+    # --- Per-camera LIVE-detection tiling (#101), independent of the still-scan's.
     live_tiling: str = "off"             # live-detection tiling (#101) — independent of the scan's; default off (multiplies per-frame cost)
     live_tile_overlap: float = 0.2       # overlap for live tiling when on
 
+    # --- Still-cat scan settings (#101/#102): GLOBAL, not per-camera — one
+    # coherent "check for still cat" group. The scan gets ONE hard static look, so
+    # it wants its own heavy model/tiling regardless of a camera's live settings.
+    cat_scan_model: str = ""             # "" = each camera's own live model; else a specific heavy model for the scan (#94)
+    cat_scan_confidence: float = 0.0     # cat threshold for the scan; 0 = use each camera's cat_confidence
+
     # --- "Show me the cat" active find-scan (#92): search on click, don't just
     # jump to the last sighting. Off by default (click keeps today's behavior).
+    # Its own full settings (#101): model/tiling/overlap/confidence.
     find_scan: bool = False              # run a real detection pass across the find cameras on click
     find_model: str = ""                 # the model the find pass runs — "" = each camera's own
+    find_tiling: str = "3x3"             # find-scan tiling (a thorough look for a still cat)
+    find_tile_overlap: float = 0.35      # overlap for find tiling
+    find_confidence: float = 0.0         # cat threshold for find; 0 = each camera's cat_confidence
     find_cameras: list = field(default_factory=list)   # cameras to sweep; [] = all watched
     motion_sensitivity: str = "medium"   # "low"|"medium"|"high"|"custom"|"off" — GUI preset that drives the three knobs below ("off" = detect every frame, #96)
     motion_min_area_frac: float = 0.003  # fraction of the frame that must change to count as motion (higher = less sensitive)
@@ -158,11 +167,9 @@ _CAMERA_FROM_CFG = {
     "gamma": "gamma", "brightness": "brightness",
     "contrast": "contrast", "saturation": "saturation",
     "cat_confidence": "cat_confidence", "locator_classes": "locator_classes",
-    "cat_scan_tiling": "cat_scan_tiling",
-    "cat_scan_tile_overlap": "cat_scan_tile_overlap",
-    "cat_scan_imgsz": "cat_scan_imgsz",
-    "cat_scan_frames": "cat_scan_frames",
-    "cat_scan_model": "cat_scan_model",
+    # Still-scan settings moved to a GLOBAL group (#101/#102) — no longer
+    # per-camera. Old camera dicts that still carry cat_scan_* keep loading
+    # (coerce_camera ignores unknown extras); the loop reads the global values.
     "live_tiling": "live_tiling",
     "live_tile_overlap": "live_tile_overlap",
     "track_fusion": "track_fusion",

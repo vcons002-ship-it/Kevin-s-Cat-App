@@ -310,7 +310,8 @@ class PersonDetector:
                  contrast: float = 1.0, saturation: float = 1.0,
                  cat_scan_tiling: str = "off", cat_scan_tile_overlap: float = 0.2,
                  cat_scan_imgsz: int = 0, cat_scan_frames: int = 1,
-                 cat_scan_model: str = "", cat_confidence: float = 0.5,
+                 cat_scan_model: str = "", cat_scan_confidence: float = 0.0,
+                 cat_confidence: float = 0.5,
                  live_tiling: str = "off", live_tile_overlap: float = 0.2,
                  locator_classes=None, track_fusion: bool = True) -> None:
         self.source = source
@@ -331,6 +332,8 @@ class PersonDetector:
         # ONE hard, static look (a sleeping cat in a dark corner) — it wants the
         # heavy model even when live detection runs the cheap fast one.
         self.cat_scan_model = (cat_scan_model or "").strip()
+        # Still-scan cat threshold (#101): 0 = use the camera's cat_confidence.
+        self.cat_scan_confidence = float(cat_scan_confidence or 0.0)
         # Live-detection tiling (#101): independent of the still-scan's tiling.
         # Default OFF — live detection ran untiled for the app's whole history;
         # tiling the live path is opt-in (it multiplies per-frame cost by the
@@ -486,8 +489,8 @@ class PersonDetector:
     _LIVE_TUNABLES = (
         "confidence", "cat_confidence", "label_floor", "cat_scan_tiling",
         "cat_scan_tile_overlap", "cat_scan_frames", "cat_scan_model",
-        "live_tiling", "live_tile_overlap", "track_fusion", "gamma",
-        "brightness", "contrast", "saturation",
+        "cat_scan_confidence", "live_tiling", "live_tile_overlap",
+        "track_fusion", "gamma", "brightness", "contrast", "saturation",
     )
 
     def reconfigure(self, spec: dict) -> bool:
@@ -502,6 +505,7 @@ class PersonDetector:
         coerce = {
             "confidence": float, "cat_confidence": float, "label_floor": float,
             "cat_scan_tile_overlap": float, "live_tile_overlap": float,
+            "cat_scan_confidence": float,
             "cat_scan_frames": int, "track_fusion": bool,
             "gamma": float, "brightness": int, "contrast": float,
             "saturation": float, "cat_scan_tiling": str, "live_tiling": str,
@@ -792,9 +796,12 @@ class PersonDetector:
             return self.cat_confidence
         return self.label_floor
 
-    def _is_locator_hit(self, label: str, score: float) -> bool:
-        """True if ``label`` counts as 'the cat' for the locator at its threshold."""
-        return label in self.locator_classes and score >= self.cat_confidence
+    def _is_locator_hit(self, label: str, score: float, threshold=None) -> bool:
+        """True if ``label`` counts as 'the cat' for the locator at its threshold.
+        ``threshold`` overrides ``cat_confidence`` (the still-scan uses its own,
+        #101)."""
+        thr = self.cat_confidence if threshold is None else threshold
+        return label in self.locator_classes and score >= thr
 
     # Colours (BGR) for drawing boxes: person = green, cat/locator = orange, other = grey.
     _BOX_COLORS = {"person": (80, 220, 80), "cat": (40, 170, 240)}
@@ -1312,7 +1319,12 @@ class PersonDetector:
         if not force and (not detect or not (moved or not self.motion_gate)):
             return FrameOutcome(motion=False, person=False)
 
-        floor = min(self.label_floor, self.confidence, self.cat_confidence)
+        # A forced (still-cat) scan may use its own cat threshold (#101): the
+        # locator gating below uses it, and it joins the decode floor so nothing
+        # it wants is filtered out before the threshold is applied.
+        loc_thr = (self.cat_scan_confidence
+                   if force and self.cat_scan_confidence > 0 else self.cat_confidence)
+        floor = min(self.label_floor, self.confidence, self.cat_confidence, loc_thr)
         # A forced (still-cat) scan uses the higher-resolution locator path; the
         # motion/treat path stays fast at the native size.
         fused = None
@@ -1346,15 +1358,16 @@ class PersonDetector:
             # The trail stamped this frame BEFORE the net ran — scrub the
             # person's just-made stamps retroactively (0.41.0).
             self._trail.erase_recent(person_boxes)
-        cat_seen = any(self._is_locator_hit(lab, score) for lab, score, _ in boxes)
+        cat_seen = any(self._is_locator_hit(lab, score, loc_thr)
+                       for lab, score, _ in boxes)
         # Track the newest confirmed cat position for the "last known" overlay
         # (0.42.1): every ≥cat_confidence hit updates it — a drawing-level track,
         # NOT a log write, so the sightings log keeps its throttled cadence. A
         # fused (track) confirmation counts too; a real box outranks it.
         best_cat = None
         for lab, score, box in boxes:
-            if self._is_locator_hit(lab, score) and (best_cat is None
-                                                     or score > best_cat[2]):
+            if self._is_locator_hit(lab, score, loc_thr) and (best_cat is None
+                                                             or score > best_cat[2]):
                 best_cat = (tuple(box), lab, score)
         if best_cat is None and fused:
             best_cat = (tuple(fused["box"]), "cat", fused["score"])
@@ -1376,7 +1389,7 @@ class PersonDetector:
             label
             for label, score, _ in sorted(boxes, key=lambda b: -b[1])
             if label != "person" and (
-                self._is_locator_hit(label, score)
+                self._is_locator_hit(label, score, loc_thr)
                 or (label not in self.locator_classes and score >= self.label_floor))
         )
         # ``motion`` reflects the pre-filter: False on a forced still-cat scan, so

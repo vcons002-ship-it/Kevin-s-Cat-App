@@ -94,7 +94,9 @@ def test_cat_scan_frames_one_disables_and_cap_clamps():
     assert PersonDetector(source="unused", cat_scan_frames=99).cat_scan_frames == 8
 
 
-def test_camera_spec_inherits_cat_scan_frames(monkeypatch, tmp_path):
+def test_cat_scan_frames_is_a_global_setting(monkeypatch, tmp_path):
+    # #101/#102: still-scan settings (incl. frames) are a GLOBAL group now, not
+    # per-camera — every camera uses the one value.
     from d20app.webapp import create_app
 
     cfgfile = str(tmp_path / "config.yaml")
@@ -104,6 +106,6 @@ def test_camera_spec_inherits_cat_scan_frames(monkeypatch, tmp_path):
                         lambda values, path=cfgfile: real_update(values, path))
     c = create_app().test_client()
     c.post("/api/config", json={"cat_scan_frames": 5})
+    assert config_mod.load().cat_scan_frames == 5
     c.post("/api/cameras/saved", json={"name": "K", "url": "rtsp://1/s"})
-    cam = c.get("/api/cameras/saved").get_json()[0]
-    assert cam["cat_scan_frames"] == 5      # new camera inherits the global knob
+    assert "cat_scan_frames" not in c.get("/api/cameras/saved").get_json()[0]

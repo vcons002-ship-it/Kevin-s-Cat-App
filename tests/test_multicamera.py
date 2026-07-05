@@ -511,14 +511,17 @@ def test_round_robin_config_round_trips(tmp_path, monkeypatch):
     assert cfg["round_robin_size"] == 3 and cfg["round_robin_interval"] == 20
 
 
-def test_camera_locator_and_always_watch_round_trip(tmp_path, monkeypatch):
+def test_camera_always_watch_round_trip(tmp_path, monkeypatch):
+    # Still-scan tiling moved to a GLOBAL group (#101/#102) — no longer
+    # per-camera. Live tiling stays per-camera; always_watch too.
     c, _ = _client(tmp_path, monkeypatch)
     c.post("/api/cameras/saved", json={
-        "name": "K", "url": "rtsp://1/s", "cat_scan_tiling": "4x4",
-        "cat_scan_imgsz": 960, "always_watch": True})
+        "name": "K", "url": "rtsp://1/s", "live_tiling": "2x2",
+        "always_watch": True})
     cam = c.get("/api/cameras/saved").get_json()[0]
-    assert cam["cat_scan_tiling"] == "4x4" and cam["cat_scan_imgsz"] == 960
+    assert cam["live_tiling"] == "2x2"
     assert cam["always_watch"] is True
+    assert "cat_scan_tiling" not in cam        # no longer a per-camera field
 
 
 def test_cat_confidence_and_locator_classes_round_trip(tmp_path, monkeypatch):

@@ -79,17 +79,23 @@ def test_forced_scan_uses_the_scan_net(monkeypatch):
     assert scan_calls and not live_calls     # the dedicated net took the scan
 
 
-def test_cat_scan_model_round_trips(monkeypatch, tmp_path):
+def test_cat_scan_model_is_global(monkeypatch, tmp_path):
+    # #101/#102: the still-scan model is a GLOBAL setting now, not per-camera.
     cfgfile = str(tmp_path / "config.yaml")
     real_load, real_update = config_mod.load, config_mod.update
     monkeypatch.setattr(config_mod, "load", lambda path=cfgfile: real_load(path))
     monkeypatch.setattr(config_mod, "update",
                         lambda values, path=cfgfile: real_update(values, path))
     c = create_app().test_client()
-    c.post("/api/cameras/saved", json={"name": "K", "url": "rtsp://a",
-                                       "cat_scan_model": "yolo26x"})
-    cams = c.get("/api/cameras/saved").get_json()
-    assert cams[0]["cat_scan_model"] == "yolo26x"
+    c.post("/api/config", json={"cat_scan_model": "yolo26x",
+                                "cat_scan_tiling": "4x4",
+                                "cat_scan_confidence": 0.4})
+    cfg = config_mod.load()
+    assert cfg.cat_scan_model == "yolo26x" and cfg.cat_scan_tiling == "4x4"
+    assert cfg.cat_scan_confidence == 0.4
+    # and it's not written onto a saved camera
+    c.post("/api/cameras/saved", json={"name": "K", "url": "rtsp://a"})
+    assert "cat_scan_model" not in c.get("/api/cameras/saved").get_json()[0]
 
 
 def test_cam_status_carries_last_scan():

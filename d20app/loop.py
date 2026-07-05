@@ -367,6 +367,20 @@ class DetectionLoop:
             self._detectors[name].set_boost_hint(box, dur)
         return True
 
+    def last_scan(self) -> dict | None:
+        """The most recent still-cat scan across all cameras (#102): a single
+        glanceable "still scan: Ns ago — cat found / no cat" for the Cat-cam
+        section. None if no scan has run this session."""
+        best = None
+        for name, s in self._scan_last.items():
+            if best is None or s["ts"] > best[1]["ts"]:
+                best = (name, s)
+        if best is None:
+            return None
+        name, s = best
+        return {"camera": name, "ago_s": round(time.time() - s["ts"], 1),
+                "found": bool(s["found"])}
+
     def cam_status(self) -> list:
         """Per-camera {name, connected, last_error, roll, track_cats} for the GUI.
 
@@ -459,11 +473,13 @@ class DetectionLoop:
                 brightness=spec["brightness"],
                 contrast=spec["contrast"],
                 saturation=spec["saturation"],
-                cat_scan_tiling=spec["cat_scan_tiling"],
-                cat_scan_tile_overlap=spec["cat_scan_tile_overlap"],
-                cat_scan_imgsz=spec["cat_scan_imgsz"],
-                cat_scan_frames=spec["cat_scan_frames"],
-                cat_scan_model=spec.get("cat_scan_model", ""),
+                # Still-scan settings are GLOBAL now (#101/#102) — one group for
+                # every camera; only live tiling stays per-camera.
+                cat_scan_tiling=cfg.cat_scan_tiling,
+                cat_scan_tile_overlap=cfg.cat_scan_tile_overlap,
+                cat_scan_frames=cfg.cat_scan_frames,
+                cat_scan_model=cfg.cat_scan_model,
+                cat_scan_confidence=cfg.cat_scan_confidence,
                 live_tiling=spec.get("live_tiling", "off"),
                 live_tile_overlap=spec.get("live_tile_overlap", 0.2),
                 track_fusion=spec["track_fusion"],
@@ -614,7 +630,16 @@ class DetectionLoop:
                     try:
                         cfg, fresh = self._fresh_spec(name)
                         if fresh is not None:
-                            detector.reconfigure(fresh)
+                            # Still-scan settings are global (#101): fold them in
+                            # so the detector hot-reloads them alongside per-camera.
+                            merged = dict(fresh)
+                            merged.update(
+                                cat_scan_tiling=cfg.cat_scan_tiling,
+                                cat_scan_tile_overlap=cfg.cat_scan_tile_overlap,
+                                cat_scan_frames=cfg.cat_scan_frames,
+                                cat_scan_model=cfg.cat_scan_model,
+                                cat_scan_confidence=cfg.cat_scan_confidence)
+                            detector.reconfigure(merged)
                             spec = fresh
                             roll_enabled = bool(spec["roll"])
                             track_cats = bool(spec["track_cats"])
