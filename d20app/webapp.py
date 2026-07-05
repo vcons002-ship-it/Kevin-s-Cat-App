@@ -170,6 +170,14 @@ def _run_test_detection(frame, settings: dict):
         return annotated, dets, round((time.perf_counter() - t0) * 1000.0, 1)
 
 
+def _effective_accel(model: str, accel: str):
+    """What the cached test detector for (model, accel) actually ran on (#90):
+    ``(effective, reason)`` — or ``(None, "")`` before its first run."""
+    with _test_detect_lock:
+        det = _test_detectors.get((model, accel))
+    return det.effective_accelerator() if det is not None else (None, "")
+
+
 def _yolo_boxes_fn(settings: dict, floor: float):
     """A ``run_yolo(img) -> [(label, score, box)]`` callable for the escalation
     ladder (#66), reusing the Test tool's per-(model, accelerator) detector cache
@@ -295,6 +303,10 @@ def _model_options() -> list:
     configs can't pick them. Order = the registry's lightest-to-heaviest."""
     from . import provision, yolo
 
+    # #90: precision is not a user choice — the picker shows the 3 LOGICAL
+    # models; resolve_variant() maps (model, accelerator) to the FP32/FP16 file.
+    # A model is offered when either precision's file exists (the accelerator
+    # in use decides which one actually loads).
     # #86: a present file the manifest can't vouch for (unknown provenance or
     # changed since vetting) is offered but SAYS SO — never silently run a
     # model that may not be the settled precision/head.
@@ -302,12 +314,21 @@ def _model_options() -> list:
              if r["kind"] == "onnx" and r["status"] in ("unverified", "stale")}
     out = []
     for v, m in yolo.MODELS.items():
-        if not m.get("selectable", True) or not os.path.exists(yolo.model_path(v)):
+        if not m.get("selectable", True):
+            continue
+        files = [m["file"]]
+        fp16 = yolo.MODELS.get(f"{v}_fp16")
+        if fp16:
+            files.append(fp16["file"])
+        if not any(os.path.exists(os.path.join(
+                os.path.dirname(yolo.model_path(v)), f)) for f in files):
             continue
         label = m.get("label", v)
-        flag = flags.get(m["file"])
-        if flag:
-            label += f" ⚠ {flag} — refresh in Model files"
+        # #106: keep the flag SHORT so the dropdown doesn't overflow the app
+        # width — the detail lives in the Model files card.
+        statuses = {flags[f] for f in files if f in flags}
+        if statuses:
+            label += f" ⚠ {'/'.join(sorted(statuses))}"
         out.append({"value": v, "label": label})
     return out
 
@@ -415,9 +436,14 @@ def _run_benchmark(frame, models: list, tilings: list, cat_threshold: float,
             best_dog = max((d["score"] for d in dets if d["label"] == "dog"), default=0.0)
             combined = max(best_cat, best_dog)
             thumb, raw = _bench_thumb(annotated)
+            eff, why = _effective_accel(model, accelerator)
             runs.append({
                 "model": model, "size": _model_native_size(model), "tiling": tiling,
                 "tile_overlap": opts["tile_overlap"], "accelerator": accelerator,
+                # #90: what ACTUALLY ran — a fallback must be visible in the
+                # report, never its numbers silently labelled as the request.
+                "ran_on": eff or accelerator,
+                "fallback": why,
                 "cat_score": round(best_cat, 3), "dog_score": round(best_dog, 3),
                 "combined_score": round(combined, 3),
                 "detected": bool(combined >= cat_threshold),
@@ -1316,6 +1342,83 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         if not ok:
             return jsonify({"error": "Couldn't encode the heat map."}), 500
         return Response(buf.tobytes(), mimetype="image/jpeg")
+
+    @app.post("/api/cats/find")
+    def api_cats_find():
+        # "Show me the cat" ACTIVE scan (#92): a real detection pass across the
+        # find cameras on click, so a still cat in a motionless room is found —
+        # search, don't just jump to the last sighting. Runs the tester's cached
+        # per-(model, accelerator) nets on each camera's LATEST frame — never the
+        # worker's net, so there's no race with the live loop. Finds are recorded
+        # (source "find") and the best camera is boosted so the feed shows the box.
+        import cv2  # noqa: F401 — via detect_image
+
+        loop = app.config["loop"]
+        cfg = config_mod.load()
+        if not cfg.find_scan:
+            return jsonify({"error": "Active find-scan is off — enable it in the "
+                            "Find-my-cat settings (the button then jumps to the "
+                            "last sighting as before)."}), 403
+        if not loop.is_running():
+            return jsonify({"error": "Detection isn't running."}), 409
+        wanted = {c for c in (cfg.find_cameras or []) if c}
+        # Only scan WATCHED cameras (#103): the live active-cameras set, not
+        # everything the loop happens to still hold. An empty active set means
+        # the single legacy camera (camera_targets handles that).
+        watched = {s.get("name") for s in config_mod.camera_targets(cfg)}
+        zones_by_cam = {c.get("name"): c.get("zones") or []
+                        for c in (cfg.cameras or []) if isinstance(c, dict)}
+        results = []
+        for name, det in loop._detectors.items():
+            if name not in watched:
+                continue
+            if wanted and name not in wanted:
+                continue
+            raw = det.latest_frame()
+            if raw is None:
+                results.append({"camera": name, "found": False, "score": 0.0,
+                                "note": "no frame yet"})
+                continue
+            frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+            grid_on = det._tiling_grid() > 1
+            settings = {
+                "model": cfg.find_model or det.model,
+                "accelerator": det.accelerator,
+                "person_confidence": det.confidence,
+                "cat_confidence": det.cat_confidence,
+                "label_floor": det.label_floor,
+                "locator_classes": list(det.locator_classes),
+                # a thorough look: the camera's scan tiling, else the 3×3 winner
+                "tiling": det.cat_scan_tiling if grid_on else "3x3",
+                "tile_overlap": det.cat_scan_tile_overlap if grid_on else 0.35,
+            }
+            annotated, dets, ms = _run_test_detection(frame, settings)
+            best = max((d for d in dets if d["label"] in det.locator_classes),
+                       key=lambda d: d["score"], default=None)
+            found = bool(best and best["score"] >= det.cat_confidence)
+            row = {"camera": name, "found": found, "ms": ms,
+                   "score": round(best["score"], 3) if best else 0.0}
+            if found:
+                snap = loop.snapshots.save(annotated)
+                h, w = frame.shape[:2]
+                sighting = loop.cats.record(
+                    name, best["box"], (w, h), best["score"], image=snap,
+                    label=best["label"], source="find",
+                    zone=zone_for(best["box"], zones_by_cam.get(name), det.roi))
+                spot = sighting.get("zone") or sighting["region"]
+                row["where"] = spot or ""
+                loop.activity.add(
+                    "motion",
+                    f"🔎 Find-scan: cat found{f' ({spot})' if spot else ''} on "
+                    f"{name}.", image=snap)
+            results.append(row)
+        hits = [r for r in results if r["found"]]
+        best_cam = max(hits, key=lambda r: r["score"], default=None)
+        if best_cam:
+            loop.boost_detection(best_cam["camera"], 10.0)
+        return jsonify({"results": results,
+                        "found": [r["camera"] for r in hits],
+                        "best": best_cam["camera"] if best_cam else None})
 
     @app.post("/api/cats/clear")
     def api_cats_clear():

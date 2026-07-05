@@ -53,17 +53,26 @@ def _models_dir(models_dir: str | None) -> str:
 
 
 def onnx_lineup() -> list:
-    """The settled ONNX set, derived from the registry so it can't drift:
-    every selectable variant, FP16/FP32 read off the name."""
-    return [{"variant": v, "file": m["file"], "size": m["size"],
-             "precision": "fp16" if v.endswith("_fp16") else "fp32"}
-            for v, m in yolo.MODELS.items() if m.get("selectable", True)]
+    """The settled ONNX set, derived from the registry so it can't drift: both
+    precisions of every selectable base model (#90 hid the ``_fp16`` entries
+    from pickers — precision is the accelerator's business — but the files are
+    still very much part of the lineup)."""
+    out = []
+    for v, m in yolo.MODELS.items():
+        if not m.get("selectable", True):
+            continue
+        out.append({"variant": v, "file": m["file"], "size": m["size"],
+                    "precision": "fp32"})
+        fp16 = yolo.MODELS.get(f"{v}_fp16")
+        if fp16:
+            out.append({"variant": f"{v}_fp16", "file": fp16["file"],
+                        "size": fp16["size"], "precision": "fp16"})
+    return out
 
 
 def engine_lineup() -> list:
     """One (FP16) engine per base model — GPU-specific, optional (#82)."""
-    bases = sorted({v.replace("_fp16", "")
-                    for v, m in yolo.MODELS.items() if m.get("selectable", True)})
+    bases = sorted(v for v, m in yolo.MODELS.items() if m.get("selectable", True))
     return [{"variant": b, "file": os.path.basename(yolo.engine_path(b))}
             for b in bases]
 

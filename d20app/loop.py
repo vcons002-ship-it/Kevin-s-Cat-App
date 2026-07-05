@@ -74,6 +74,18 @@ class Status:
     rolls: int = 0
 
 
+def _shown_label(label: str) -> str:
+    """What a counted-as-the-cat sighting is CALLED in the log (#98): "cat".
+
+    A no-dog household opts into counting the model's dog-mislabels as the cat
+    (locator_classes = ["cat", "dog"]) — so the log saying "Still dog seen"
+    under a 🐱 surfaces exactly the misclassification the user asked us to
+    absorb. The stored sighting keeps the RAW label (data stays honest); only
+    the sentence says cat. Anything that reaches these log lines was already a
+    locator hit, so mapping every non-"cat" label is correct by construction."""
+    return "cat"
+
+
 def _cooldown_resume_delay(cfg) -> float:
     """Seconds before the cooldown ends at which to resume the neural net.
 
@@ -154,6 +166,7 @@ class DetectionLoop:
         self._cat_boost: dict[str, float] = {}          # name -> monotonic deadline for forced detection
         self._viewing: dict[str, float] = {}            # name -> deadline; the GUI is streaming this camera
         self._active_cams: set[str] | None = None       # round-robin: which cameras detect now (None = all)
+        self._scan_last: dict[str, dict] = {}           # name -> {ts, found}: last still-scan (#94)
 
     def _caster_for(self, cfg) -> Caster:
         """A single long-lived Caster so speaker connections stay open."""
@@ -191,9 +204,13 @@ class DetectionLoop:
         return bool(self._thread and self._thread.is_alive())
 
     def _pick(self, name: str | None) -> PersonDetector | None:
-        if name and name in self._detectors:
-            return self._detectors[name]
-        return self._detectors.get(self._live_name)   # fall back to the default feed
+        # A specific camera request returns THAT camera or nothing — never a
+        # different camera's feed (#103): silently falling back showed the wrong
+        # room when a name wasn't running (e.g. watched on mid-session). Only the
+        # default request (name=None) falls back to the streamed camera.
+        if name:
+            return self._detectors.get(name)
+        return self._detectors.get(self._live_name)
 
     def get_detector(self, name: str) -> PersonDetector | None:
         """The named camera's running detector, or None. Lock-free: ``_detectors``
@@ -351,9 +368,28 @@ class DetectionLoop:
         return True
 
     def cam_status(self) -> list:
-        """Per-camera {name, connected, last_error, roll, track_cats} for the GUI."""
+        """Per-camera {name, connected, last_error, roll, track_cats} for the GUI.
+
+        Enriched with what the net ACTUALLY runs on (#90): ``ran_on`` (the
+        effective accelerator) and ``fallback`` (why, when it isn't the request)
+        — a degraded camera must be visible, not just a buried log line."""
         with self._cam_lock:
-            return [{"name": n, **dict(s)} for n, s in self._cam_status.items()]
+            rows = [{"name": n, **dict(s)} for n, s in self._cam_status.items()]
+        detectors = self._detectors
+        for row in rows:
+            det = detectors.get(row["name"])
+            probe = getattr(det, "effective_accelerator", None)   # stub-tolerant
+            if probe is not None:
+                eff, why = probe()
+                if eff:
+                    row["ran_on"] = eff
+                    if why:
+                        row["fallback"] = why
+            scan = self._scan_last.get(row["name"])
+            if scan:
+                row["scan_ago_s"] = round(time.time() - scan["ts"], 1)
+                row["scan_found"] = bool(scan["found"])
+        return rows
 
     def set_smooth(self, on: bool) -> None:
         """Request smooth-feed on/off on every running detector.
@@ -415,6 +451,7 @@ class DetectionLoop:
                 motion_min_area_frac=spec["motion_min_area_frac"],
                 motion_diff_threshold=spec["motion_diff_threshold"],
                 motion_min_blob_px=spec["motion_min_blob_px"],
+                motion_gate=str(spec.get("motion_sensitivity", "")) != "off",
                 model=spec["model"],
                 accelerator=spec["accelerator"],
                 smooth_feed=spec["smooth_feed"],
@@ -426,6 +463,9 @@ class DetectionLoop:
                 cat_scan_tile_overlap=spec["cat_scan_tile_overlap"],
                 cat_scan_imgsz=spec["cat_scan_imgsz"],
                 cat_scan_frames=spec["cat_scan_frames"],
+                cat_scan_model=spec.get("cat_scan_model", ""),
+                live_tiling=spec.get("live_tiling", "off"),
+                live_tile_overlap=spec.get("live_tile_overlap", 0.2),
                 track_fusion=spec["track_fusion"],
                 cat_confidence=spec["cat_confidence"],
                 locator_classes=spec["locator_classes"],
@@ -496,6 +536,7 @@ class DetectionLoop:
             self._detectors = {}       # stop serving the live feed
             self._threads = []
             self._cat_boost = {}       # drop any pending detection boosts
+            self._scan_last = {}
             self._viewing = {}
             self._active_cams = None
             caster.close()             # drop held speaker connections when we stop
@@ -522,6 +563,19 @@ class DetectionLoop:
                 self.status.last_error = f"{name}: {err}"
 
     # -- the per-camera worker ----------------------------------------------
+    # Hot-reload cadence (#100): how often a running worker re-reads the saved
+    # config so edits apply without a stop/start. Cheap (a small YAML load).
+    _RELOAD_SECS = 2.0
+
+    def _fresh_spec(self, name: str):
+        """This camera's current saved spec (coerced), or None if it's gone.
+        Used by the worker to hot-reload settings mid-run (#100)."""
+        cfg = config_mod.load()
+        for spec in config_mod.camera_targets(cfg):
+            if spec.get("name") == name:
+                return cfg, spec
+        return cfg, None
+
     def _camera_worker(self, spec, detector, cfg, caster, targets, speakers_label) -> None:
         """Watch one camera. Role-gated: rolls for treats and/or tracks cats.
 
@@ -548,8 +602,30 @@ class DetectionLoop:
         # it doesn't track cats (which must keep detecting). A cat-tracking camera
         # never pauses, so it stays watching for cats during another camera's cooldown.
         can_pause = roll_enabled and not track_cats
+        last_reload = time.monotonic()
         try:
             while not self._stop.is_set():
+                # Hot-reload saved settings (#100): re-read config on a slow
+                # cadence and apply changes in place, so edits take effect
+                # without stop/start. Cheap knobs update live; a model/roi
+                # change resets the detector's net on its next frame.
+                if time.monotonic() - last_reload >= self._RELOAD_SECS:
+                    last_reload = time.monotonic()
+                    try:
+                        cfg, fresh = self._fresh_spec(name)
+                        if fresh is not None:
+                            detector.reconfigure(fresh)
+                            spec = fresh
+                            roll_enabled = bool(spec["roll"])
+                            track_cats = bool(spec["track_cats"])
+                            confirm_frames = max(1, int(spec["confirm_frames"]))
+                            interval = 1.0 / max(1.0, float(spec["scan_fps"]))
+                            can_pause = roll_enabled and not track_cats
+                            self._cam_set(name, roll=roll_enabled,
+                                          track_cats=track_cats)
+                    except Exception:      # noqa: BLE001 — never let a reload kill the worker
+                        log.exception("config hot-reload failed for %s", name)
+
                 # Round-robin gate: when it's not this camera's turn, release the
                 # capture (stop decoding → the CPU win) and idle until it is. A
                 # viewed/boosted camera is never rested (see _camera_active).
@@ -619,27 +695,31 @@ class DetectionLoop:
                 if track_cats:
                     self._record_fused(name, cam_label, spec, detector)
 
-                # Forced scan (periodic still-cat check or a Show-cat boost) with no
+                # Forced still-cat scan (periodic check or a Show-cat boost) with no
                 # real motion: the net ran anyway and may have found a sleeping cat.
                 # Record it on the rising edge (so a long nap logs once, not every
                 # scan); the live flash/rotation are driven by cats_present_cameras().
                 # Never rolls — a no-motion frame breaks the consecutive-motion person
-                # streak, same as any idle frame.
+                # streak. Only a genuine forced scan lands here (#101/#104): motion-off
+                # runs the LIVE path below, tagged as its real path, not "still-scan".
                 if force_scan and not outcome.motion:
                     streak = 0
                     cat = _locator_hit(detector, outcome) if track_cats else None
+                    self._scan_last[name] = {"ts": time.time(),   # glanceable (#94)
+                                             "found": cat is not None}
                     if cat is not None:
                         if not cat_seen_still:
                             label, score, box = cat
                             snap = self.snapshots.save(detector.annotated_jpeg())
                             sighting = self.cats.record(
                                 name, box, detector.frame_size, score, image=snap, label=label,
+                                source="still-scan",
                                 zone=zone_for(box, spec.get("zones"), spec.get("roi")))
                             spot = sighting.get("zone") or sighting["region"]
                             where = f" ({spot})" if spot else ""
                             self.activity.add(
                                 "motion",
-                                f"🐱 Still {label} seen{where} on {cam_label} — tracked, no roll.",
+                                f"🐱 Still {_shown_label(label)} seen{where} on {cam_label} — tracked, no roll.",
                                 image=snap)
                         cat_seen_still = True
                     else:
@@ -647,13 +727,20 @@ class DetectionLoop:
                     self._stop.wait(interval)
                     continue
 
-                if not outcome.motion:
-                    # Idle (no motion, no forced scan): the net didn't run, so leave
-                    # the still-scan edge intact — only real motion resets it below.
+                # Motion-off (#101): the net ran on the LIVE path this frame even
+                # with no motion — treat a frame that actually detected something
+                # as "active" so the live handling below acts on it (tagged as the
+                # live path, not still-scan). An empty motion-off frame is idle.
+                gate_off = str(spec.get("motion_sensitivity", "")) == "off"
+                live_active = outcome.motion or (
+                    gate_off and (outcome.person or outcome.labels))
+                if not live_active:
+                    # Idle (no motion, no forced scan, nothing detected): the live
+                    # edge is left intact — only real motion resets it below.
                     streak = 0
                     self._stop.wait(interval)
                     continue
-                cat_seen_still = False   # a real-motion frame supersedes the still-scan edge
+                cat_seen_still = False   # a real-motion / live-active frame supersedes the scan edge
 
                 # Motion, not a person: record a cat sighting (if this camera tracks
                 # cats) or just note the mover, throttled, with a snapshot.
@@ -666,14 +753,17 @@ class DetectionLoop:
                             label, score, box = cat
                             sighting = self.cats.record(
                                 name, box, detector.frame_size, score, image=snap, label=label,
+                                source="motion",
                                 zone=zone_for(box, spec.get("zones"), spec.get("roi")))
                             spot = sighting.get("zone") or sighting["region"]
                             where = f" ({spot})" if spot else ""
                             self.activity.add(
                                 "motion",
-                                f"🐱 {label.capitalize()} seen{where} on {cam_label} — tracked, no roll.",
+                                f"🐱 {_shown_label(label).capitalize()} seen{where} on {cam_label} — tracked, no roll.",
                                 image=snap)
-                        else:
+                        elif outcome.motion:
+                            # Only a genuine motion frame logs "something moved" —
+                            # a motion-off frame with no cat isn't movement (#101).
                             what = outcome.labels[0] if outcome.labels else "something"
                             self.activity.add(
                                 "motion",

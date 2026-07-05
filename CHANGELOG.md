@@ -11,6 +11,153 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.48.0] — 2026-07-04
+
+### Fixed
+- **Live setting changes apply without a stop/start** (#100): the worker used
+  to snapshot config at start and never re-read it, so edits (scan rate, model,
+  tiling, confidences, motion params, ROI…) needed a restart. Each worker now
+  re-reads the saved config every ~2 s and reconfigures its detector in place
+  (`PersonDetector.reconfigure`); a model/accelerator/ROI change resets the net
+  on the next frame. Roles (roll/track) update live too.
+- **"Motion off" runs the LIVE path, not the still-scan path** (#101): it was
+  routed through the heavy locator/scan branch (backwards — maximally
+  expensive) and mis-tagged detections as `still-scan` (#104). Motion-off now
+  runs the camera's live detection every frame, ungated; its finds are tagged
+  as the live path (`motion`), and only a genuine forced scan is tagged
+  `still-scan`.
+- **The live-feed selector never shows the wrong camera** (#103): a specific
+  camera request now returns that camera or nothing — it no longer silently
+  falls back to the streamed camera's feed when the requested one isn't
+  running.
+- **Find-my-cat only scans watched cameras** and gives **persistent feedback**
+  (#103): a status line under the button says whether it found a cat (where +
+  score) or fell back to the last sighting — no more too-fast flash.
+- **The workflow line reflects the saved settings** (#104): it re-renders after
+  a save, so "still-cat scan every 5s" no longer lingers when the scan is off.
+- **GUI pass #2** (#106, #105): the Live-camera escalation toggle moved into
+  the Escalation card (it was left behind in the VLM card); the camera **Edit**
+  arrow now flips ▾/▴; the status dot is round; the unverified-model label is
+  short (no overflow); the four feed toggles are shortened (🌈 Trail / 📍 Last /
+  🎞 Smooth / 📺 Live); the **last-known box is violet**, not grey; the API-key
+  label stays on one line; camera head toggles align across rows; Set region /
+  Add zone sit side by side; sightings thumbnails keep aspect ratio and the
+  last-seen image reserves its space (no load flicker).
+
+### Added
+- **Live-detection tiling** (#101): a per-camera **Live tiling** / **Live
+  overlap** setting, independent of the still-scan's — the live path can now
+  tile like the scan does. Default **off** (it multiplies per-frame cost by the
+  tile count); the still-scan keeps its own separate tiling.
+
+### Note
+The larger #101/#102 restructure — dedicated collapsible settings *sections*
+for each mode (live / still-scan / find) with full model+tiling+overlap+
+confidence, removing the per-camera scan-model in favour of a Cat-cam
+still-scan group, and moving the last-scan indicator there — is the remaining
+follow-up; the correctness bugs it named (tiling scan-only, motion-off
+routing) are fixed here.
+
+## [0.47.1] — 2026-07-04
+
+### Changed
+- **Escalation gets its own GUI section** (#95): the ladder controls moved out
+  of the VLM/API-key card into a standalone "🔍 Escalation ladder" card —
+  placement only; the (work-in-progress) behavior is untouched, and it stays
+  independent of the Find-my-cat button by design.
+- **GUI layout & consistency pass** (#97): button rows no longer touch
+  adjacent boxes/sections (camera actions, activity Clear, Model-files
+  Generate); head quick-toggles align across camera rows; long `<select>`
+  text no longer collides with the dropdown arrow or its neighbours; the
+  camera Edit button's arrow now flips (▾/▴) like every collapsible; **"Cat
+  tiling" is renamed "Tiling"** and the still-scan group (Scan model, Tiling,
+  Tile overlap, Scan frames) sits directly under Model/Accelerator; the
+  setup divider now says exactly what auto-saves ("cameras save with their
+  Save button; everything else saves as you change it") and the Model files
+  card moved below the numbered setup steps as an advanced tool.
+
+## [0.47.0] — 2026-07-04
+
+### Added
+- **"Show me the cat" can actually search** (#92): with the new **Active scan
+  on click** setting, the button runs a real detection pass across the find
+  cameras (`POST /api/cats/find`) — a still cat in a motionless room is
+  *found*, not guessed at. The pass runs a selectable **Find model** (default:
+  each camera's own) with thorough tiling on each camera's latest frame via
+  the tester's separate net cache — never the worker's net, so no race with
+  the live loop. Finds are recorded (source `find`), the best camera is
+  boosted, and the feed jumps there. Off by default: the button then behaves
+  exactly as before (jump to current/last sighting). No escalation ladder in
+  this button — deliberately, per the issue.
+- **Cats-only sightings log** (#93, first slice): a **🐾 Recent sightings**
+  block in the Cat-cam card — timestamp, camera, zone/region, score, and a
+  **detection-source tag** on every entry (`motion` / `still-scan` / `track` /
+  `find` / escalation's rungs), so you can verify each feature is actually
+  firing. Worker sightings are now tagged at the source.
+- **In-page lightbox everywhere** (#93): sighting thumbnails and activity-log
+  snapshots open in the existing click-anywhere-to-dismiss overlay instead of
+  a new browser tab.
+
+## [0.46.0] — 2026-07-04
+
+### Added
+- **The still-cat scan gets its own model** (#94): a per-camera **Scan model**
+  select (`cat_scan_model`, default "same as camera") — the asymmetry the
+  issue nailed: live detection gets many frames of a moving cat (a fast model
+  is fine), the still scan gets ONE hard static look at a sleeping cat in a
+  dark corner (it wants the heavy tiled model). Runs through the existing
+  locator slot, resolved to the right precision per the accelerator (#90),
+  degrading loudly to the camera's net if the file is missing. The **tile
+  overlap** knob is now exposed in the camera card alongside tiling/frames.
+- **Still-scan last-run indicator** (#94): each camera card shows
+  "still scan: Ns ago — cat found / no cat", fed from the worker via
+  `cam_status` — glanceable proof the scan is actually firing.
+
+## [0.45.1] — 2026-07-04
+
+### Fixed
+- **Motion "custom" is actually configurable** (#96): selecting Custom now
+  reveals the three knobs the detector reads (min area fraction, per-pixel
+  diff threshold, min blob px), seeded from the camera's stored values. It
+  was a selectable dead end.
+
+### Added
+- **Motion gating can be turned OFF** (#96): a new "Off — detect every frame"
+  sensitivity runs the net continuously (practical now the accelerated
+  workhorse is ~tens of ms). Honesty preserved: the motion pre-filter still
+  runs — `outcome.motion` stays true-to-life (rolls still require a real
+  entrance), the trail/null-frame bookkeeping keep their real verdicts, and
+  the cooldown pause still skips the net. No-motion frames with the gate off
+  record cats through the still-scan path (rising edge, never a roll).
+
+## [0.45.0] — 2026-07-04
+
+### Fixed
+- **Camera quick-toggles persist on click** (#91): the collapsed-row 🎲/🐱/👁
+  toggles now auto-save immediately (a minimal `{name, url, field}` merge —
+  they have no visible Save button, so unsaved state used to be silently
+  wiped whenever any *other* camera saved and re-rendered the list). A failed
+  save flips the toggle back and says so. Saving one camera has never touched
+  another's stored settings; now there's no unsaved state to lose either.
+- **The log says "cat", not "dog"** (#98): a detection counted as the cat via
+  the dog-as-cat toggle was logged as "Still dog seen" under a 🐱. The
+  sentence now says cat; the stored sighting keeps the raw label (data stays
+  honest — only the wording matches the intent you configured).
+
+### Changed
+- **Precision is no longer a model choice** (#90): the model pickers (camera,
+  tester/benchmark, sweep) offer the **3 logical models** (26x / 26m / 11n);
+  `resolve_variant()` picks the file from the **accelerator** — FP32 for
+  cv2.dnn (cpu/opencl), FP16 for onnxruntime/TensorRT/OpenVINO paths when the
+  file exists. Legacy configs naming `*_fp16` normalize to the base (and can
+  never force FP16 onto cv2.dnn). The `_fp16` registry entries stay for
+  provisioning + old configs, hidden from pickers.
+- **Fallbacks are visible, never re-labelled** (#90): every runner is stamped
+  with what it *actually* ran on and why. The benchmark table shows "ran on X
+  (requested Y — reason)" on any fallback; camera chips show `● live · accel`
+  and flag a degraded camera (`● live (cpu!)` + tooltip); `cam_status` carries
+  `ran_on`/`fallback` for the API.
+
 ## [0.44.0] — 2026-07-04
 
 ### Added
