@@ -162,10 +162,7 @@ function cameraCardHTML(cam) {
         <label>Accelerator <select data-f="accelerator">${optsHTML(ACCEL_OPTS, cam.accelerator)}</select></label>
         <label title="LIVE detection tiling (#101), independent of the still-scan's — splits each live frame into an overlapping grid so a small/distant cat fills more of the net. Default off; on multiplies per-frame cost by the tile count (watch CPU/GPU at your scan rate).">Live tiling <select data-f="live_tiling">${optsHTML(TILING_OPTS, cam.live_tiling || "off")}</select></label>
         <label title="overlap for live tiling when on (benchmark: 0.35 for 3×3, 0.20 for 2×2)">Live overlap <input type="number" step="0.05" min="0" max="0.5" data-f="live_tile_overlap" value="${cam.live_tile_overlap === undefined ? 0.2 : cam.live_tile_overlap}"/></label>
-        <label title="still-cat scan: the model the periodic still-cat check runs — the scan gets ONE hard static look (a sleeping cat in a dark corner), so it wants the heavy model even when live detection runs a fast one (#94)">Scan model <select data-f="cat_scan_model">${optsHTML([["", "same as camera"]].concat(MODEL_OPTS), cam.cat_scan_model || "")}</select></label>
-        <label title="still-cat scan: tile the frame so a small/distant cat fills more of the net">Tiling <select data-f="cat_scan_tiling">${optsHTML(TILING_OPTS, cam.cat_scan_tiling)}</select></label>
-        <label title="still-cat scan: how much neighbouring tiles overlap (benchmark: 0.35 for 3×3, 0.20 for 2×2)">Tile overlap <input type="number" step="0.05" min="0" max="0.5" data-f="cat_scan_tile_overlap" value="${cam.cat_scan_tile_overlap}"/></label>
-        <label title="still-cat scan: average this many back-to-back frames before the net — cuts sensor noise on a still scene (helps dim rooms); any movement mid-burst falls back to a single frame. 1 = off">Scan frames <input type="number" min="1" max="8" data-f="cat_scan_frames" value="${cam.cat_scan_frames}"/></label>
+        <!-- Still-scan settings moved to the Cat-cam section (global, #101/#102). -->
         <label>Person confidence <input type="number" step="0.05" min="0.1" max="1" data-f="person_confidence" value="${cam.person_confidence}"/></label>
         <label title="how confident a cat detection must be to count (the locator path; independent of person)">Cat confidence <input type="number" step="0.05" min="0.1" max="1" data-f="cat_confidence" value="${cam.cat_confidence}"/></label>
         <label>Confirm frames <input type="number" min="1" max="30" data-f="confirm_frames" value="${cam.confirm_frames}"/></label>
@@ -184,7 +181,6 @@ function cameraCardHTML(cam) {
         <span class="muted" data-roinote>${roiTxt}</span>
       </div>
       <div class="row"><span data-zonelist>${zoneChipsHTML(cam.zones || [])}</span></div>
-      <div class="muted" data-scanline style="font-size:12px"></div>
       <div class="row">
         <button type="button" class="primary" data-save>Save camera</button>
         <button type="button" class="stop" data-delete>Delete</button>
@@ -534,10 +530,18 @@ async function loadConfig() {
     ? cfg.speaker_names.slice()
     : (cfg.speaker_name ? [cfg.speaker_name] : []);
   savedSound = cfg.sound_file || "";
+  // Global still-scan + find settings (#101/#102): populate dropdowns + seed values.
+  const modelWithOwn = (val) => optsHTML([["", "each camera's own"]].concat(MODEL_OPTS), val || "");
+  if ($("cat_scan_model")) $("cat_scan_model").innerHTML = modelWithOwn(cfg.cat_scan_model);
+  if ($("scan_tiling")) $("scan_tiling").innerHTML = optsHTML(TILING_OPTS, cfg.cat_scan_tiling || "3x3");
+  if ($("scan_tile_overlap")) $("scan_tile_overlap").value = cfg.cat_scan_tile_overlap ?? 0.35;
+  if ($("scan_frames")) $("scan_frames").value = cfg.cat_scan_frames ?? 3;
+  if ($("scan_confidence")) $("scan_confidence").value = cfg.cat_scan_confidence ?? 0;
   if ($("find_scan")) $("find_scan").checked = !!cfg.find_scan;
-  if ($("find_model")) {
-    $("find_model").innerHTML = optsHTML([["", "each camera's own"]].concat(MODEL_OPTS), cfg.find_model || "");
-  }
+  if ($("find_model")) $("find_model").innerHTML = modelWithOwn(cfg.find_model);
+  if ($("find_tiling")) $("find_tiling").innerHTML = optsHTML(TILING_OPTS, cfg.find_tiling || "3x3");
+  if ($("find_tile_overlap")) $("find_tile_overlap").value = cfg.find_tile_overlap ?? 0.35;
+  if ($("find_confidence")) $("find_confidence").value = cfg.find_confidence ?? 0;
   activeCameras = Array.isArray(cfg.active_cameras) ? cfg.active_cameras.slice() : [];
   // Defaults for a brand-new camera = the current global detection settings.
   camDefaults = {
@@ -571,6 +575,17 @@ function gatherConfig() {
     quiet_end: $("quiet_end").value,
     dont_interrupt_playback: $("dont_interrupt_playback").checked,
     keep_speakers_warm: $("keep_speakers_warm").checked,
+    // Global still-scan + find settings (#101/#102).
+    cat_scan_model: $("cat_scan_model").value,
+    cat_scan_tiling: $("scan_tiling").value,
+    cat_scan_tile_overlap: Number($("scan_tile_overlap").value),
+    cat_scan_frames: Number($("scan_frames").value),
+    cat_scan_confidence: Number($("scan_confidence").value),
+    find_scan: $("find_scan").checked,
+    find_model: $("find_model").value,
+    find_tiling: $("find_tiling").value,
+    find_tile_overlap: Number($("find_tile_overlap").value),
+    find_confidence: Number($("find_confidence").value),
   };
   return values;
 }
@@ -608,12 +623,6 @@ function renderCamChips(cams) {
       chip.className = "cam-chip chip-ok"; chip.title = "";
     }
     else { chip.textContent = "… connecting"; chip.className = "cam-chip muted"; }
-    // #94: glanceable last-run for the still-cat scan
-    const line = card.querySelector("[data-scanline]");
-    if (line) {
-      line.textContent = (c.scan_ago_s === undefined) ? ""
-        : `still scan: ${c.scan_ago_s < 90 ? Math.round(c.scan_ago_s) + "s" : Math.round(c.scan_ago_s / 60) + "m"} ago — ${c.scan_found ? "cat found" : "no cat"}`;
-    }
   }
 }
 
@@ -713,6 +722,14 @@ async function loadCats() {
         <span class="muted">(score ${s.score})</span></div>
       <div class="muted">${today}</div>${likelyLine}</div>`;
   renderSightings(body.recent || []);
+  // #102: a single glanceable still-scan heartbeat under "Check for still cat".
+  const sl = $("scan-last");
+  if (sl) {
+    const ls = body.last_scan;
+    sl.textContent = ls
+      ? `Still scan: ${ls.ago_s < 90 ? Math.round(ls.ago_s) + "s" : Math.round(ls.ago_s / 60) + "m"} ago on ${ls.camera} — ${ls.found ? "cat found" : "no cat"}`
+      : "";
+  }
 }
 
 // #93: the cats-only sightings log — every entry tagged with HOW it was found
@@ -1749,10 +1766,13 @@ function wire() {
   };
 
   $("show-cat").onclick = showCat;
-  if ($("find_scan")) $("find_scan").onchange = () =>
-    api("/api/config", postJSON({ find_scan: $("find_scan").checked }));
-  if ($("find_model")) $("find_model").onchange = () =>
-    api("/api/config", postJSON({ find_model: $("find_model").value }));
+  // Global still-scan + find settings (#101/#102) auto-save on change.
+  for (const id of ["cat_scan_model", "scan_tiling", "scan_tile_overlap",
+                    "scan_frames", "scan_confidence", "find_scan", "find_model",
+                    "find_tiling", "find_tile_overlap", "find_confidence"]) {
+    const el = $(id);
+    if (el) el.onchange = saveConfig;
+  }
   $("cats-clear").onclick = async () => { await api("/api/cats/clear", { method: "POST" }); loadCats(); };
 
   // Test-detection tool

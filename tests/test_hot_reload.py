@@ -103,3 +103,39 @@ def test_reconfigure_live_tiling():
     det = _det()
     det.reconfigure({"live_tiling": "3x3", "live_tile_overlap": 0.35})
     assert det.live_tiling == "3x3" and det.live_tile_overlap == 0.35
+
+
+# ---- #101: the still-scan can use its own cat threshold ----------------------
+def test_forced_scan_uses_its_own_confidence():
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+    # camera would count a 0.5 cat; the scan demands 0.8
+    det = _det(cat_confidence=0.5, cat_scan_confidence=0.8, cat_scan_frames=1)
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: [("cat", 0.6, (10, 10, 90, 90))]
+    out = det.read_and_detect(force=True)             # a 0.6 cat on the scan…
+    assert "cat" not in out.labels                     # …below the 0.8 scan bar
+    det._run_net = lambda img, floor, size=None: [("cat", 0.85, (10, 10, 90, 90))]
+    out = det.read_and_detect(force=True)
+    assert "cat" in out.labels                          # 0.85 clears it
+
+
+def test_live_path_still_uses_camera_confidence():
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+    det = _det(cat_confidence=0.5, cat_scan_confidence=0.8, cat_scan_frames=1)
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: [("cat", 0.6, (10, 10, 90, 90))]
+    det.read_and_detect(detect=False)                  # baseline
+    moving = np.full((360, 640, 3), 110, np.uint8); moving[100:180, 280:360] = 220
+    frames.append(moving)
+    out = det.read_and_detect(detect=True)             # live path
+    assert "cat" in out.labels                          # 0.6 clears the camera's 0.5

@@ -1313,6 +1313,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # Time-of-day PRIOR (#68): where the cats usually are around this hour —
             # ranks a Find-My-Cat sweep; a hint from history, never a tracked state.
             "by_hour": loop.cats.by_hour(),
+            "last_scan": loop.last_scan(),     # #102: glanceable still-scan heartbeat
             "likely": [{"camera": c, "weight": n} for c, n in loop.cats.likely_cameras()],
         })
 
@@ -1380,22 +1381,23 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                                 "note": "no frame yet"})
                 continue
             frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
-            grid_on = det._tiling_grid() > 1
+            # Find has its own full settings (#101): model/tiling/overlap/
+            # confidence, each with "each camera's own" (empty/0) as the default.
             settings = {
                 "model": cfg.find_model or det.model,
                 "accelerator": det.accelerator,
                 "person_confidence": det.confidence,
-                "cat_confidence": det.cat_confidence,
+                "cat_confidence": cfg.find_confidence or det.cat_confidence,
                 "label_floor": det.label_floor,
                 "locator_classes": list(det.locator_classes),
-                # a thorough look: the camera's scan tiling, else the 3×3 winner
-                "tiling": det.cat_scan_tiling if grid_on else "3x3",
-                "tile_overlap": det.cat_scan_tile_overlap if grid_on else 0.35,
+                "tiling": cfg.find_tiling or "3x3",
+                "tile_overlap": cfg.find_tile_overlap,
             }
             annotated, dets, ms = _run_test_detection(frame, settings)
             best = max((d for d in dets if d["label"] in det.locator_classes),
                        key=lambda d: d["score"], default=None)
-            found = bool(best and best["score"] >= det.cat_confidence)
+            found = bool(best and best["score"]
+                         >= (cfg.find_confidence or det.cat_confidence))
             row = {"camera": name, "found": found, "ms": ms,
                    "score": round(best["score"], 3) if best else 0.0}
             if found:
