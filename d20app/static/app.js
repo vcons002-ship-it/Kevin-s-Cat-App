@@ -1765,6 +1765,19 @@ function wire() {
     if (liveOn) { liveOn = false; refreshStatus(); }
   };
 
+  // #102 save-behavior audit: every setting on the page auto-saves on change,
+  // so the whole GUI behaves one way (change → saved) instead of the top block
+  // waiting for the bottom button while the Cat-cam block saved live. Wired with
+  // addEventListener so the existing odds/visibility/warning handlers still fire.
+  // `change` (not `input`) fires on blur/Enter — no per-keystroke save spam.
+  for (const id of ["speaker-select", "sound-select", "use_speech", "speech_text",
+                    "dice_sides", "dc", "cooldown_seconds", "pause_during_cooldown",
+                    "quiet_start", "quiet_end", "dont_interrupt_playback",
+                    "keep_speakers_warm"]) {
+    const el = $(id);
+    if (el) el.addEventListener("change", saveConfig);
+  }
+
   $("show-cat").onclick = showCat;
   // Global still-scan + find settings (#101/#102) auto-save on change.
   for (const id of ["cat_scan_model", "scan_tiling", "scan_tile_overlap",

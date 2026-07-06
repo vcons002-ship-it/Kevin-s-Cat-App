@@ -11,6 +11,27 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.50.0] — 2026-07-05
+
+### Changed
+- **Consistent, legible save behavior** (#102 §2): a behavioral audit of the GUI
+  found the top settings block (speakers, sound/speech, game rules, quiet hours,
+  keep-warm) waited for the bottom **Save settings** button while the Cat-cam
+  block already auto-saved on change — with nothing in the UI signalling which
+  was which. Now **every control on the page auto-saves the moment you change
+  it**. The bottom button is relabelled **"Save all settings"** and explained as
+  a re-save-everything safety net, not a requirement.
+
+### Fixed
+- **Cooldown now applies live** (#102 §2): the shared roll-cooldown gate was
+  built once at start, so a saved change to the frequency interval silently did
+  nothing until you stopped and restarted watching. The hot-reload cadence now
+  refreshes the gate live (`_apply_shared_reload`).
+- **Honest labels on the two genuinely start-time settings**: **speaker choice**
+  and **keep-connection-warm** take effect on the next Start (the keepalive/
+  target lifecycle is set at start); both now say so inline instead of silently
+  needing a restart.
+
 ## [0.49.0] — 2026-07-04
 
 ### Changed

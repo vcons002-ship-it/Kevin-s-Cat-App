@@ -494,12 +494,13 @@
         there's no "connecting" chime each time. The first option, <strong>"This PC (local
         audio)"</strong>, plays the sound on this computer's own speakers (handy on a laptop/desktop;
         needs the optional local-audio support from setup) — you can pick it, a Cast device, or both.
+        <em>A changed speaker choice applies the next time you press Start.</em>
       </p>
       <label class="checkbox">
         <input id="keep_speakers_warm" type="checkbox" />
         Keep the speaker connection warm (no "connecting" chime)
       </label>
-      <span class="hint">Loops a silent clip every couple of minutes so the Cast receiver never unloads — the only thing that actually stops the chime on a Google Home. Trade-off: it holds the speaker active and briefly yields to (won't stomp on) other audio. Leave off if you use these speakers for music.</span>
+      <span class="hint">Loops a silent clip every couple of minutes so the Cast receiver never unloads — the only thing that actually stops the chime on a Google Home. Trade-off: it holds the speaker active and briefly yields to (won't stomp on) other audio. Leave off if you use these speakers for music. <em>Applies the next time you press Start.</em></span>
     </section>
 
     <section class="card">
@@ -579,8 +580,9 @@
     </section>
 
     <section class="actions">
-      <button id="save-btn" class="primary" type="button">Save settings</button>
+      <button id="save-btn" class="primary" type="button">Save all settings</button>
       <span id="save-note" class="muted"></span>
+      <p class="hint">Every control on this page saves the moment you change it — this button just re-saves everything at once, as a safety net. Saved settings apply live while watching; only <strong>speaker choice</strong> and <strong>keep-connection-warm</strong> take effect the next time you press Start.</p>
     </section>
 
     <footer>

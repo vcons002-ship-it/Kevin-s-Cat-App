@@ -583,6 +583,15 @@ class DetectionLoop:
     # config so edits apply without a stop/start. Cheap (a small YAML load).
     _RELOAD_SECS = 2.0
 
+    def _apply_shared_reload(self, cfg) -> None:
+        """Apply globally-shared settings a worker re-reads on the hot-reload
+        cadence (#102 save-behavior audit). The cooldown gate is shared and
+        built once at start; refresh it live so a saved change takes effect
+        without a stop/start — nothing should silently need a watch restart.
+        """
+        if self._gate is not None:
+            self._gate.cooldown_s = float(cfg.cooldown_seconds)
+
     def _fresh_spec(self, name: str):
         """This camera's current saved spec (coerced), or None if it's gone.
         Used by the worker to hot-reload settings mid-run (#100)."""
@@ -629,6 +638,7 @@ class DetectionLoop:
                     last_reload = time.monotonic()
                     try:
                         cfg, fresh = self._fresh_spec(name)
+                        self._apply_shared_reload(cfg)
                         if fresh is not None:
                             # Still-scan settings are global (#101): fold them in
                             # so the detector hot-reloads them alongside per-camera.
