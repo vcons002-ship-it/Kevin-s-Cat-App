@@ -56,3 +56,44 @@ def test_stream_serves_multipart_jpeg_when_running(monkeypatch):
     chunk = next(r.response)
     assert b"Content-Type: image/jpeg" in chunk and b"\xff\xd8stub\xff\xd9" in chunk
     r.close()
+
+
+def test_stream_ends_when_no_frame_ever_arrives(monkeypatch):
+    # Review 2026-07-08 Finding 2: a stream whose camera never produces a frame
+    # must NOT spin its worker thread forever — it ends after the no-frame timeout
+    # so the connection (and its thread) can't leak. Shrink the timeout for the test.
+    import d20app.webapp as webapp_mod
+    monkeypatch.setattr(webapp_mod, "_STREAM_NO_FRAME_TIMEOUT_S", 0.15)
+
+    app = create_app()
+    loop = app.config["loop"]
+    monkeypatch.setattr(loop, "is_running", lambda: True)
+    monkeypatch.setattr(loop, "live_jpeg",
+                        lambda name=None, trail=False, last_known=True: None)  # never a frame
+
+    r = app.test_client().get("/api/stream")
+    # The generator must terminate on its own (StopIteration), not hang forever.
+    body = b"".join(r.response)
+    assert body == b""          # no frame was ever emitted
+    r.close()
+
+
+def test_stream_heartbeat_re_emits_the_last_frame_when_the_version_stalls(monkeypatch):
+    # When new frames stop arriving but one was seen, the stream re-emits it on the
+    # heartbeat cadence so a disconnected client is noticed at the next yield.
+    import d20app.webapp as webapp_mod
+    monkeypatch.setattr(webapp_mod, "_STREAM_HEARTBEAT_S", 0.05)
+
+    app = create_app()
+    loop = app.config["loop"]
+    monkeypatch.setattr(loop, "is_running", lambda: True)
+    monkeypatch.setattr(loop, "live_version", lambda name=None: 7)   # never changes
+    monkeypatch.setattr(loop, "live_jpeg",
+                        lambda name=None, trail=False, last_known=True:
+                        b"\xff\xd8stub\xff\xd9")
+
+    r = app.test_client().get("/api/stream")
+    first = next(r.response)                     # the initial frame (version 7)
+    second = next(r.response)                    # a heartbeat re-emit of the same frame
+    assert b"\xff\xd8stub\xff\xd9" in first and b"\xff\xd8stub\xff\xd9" in second
+    r.close()

@@ -565,11 +565,31 @@ class PersonDetector:
         return (getattr(net, "effective_accelerator", self.accelerator),
                 getattr(net, "fallback_reason", ""))
 
+    def _release_cap(self) -> None:
+        """Release the current capture (if any) and clear the handle.
+
+        An RTSP/FFmpeg capture context holds a socket, decoder threads, and large
+        native frame/codec buffers that ``VideoCapture.__del__`` does not reliably
+        free on garbage collection. Every reconnect must release explicitly before
+        dropping the reference, or leaked contexts accumulate to an OOM crash on a
+        camera that reconnects periodically (review 2026-07-08, Finding 1)."""
+        cap = self._cap
+        self._cap = None
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:      # noqa: BLE001 — best effort; cleanup must never crash
+                pass
+
     def _ensure_cap(self):
         import cv2
 
         _quiet_cv2_logs(cv2)
         if self._cap is None or not self._cap.isOpened():
+            # A stale-but-non-None handle (opened once, now closed) must be
+            # released before we reopen — otherwise its FFmpeg context leaks.
+            if self._cap is not None:
+                self._release_cap()
             # A local USB camera opens by index; a network stream is forced onto
             # FFmpeg so RTSP auth behaves like VLC (see _open_capture).
             cap = _open_capture(self.source)
@@ -1173,7 +1193,7 @@ class PersonDetector:
                             f"lost the camera stream {mask_credentials(self.source)} "
                             "(no frames received)"
                         )
-                    self._cap = None        # force a reconnect next iteration
+                    self._release_cap()     # release + force a reconnect next iteration
                 self._grab_stop.wait(0.1)
                 continue
             self._grab_fails = 0
@@ -1273,7 +1293,7 @@ class PersonDetector:
             ok, frame = cap.read()
             if not ok or frame is None:
                 self._read_fails += 1
-                self._cap = None        # force a reconnect next call
+                self._release_cap()     # release + force a reconnect next call
                 # Tolerate a brief hiccup, but a run of empty reads means the
                 # stream is really gone — surface it so the loop can back off.
                 if self._read_fails >= 3:
@@ -1411,6 +1431,4 @@ class PersonDetector:
             # daemon thread, so leak the capture — the process reclaims it on exit.
             _log.warning("Smooth-feed grab thread didn't stop — leaking the capture")
             return
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
+        self._release_cap()
