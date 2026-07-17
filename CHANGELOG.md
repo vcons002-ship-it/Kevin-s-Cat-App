@@ -11,6 +11,31 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.0] — 2026-07-09
+
+### Fixed
+- **Memory leak: camera capture released on every reconnect** (review
+  `docs/reviews/2026-07-08-memory-leak.md`, Finding 1). An RTSP/FFmpeg
+  `cv2.VideoCapture` context holds native sockets/decoder buffers that
+  `__del__` does not reliably free, so dropping the handle without
+  `.release()` leaked one context per reconnect — accumulating to an OOM crash
+  on a camera that reconnects periodically. New `PersonDetector._release_cap()`
+  helper releases before every drop/reopen (the failed-read paths and
+  `_ensure_cap`'s stale-handle reopen).
+- **Memory leak: MJPEG stream can't spin forever** (same review, Finding 2). A
+  client disconnect is only observable at a `yield`, so a stream whose frames
+  stalled (camera offline / version frozen) busy-looped its worker thread
+  indefinitely and leaked it. `frames()` now re-emits the current frame on a
+  heartbeat cadence (so a disconnect is noticed promptly), ends a stream that
+  never produced a frame after a timeout, and is wrapped in `try/finally`.
+  Cadence is tunable via `_STREAM_HEARTBEAT_S` / `_STREAM_NO_FRAME_TIMEOUT_S`.
+
+### Tests
+- `tests/test_capture_release.py` — capture is released (not abandoned) on a
+  failed read and on a stale-handle reopen; `_release_cap` is idempotent.
+- `tests/test_live_feed.py` — the stream ends when no frame ever arrives, and
+  heartbeat-re-emits the last frame when the version stalls.
+
 ## [0.50.0] — 2026-07-05
 
 ### Changed

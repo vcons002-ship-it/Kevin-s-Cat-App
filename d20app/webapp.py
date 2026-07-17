@@ -952,6 +952,16 @@ def _public_config(cfg) -> dict:
     return d
 
 
+# MJPEG stream cadence (review 2026-07-08, Finding 2). A client disconnect is only
+# observable at a `yield`, so a stream that stops producing new frames must still
+# yield periodically or its worker thread spins forever and leaks. HEARTBEAT re-emits
+# the current frame on this cadence; NO_FRAME_TIMEOUT ends a stream that never got a
+# frame at all (the browser retries on its next status tick). Module-level so tests
+# can shrink them.
+_STREAM_HEARTBEAT_S = 1.0
+_STREAM_NO_FRAME_TIMEOUT_S = 10.0
+
+
 def create_app(loop: DetectionLoop | None = None) -> Flask:
     app = Flask(__name__)
     app.config["loop"] = loop or DetectionLoop()
@@ -1083,18 +1093,42 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # an unchanged frame and the feed runs at whatever rate frames arrive
             # — the loop's scan rate normally, or camera rate with the smooth feed.
             # The 0.03 s poll is the only ceiling (~30 fps); cheap when idle.
+            #
+            # A client disconnect is only raised (GeneratorExit) at a `yield`, so we
+            # must keep yielding even when the frame version stalls: re-emit the last
+            # frame every _STREAM_HEARTBEAT_S as a keepalive, and end a stream that
+            # never produced a frame after _STREAM_NO_FRAME_TIMEOUT_S — otherwise this
+            # generator (and its worker thread) spins forever and leaks (review
+            # 2026-07-08, Finding 2). try/finally makes the exit path explicit.
             last_ver = -1
-            while loop.is_running():
-                loop.note_viewing(name)   # keep this camera awake under round-robin
-                ver = loop.live_version(name)
-                if ver != last_ver:
-                    jpeg = loop.live_jpeg(name, trail=trail, last_known=last_known)
-                    if jpeg is not None:
-                        last_ver = ver
+            last_jpeg = None
+            last_emit = 0.0
+            start = time.monotonic()
+            try:
+                while loop.is_running():
+                    loop.note_viewing(name)   # keep this camera awake under round-robin
+                    now = time.monotonic()
+                    ver = loop.live_version(name)
+                    out = None
+                    if ver != last_ver:
+                        jpeg = loop.live_jpeg(name, trail=trail, last_known=last_known)
+                        if jpeg is not None:
+                            last_ver, last_jpeg, out = ver, jpeg, jpeg
+                    elif last_jpeg is not None and now - last_emit >= _STREAM_HEARTBEAT_S:
+                        out = last_jpeg       # keepalive re-emit → disconnect noticed here
+                    if out is not None:
+                        last_emit = now
                         yield (b"--frame\r\nContent-Type: image/jpeg\r\n"
-                               b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n"
-                               + jpeg + b"\r\n")
-                time.sleep(0.03)
+                               b"Content-Length: " + str(len(out)).encode() + b"\r\n\r\n"
+                               + out + b"\r\n")
+                    elif last_jpeg is None and now - start >= _STREAM_NO_FRAME_TIMEOUT_S:
+                        return                # never got a frame; don't spin forever
+                    time.sleep(0.03)
+            finally:
+                # Client disconnected or the loop stopped: nothing to release (the
+                # generator's locals are GC'd), but the explicit exit path means a
+                # stalled stream can no longer leak its worker thread.
+                pass
 
         return Response(frames(),
                         mimetype="multipart/x-mixed-replace; boundary=frame")
