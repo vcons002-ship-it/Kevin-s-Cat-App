@@ -50,13 +50,16 @@ Both from the memory-leak review. Verified by 6 new tests; full suite 410 green.
 - **Tests:** `tests/test_live_feed.py` (stream ends with no frame; heartbeat
   re-emit).
 
-### ⚠️ Still owed on the leaks
-The fixes address the leaks the review *identified*. **Confirming they resolve
-the specific 30-min crash still needs a runtime check on the real camera** — the
-review environment had no live RTSP feed. Per the memory-leak doc's "how to
-confirm": log process RSS, open-FD count, and `len(threading.enumerate())` once a
-minute for the first 30 minutes. RSS+FD climbing with a flat Python heap ⇒ Fix 1
-was the one; thread count climbing ⇒ Fix 2.
+### ✅ Leaks — runtime-confirmed (2026-07-17)
+The fixes were validated on the real cameras: **stable over a 10+ hour live run on
+all cameras — the reconnect / steady-state leak is resolved.** This was the specific
+30-min-crash leak; it's closed. (The review environment had no live RTSP feed, so
+this confirmation was Kevin's to run, and he did.)
+
+**One orthogonal item remains unverified (low-priority):** a *separate* potential leak
+under **heavy live reconfiguration** (rapid hot-reload churn) — not the reconnect leak,
+not the 30-min crash. No evidence it bites in normal use; address separately if it's
+ever reproduced.
 
 ---
 
@@ -119,7 +122,8 @@ secrets tracked in git.
   **not** filed as issues — this doc + the audit doc are the record.
 
 ## Next actions (pick any)
-1. **Runtime-confirm the leak fix** on the real camera (RSS/FD/thread trace).
+1. ~~Runtime-confirm the leak fix~~ — **DONE (2026-07-17):** 10+ hr live run, all cameras,
+   reconnect/steady-state leak resolved (see "Leaks — runtime-confirmed" above).
 2. **Land H1 + H2 + M1** — three small, high-value fixes with tests (recommended
    next slice).
 3. Frontend lifecycle hardening (H3/M3/M4).

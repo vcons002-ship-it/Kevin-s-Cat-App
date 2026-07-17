@@ -123,16 +123,16 @@ Earlier issues (7–29) were mostly implemented by the maintainer's AI across 0.
 
 ---
 
-## Open runtime-confirmation Kevin owns (has the only live cameras)
+## Runtime-confirmation Kevin owns (has the only live cameras)
 
-- **The memory-leak fix is UNCONFIRMED against the real 30-min crash.** Fable's fixes
-  (capture release on reconnect; MJPEG heartbeat/timeout) address the leaks the review
-  *identified*, but the review had no live RTSP feed. Per the handoff: log RSS +
-  open-FD + `len(threading.enumerate())` once a minute for 30 min. RSS+FD climbing with
-  flat Python heap ⇒ Fix 1 (capture); thread count climbing ⇒ Fix 2 (stream). Kevin's
-  observed baseline (26x untiled, all cameras) was stable ~1895 MiB VRAM for >1hr, but
-  that run didn't necessarily hit the reconnect trigger. Still needs the deliberate
-  extended trace.
+- **The memory-leak fix is CONFIRMED (2026-07-17).** The 0.51.0 fixes (capture release on
+  reconnect; MJPEG heartbeat/timeout) held up over a **10+ hour live run on all cameras** —
+  the reconnect / steady-state leak is **resolved**. This was the real 30-min-crash leak;
+  it's closed.
+- **Still unverified (orthogonal, low-priority):** a *separate* potential leak under **heavy
+  live reconfiguration** (rapid config hot-reload churn). Not the reconnect/steady-state
+  leak above, not the 30-min crash — a distinct path. Address separately once it's actually
+  reproduced; no evidence yet that it bites in normal use.
 
 ---
 
@@ -165,12 +165,15 @@ the handoff: **H1 → H2 → M1** (all small, one-function fixes + tests).
 ## Suggested first-session sequence
 
 1. **Read** this doc + the three audit docs in `docs/reviews/`.
-2. **Resolve the NMS contradiction** — read `yolo.py` merge_nms, determine
-   per-class vs class-agnostic, reconcile M5 vs issue 31. Investigative, orients you
-   in the code, and unblocks both fixes.
+2. ~~Resolve the NMS contradiction~~ — **DONE.** `merge_nms` is per-class; M5's
+   class-agnostic finding is the separate `detect_boxes:666` site. See the NMS section
+   above (resolved). Both fixes are now unblocked but neither is implemented yet.
 3. **Land the small high-value audit slice** H1 → H2 → M1 (each a one-function fix +
    test), which also overlaps Kevin's save-coherence observations.
-4. **Kevin runs the leak runtime-confirmation** on the live cameras (his to do).
+4. ~~Kevin runs the leak runtime-confirmation~~ — **DONE (2026-07-17):** confirmed stable
+   over a 10+ hr live run, all cameras; reconnect/steady-state leak resolved. (One
+   orthogonal reconfig-churn leak remains unverified — see the runtime-confirmation
+   section above.)
 5. Then pick from issues 30–34 and the motion-verdict finding.
 
 Kevin's style: verify against the actual code/runtime before asserting; he catches

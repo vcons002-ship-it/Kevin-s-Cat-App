@@ -91,9 +91,10 @@ real bugs here.
 - Optional dependencies degrade gracefully with a clear message (onvif, gTTS,
   playsound3) - the core install stays lean.
 - Be honest about what's verified: several Windows + local USB/audio paths are reviewed
-  but **not yet run on real hardware** - flag that, don't claim it works. Same for the
-  memory-leak fix, which is merged but NOT yet runtime-confirmed against the real 30-min
-  crash (Kevin's to confirm - he has the cameras).
+  but **not yet run on real hardware** - flag that, don't claim it works. (The 0.51.0
+  memory-leak fix, by contrast, is now **runtime-confirmed** - stable over a 10+ hr live
+  run on all cameras, 2026-07-17; the reconnect/steady-state leak is resolved. A separate
+  reconfig-churn leak remains unverified/low-priority.)
 
 ## The standard
 Show up sharp: say plainly when something's uncertain or untested, verify on real

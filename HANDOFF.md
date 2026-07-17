@@ -123,7 +123,7 @@ From `DESIGN_RATIONALE.md`, the four questions any change must pass:
 | 0.48.0 | #100–#106 | **Config hot-reload** (workers re-read every ~2 s, `reconfigure()`); **motion-off runs the live path** (not the scan path); per-camera **live tiling**; find/GUI fixes. |
 | 0.49.0 | #101 #102 | **Per-mode settings restructure** — still-scan + find each a global settings group (model/tiling/overlap/confidence + "each camera's own"); per-camera scan-model removed; last-scan indicator moved to Cat-cam. |
 | 0.50.0 | #102 §2 | **Uniform GUI save behavior** (every control auto-saves on change); bottom button → "Save all settings" + explained; **cooldown applies live** (`_apply_shared_reload`); honest labels on the two genuinely start-time settings. |
-| 0.51.0 | PR #114 | **Two memory-leak fixes** — capture released on every reconnect (`_release_cap`); MJPEG stream can't spin forever (heartbeat + no-frame timeout). Merged, **not yet runtime-confirmed** against the real 30-min crash (§8). |
+| 0.51.0 | PR #114 | **Two memory-leak fixes** — capture released on every reconnect (`_release_cap`); MJPEG stream can't spin forever (heartbeat + no-frame timeout). **Runtime-confirmed 2026-07-17** — stable over a 10+ hr live run, all cameras; the reconnect/steady-state leak is resolved. |
 
 ---
 
@@ -232,10 +232,10 @@ fixes against the actual tree/runtime before claiming done — don't trust a pri
 
 Nothing is blocking. Natural next steps, roughly in priority order:
 
-1. **Runtime-confirm the 0.51.0 memory-leak fix** against the real 30-min crash (Kevin's —
-   he has the cameras). Log RSS + open-FD + `len(threading.enumerate())` once a minute for
-   30 min: RSS+FD climbing with a flat Python heap ⇒ Fix 1 (capture); thread count climbing
-   ⇒ Fix 2 (stream). Merged but unconfirmed against the specific crash.
+1. ~~Runtime-confirm the 0.51.0 memory-leak fix~~ — **DONE (2026-07-17):** stable over a
+   10+ hr live run on all cameras; the reconnect/steady-state leak is resolved. A separate
+   potential leak under **heavy live reconfiguration** remains unverified — orthogonal and
+   low-priority; file/fix it separately if it's ever reproduced.
 2. **Land the audit slice H1 → H2 → M1** (§8a) — three small one-function fixes + tests,
    overlaps Kevin's save-coherence observations.
 3. **Kevin's live findings 30–34** and the motion-verdict weakness (§8c) — pick from
