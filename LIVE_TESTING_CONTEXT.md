@@ -6,37 +6,43 @@
 2. **Kevin's live testing** — findings from actually running the app on 7 real
    cameras with real cats, which surfaced behavior a static audit can't see.
 
-The two overlap, and in at least one place **disagree** (see NMS below). Read this
-alongside the audit docs; where they conflict, **verify against the current code
-before acting** — don't assume either is right.
+The two overlap, and once appeared to **disagree** on NMS — but reading the current
+code showed that was a mis-attribution, not a real conflict (see the NMS section
+below, now resolved). Read this alongside the audit docs; where they seem to conflict,
+**verify against the current code before acting** — don't assume either is right.
 
 Kevin is now the developer; the original maintainer reviews PRs. Kevin has the only
 live-camera environment, so runtime-confirmation tasks fall to him.
 
 ---
 
-## The single most important reconciliation: NMS — per-class or class-agnostic?
+## NMS — per-class or class-agnostic? (RESOLVED — two different sites)
 
-**These two findings describe the same code (`yolo.py` ~line 666) and contradict:**
+**Earlier framing (wrong): "M5 and issue 31 describe the same code (`yolo.py` ~line
+666) and contradict."** They don't. Reading the current code settled it — the two
+findings are about **two different NMS sites**, and each is correct about its own:
 
-- **Fable's audit M5** says NMS is **class-agnostic** and "drops a cat overlapping a
-  person."
-- **Kevin's live finding (issue 31)** says `merge_nms` is **per-class** (docstring
-  reads "Per-class NMS"), and that this is what lets a strong `dog` box and a weak
-  `cat` box coexist on the *same animal* — which, with dog-as-cat enabled, drives a
-  false track-fusion "cat" sighting.
+- **Fable's audit M5** → `detect_boxes` single-pass NMS at **`yolo.py:666`**
+  (`cv2.dnn.NMSBoxes` over all classes at once). This one is **class-agnostic**: a cat
+  overlapping a person at IoU ≥ 0.45 can suppress the cat box. Applies to the untiled
+  path and to the *within-tile* pass of the tiled path.
+- **Kevin's live finding (issue 31)** → `merge_nms` at **`yolo.py:675`** (NMS call at
+  `:692`), which groups boxes by label first. This one is **per-class** (docstring reads
+  "Per-class NMS"). It's what lets a strong `dog` box and a weak `cat` box coexist on the
+  *same animal* across tiles — which, with dog-as-cat enabled, drives a false
+  track-fusion "cat" sighting.
 
-Both can't be true as stated. **First task for a fresh session: read `yolo.py`
-merge_nms as it exists right now and settle which it is.** The fix direction depends
-entirely on the answer:
-- If class-agnostic → Fable's M5 (a cat overlapping a person gets dropped) is the
-  problem.
-- If per-class → Kevin's issue 31 (dog/cat coexist, fusion conflates them) is the
-  problem, AND the desired behavior is: when the "count dog as cat" toggle is on,
-  overlapping dog+cat boxes are the SAME animal and should be MERGED into one strong
-  cat *before* fusion — not kept separate. Toggle off = keep separate.
+M5's own text confirms this: it flags `:666` and explicitly contrasts it with
+`merge_nms (:675), which is deliberately per-class`. The "same code" error was this
+doc's — it collapsed the two line numbers into one.
 
-Don't implement either fix until the actual current NMS behavior is confirmed.
+**The two fixes pull opposite directions — don't unify them:**
+- M5 wants *less* cross-class suppression at `detect_boxes:666` (stop dropping the cat
+  under a person). Group by label there too, or `NMSBoxesBatched`.
+- Issue 31 wants *more* merging at fusion time: when the "count dog as cat" toggle is
+  on, overlapping dog+cat boxes are the SAME animal and should be MERGED into one strong
+  cat *before* fusion — not kept separate. Toggle off = keep separate. This is a targeted
+  transform, **not** a change to `merge_nms`'s per-class nature.
 
 ---
 
