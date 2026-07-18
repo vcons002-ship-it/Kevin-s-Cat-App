@@ -51,6 +51,20 @@ def test_pollers_start_even_when_initial_load_fails():
     assert "setInterval(" not in _fn_body(APP_JS, "async function loadInitialData(")
 
 
+def test_config_saves_are_serialized_and_coalesced():
+    # Audit M4: every control posts the WHOLE form, so two overlapping saves can
+    # land out of order and the earlier response silently reverts the later edit.
+    # Guard the three pieces of the fix (behaviour verified in a browser: 8 rapid
+    # edits → max 1 request in flight, 3 posts, final value = the last edit).
+    save = _fn_body(APP_JS, "async function saveConfig(")
+    assert "if (saveInFlight) { savePending = true; return; }" in save   # never overlap
+    assert "savePending = false;" in save and "} while (savePending);" in save  # re-run once
+    # The re-run must RE-GATHER the form, not replay a stale snapshot, so the
+    # follow-up save carries every edit that arrived while the first was away.
+    assert save.index("gatherConfig()") > save.index("savePending = false;")
+    assert "saveInFlight = false;" in save                               # released in finally
+
+
 def test_startup_error_banner_present_and_wired():
     assert 'id="init-error"' in INDEX
     assert 'id="init-retry"' in INDEX

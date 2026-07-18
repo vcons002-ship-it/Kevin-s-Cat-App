@@ -626,14 +626,32 @@ function gatherConfig() {
   return values;
 }
 
+let saveInFlight = false, savePending = false;
+
 async function saveConfig() {
+  // Serialize and coalesce (audit M4). Every control posts the WHOLE form, so two
+  // overlapping saves can land out of order and the earlier response silently
+  // reverts the later edit — changing a few knobs quickly used to lose some of
+  // them, with no error shown. Keep at most one request in flight; if changes
+  // arrive while it's away, run exactly ONE more afterwards, re-gathering the form
+  // so it carries every intervening edit rather than replaying a stale snapshot.
+  if (saveInFlight) { savePending = true; return; }
+  saveInFlight = true;
   const note = $("save-note");
-  note.textContent = "Saving…";
-  const gathered = gatherConfig();
-  const { ok } = await api("/api/config", postJSON(gathered));
-  // #104: keep the workflow line honest — reflect what was just saved, not the
-  // config snapshot from page load (the "still-scan every 5s when off" bug).
-  if (ok && lastCfg) { Object.assign(lastCfg, gathered); renderWorkflowLine(); }
+  let ok = false;
+  try {
+    do {
+      savePending = false;              // anything set after this point re-runs
+      note.textContent = "Saving…";
+      const gathered = gatherConfig();
+      ({ ok } = await api("/api/config", postJSON(gathered)));
+      // #104: keep the workflow line honest — reflect what was just saved, not the
+      // config snapshot from page load (the "still-scan every 5s when off" bug).
+      if (ok && lastCfg) { Object.assign(lastCfg, gathered); renderWorkflowLine(); }
+    } while (savePending);
+  } finally {
+    saveInFlight = false;
+  }
   note.textContent = ok ? "Saved ✓" : "Save failed";
   setTimeout(() => (note.textContent = ""), 2500);
 }

@@ -11,6 +11,22 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.53.1] — 2026-07-18
+
+### Fixed
+- **Changing several settings quickly no longer loses some of them** (audit M4).
+  Every control posts the *whole* form, with no in-flight guard — so two saves
+  could overlap and the earlier response land last, silently reverting the later
+  edit. No error was shown; the value just wasn't what you set. Hit for real while
+  tuning the new gear-popup knobs (#117), which make rapid successive edits the
+  normal way to work. `saveConfig()` now keeps at most one request in flight and,
+  if changes arrive while it's away, runs exactly one more afterwards —
+  **re-gathering** the form so the follow-up carries every intervening edit rather
+  than replaying a stale snapshot. Verified in a browser against an artificially
+  slowed link: 8 rapid edits → 1 request in flight at a time, 3 posts (coalesced),
+  final value equal to the last edit; and four different knobs changed back-to-back
+  all persist.
+
 ## [0.53.0] — 2026-07-18
 
 ### Added
