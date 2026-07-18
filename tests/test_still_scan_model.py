@@ -76,8 +76,58 @@ def test_forced_scan_uses_the_scan_net(monkeypatch):
                         lambda net, img, floor, size=640:
                         scan_calls.append(size) or [])
     det._run_net = lambda img, floor, size=None: live_calls.append(1) or []
-    det.read_and_detect(force=True)
+    det.read_and_detect(force=True, scan=True)
     assert scan_calls and not live_calls     # the dedicated net took the scan
+
+
+def test_boost_runs_the_live_pass_not_the_scan_pass(monkeypatch):
+    # #111: a boost forces the net to RUN but must use the camera's own live
+    # settings. It used to share the still-scan's flag, so for the boost window
+    # the live feed ran the heavier scan net (showing things the camera's own
+    # settings would never detect) and then reverted.
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+    det = PersonDetector(source="unused", cat_scan_frames=1, model="yolo11n",
+                         cat_scan_model="yolo26m")
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    scan_calls, live_calls = [], []
+
+    class _Runner:
+        def infer(self, blob):
+            return None
+
+    monkeypatch.setattr(yolo, "load_net", lambda v, a: _Runner())
+    monkeypatch.setattr(yolo, "detect_boxes",
+                        lambda net, img, floor, size=640:
+                        scan_calls.append(size) or [])
+    det._run_net = lambda img, floor, size=None: live_calls.append(1) or []
+
+    det.read_and_detect(force=True, scan=False)      # a boost
+    assert live_calls and not scan_calls             # camera's own net, not the scan net
+
+
+def test_boost_keeps_the_cameras_own_cat_confidence():
+    # #111: the scan's threshold must not apply to a boost — only to a real scan.
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+    det = PersonDetector(source="unused", cat_confidence=0.5,
+                         cat_scan_confidence=0.8, cat_scan_frames=1,
+                         track_fusion=False)
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: [("cat", 0.6, (10, 10, 90, 90))]
+
+    out = det.read_and_detect(force=True, scan=False)   # boost: camera's 0.5 bar
+    assert "cat" in out.labels
+    out = det.read_and_detect(force=True, scan=True)    # scan: the 0.8 bar
+    assert "cat" not in out.labels
 
 
 def test_cat_scan_model_is_global(monkeypatch, tmp_path):

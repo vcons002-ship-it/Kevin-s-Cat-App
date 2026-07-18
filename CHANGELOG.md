@@ -11,6 +11,40 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.7] — 2026-07-18
+
+### Fixed
+- **A "Show cat" / Find boost no longer changes what the live feed detects**
+  (#111). `read_and_detect()` had one flag doing two jobs: `force` meant both
+  "run the net even though nothing moved" *and* "run the still-cat scan pass".
+  A boost only wants the former, but it inherited the latter — so for the length
+  of the boost window the live feed ran the heavier scan net (`cat_scan_model`,
+  its tiling) at the scan's `cat_scan_confidence`, surfacing detections the
+  camera's own settings would never produce, then reverting when the boost
+  expired. Split into `force` (run the net) and `scan` (use the still-cat pass);
+  a boost is now `force=True, scan=False` — the camera's own LIVE pass, just
+  triggered by a click instead of by motion. `cat_scan_frames` burst averaging
+  and `cat_scan_confidence` now key off `scan`. The targeted-hint zoom still
+  applies to any forced look, so "boost with a box" is unchanged.
+- **Boost detections are tagged as live, not "still-scan"** (#111). Only the
+  genuine periodic sweep records `source="still-scan"` (and only it updates the
+  glanceable last-scan indicator); a boost frame that detects something now
+  records through the live path like any motion-triggered detection.
+- **The last-known box now uses whichever evidence is newer** (#111) — the live
+  confirmation track or the newest recorded sighting — instead of always
+  preferring the live track. A Find records with heavier settings the live pass
+  may not reproduce; that fresh sighting now drives the drawn box instead of
+  being shadowed by an older live confirm (which 0.51.5's removal of the fade
+  would otherwise have made permanent).
+
+**Diagnosis note:** the issue named a second root cause — find leaking scan
+settings into the live detector via `_run_test_detection()`. Verified against the
+code: that does **not** happen. `_run_test_detection()` only ever mutates its own
+`_test_detectors` cache (detectors built with `source="__test__"`); the find path
+only reads from `loop._detectors`, and no live-detector fields are left modified
+after a find. The reported symptom is fully explained by the single overloaded
+flag above, so no state-restore code was added.
+
 ## [0.51.6] — 2026-07-18
 
 ### Changed

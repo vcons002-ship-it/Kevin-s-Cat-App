@@ -76,13 +76,13 @@ def test_forced_scan_averages_but_the_treat_path_never_does():
 
     cap = _Cap([f90, f93, f93])
     det._ensure_cap = lambda: cap
-    det.read_and_detect(detect=True, force=True)
+    det.read_and_detect(detect=True, force=True, scan=True)
     assert cap.reads == 3                      # the burst
     assert abs(float(seen["f"].mean()) - 92.0) <= 1.0   # mean(90,93,93) = 92
 
     cap2 = _Cap([f90])
     det._ensure_cap = lambda: cap2
-    det.read_and_detect(detect=True, force=False)  # ordinary motion-path read
+    det.read_and_detect(detect=True, force=False, scan=False)  # ordinary motion-path read
     assert cap2.reads == 1                     # one frame, no burst
 
 

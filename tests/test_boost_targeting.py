@@ -189,6 +189,36 @@ def test_clear_last_known_drops_the_overlay(tmp_path):
     assert loop._last_known("Room") is None          # no log entry either → nothing known
 
 
+def test_last_known_uses_the_newer_of_live_track_and_sighting(tmp_path):
+    # #111 explicit requirement: a Find records a sighting with heavier settings the
+    # live pass may not reproduce. That fresh sighting must drive the drawn box, not
+    # be shadowed by an older live confirm (which used to always win).
+    loop, det = _running_loop(tmp_path)
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: [("cat", 0.8, (400, 120, 480, 200))]
+    det.read_and_detect(detect=True)                 # baseline frame
+    _move(frames)
+    det.read_and_detect(detect=True)                 # live confirm at (400,120,…)
+    assert loop._last_known("Room")["box"] == (400, 120, 480, 200)
+
+    # Age the live confirm, then record a newer "find" sighting elsewhere.
+    box, label, score, ts = det._cat_live_confirmed
+    det._cat_live_confirmed = (box, label, score, ts - 600.0)
+    loop.cats.record("Room", (10, 10, 40, 40), (640, 360), 0.9, source="find")
+    assert loop._last_known("Room")["box"] == [10, 10, 40, 40]    # newest wins
+
+    # And a fresher live confirm takes it back (the 0.42.1 no-lag behaviour).
+    _move(frames)
+    det.read_and_detect(detect=True)
+    assert loop._last_known("Room")["box"] == (400, 120, 480, 200)
+
+
 def test_cats_clear_endpoint_clears_the_overlay(tmp_path):
     # The /api/cats/clear endpoint clears both the log and the live overlay box (#112).
     from d20app.webapp import create_app

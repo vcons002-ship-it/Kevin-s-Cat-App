@@ -242,27 +242,31 @@ class DetectionLoop:
         on a timer (#112) — it carries its own age label and persists until a
         newer sighting replaces it or the log is cleared.
 
-        Prefers the detector's live confirmation track (0.42.1) — updated on
-        every ≥cat_confidence detection, so the grey box points at the *true*
-        last confirmed spot instead of lagging the throttled sightings log by
-        up to a record interval. The log is the fallback (it survives a loop
-        restart; the live track doesn't)."""
+        Takes whichever evidence is **newer** (#111): the detector's live
+        confirmation track (0.42.1, updated on every ≥cat_confidence detection,
+        so it doesn't lag the throttled sightings log) or the newest recorded
+        sighting. Live-usually-wins falls out of it being fresher, but a scan
+        that just recorded a cat — a Find hit, whose heavier settings the live
+        pass may not reproduce — now drives the box instead of being shadowed by
+        an older live confirm. The log also survives a loop restart; the live
+        track doesn't."""
         cam = name if name and name in self._detectors else self._live_name
         if not cam:
             return None
+        best = None
         det = self._detectors.get(cam)
         if det is not None:
             live = det.last_confirmed()
             if live:
-                return {"box": live["box"], "label": live["label"],
+                best = {"box": live["box"], "label": live["label"],
                         "age_s": live["age_s"]}
         s = self.cats.last_for(cam)
-        if not s or not s.get("box"):
-            return None
-        age = time.time() - s.get("ts", 0.0)
-        if age < 0:                       # future ts (clock skew) — ignore, no upper bound
-            return None
-        return {"box": s["box"], "label": s.get("label", "cat"), "age_s": age}
+        if s and s.get("box"):
+            age = time.time() - s.get("ts", 0.0)
+            # age < 0 = future ts (clock skew) — ignore it; there's no upper bound.
+            if age >= 0 and (best is None or age < best["age_s"]):
+                best = {"box": s["box"], "label": s.get("label", "cat"), "age_s": age}
+        return best
 
     def clear_last_known(self) -> None:
         """Drop every running detector's live confirmation track — the overlay's
@@ -710,9 +714,15 @@ class DetectionLoop:
                 # A "Show cat" boost forces it continuously for a short window so the
                 # live feed keeps boxing the cat while the user looks (any camera).
                 boost = now < self._cat_boost.get(name, 0.0)
-                force_scan = _cat_scan_due(cfg, track_cats, last_scan, now) or boost
+                scan_due = _cat_scan_due(cfg, track_cats, last_scan, now)
+                # Two different things (#111): `force` = run the net even with no
+                # motion; `scan` = run the heavier still-cat pass. A boost only
+                # wants the former — it's the camera's own LIVE pass, triggered by
+                # a click instead of by motion.
+                force_run = scan_due or boost
                 try:
-                    outcome = detector.read_and_detect(detect=not paused, force=force_scan)
+                    outcome = detector.read_and_detect(detect=not paused,
+                                                       force=force_run, scan=scan_due)
                 except FileNotFoundError as exc:
                     # Missing MODEL files are global & unrecoverable — stop everything.
                     with self._status_lock:
@@ -741,7 +751,7 @@ class DetectionLoop:
                     connected = True
                     self._cam_set(name, connected=True)
 
-                if force_scan or outcome.motion:
+                if force_run or outcome.motion:
                     last_scan = now      # the net ran; defer the next forced scan
 
                 # Temporal fusion (0.37.0): a string of weak YOLO hits that chained
@@ -749,14 +759,14 @@ class DetectionLoop:
                 if track_cats:
                     self._record_fused(name, cam_label, spec, detector)
 
-                # Forced still-cat scan (periodic check or a Show-cat boost) with no
-                # real motion: the net ran anyway and may have found a sleeping cat.
-                # Record it on the rising edge (so a long nap logs once, not every
-                # scan); the live flash/rotation are driven by cats_present_cameras().
-                # Never rolls — a no-motion frame breaks the consecutive-motion person
-                # streak. Only a genuine forced scan lands here (#101/#104): motion-off
-                # runs the LIVE path below, tagged as its real path, not "still-scan".
-                if force_scan and not outcome.motion:
+                # Periodic still-cat scan with no real motion: the net ran anyway and
+                # may have found a sleeping cat. Record it on the rising edge (so a
+                # long nap logs once, not every scan); the live flash/rotation are
+                # driven by cats_present_cameras(). Never rolls — a no-motion frame
+                # breaks the consecutive-motion person streak. Only a genuine periodic
+                # scan lands here (#101/#104/#111): motion-off AND a boost run the LIVE
+                # path below, tagged as their real path, not "still-scan".
+                if scan_due and not outcome.motion:
                     streak = 0
                     cat = _locator_hit(detector, outcome) if track_cats else None
                     with self._scan_lock:                         # H2: guard in-place insert
@@ -787,8 +797,12 @@ class DetectionLoop:
                 # as "active" so the live handling below acts on it (tagged as the
                 # live path, not still-scan). An empty motion-off frame is idle.
                 gate_off = str(spec.get("motion_sensitivity", "")) == "off"
+                # A boost runs the live pass with no motion (#111): a frame that
+                # actually detected something counts as active, so it records
+                # through the live path (tagged like any motion-triggered live
+                # detection) rather than as a "still-scan".
                 live_active = outcome.motion or (
-                    gate_off and (outcome.person or outcome.labels))
+                    (gate_off or boost) and (outcome.person or outcome.labels))
                 if not live_active:
                     # Idle (no motion, no forced scan, nothing detected): the live
                     # edge is left intact — only real motion resets it below.

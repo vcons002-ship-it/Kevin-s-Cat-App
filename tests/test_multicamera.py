@@ -72,7 +72,7 @@ class FakeDet:
         self._cat_last = 0.0
         self.locator_classes = tuple(kw.get("locator_classes") or ("cat",))
 
-    def read_and_detect(self, detect=True, force=False):
+    def read_and_detect(self, detect=True, force=False, scan=False):
         CALLS[self.source] = CALLS.get(self.source, 0) + 1
         time.sleep(0.003)
         outcome = OUTCOMES.get(self.source, FrameOutcome(False, False))

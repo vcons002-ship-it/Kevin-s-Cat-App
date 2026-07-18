@@ -1249,7 +1249,8 @@ class PersonDetector:
             self.smooth_feed = False
             _log.info("Smooth live feed OFF")
 
-    def read_and_detect(self, detect: bool = True, force: bool = False) -> FrameOutcome:
+    def read_and_detect(self, detect: bool = True, force: bool = False,
+                        scan: bool = False) -> FrameOutcome:
         """Grab one frame, apply the motion pre-filter, then classify it.
 
         Returns a :class:`FrameOutcome`. ``motion`` is False when nothing moved
@@ -1266,8 +1267,17 @@ class PersonDetector:
 
         With ``force=True`` the net runs **even when nothing moved** (and even when
         ``detect`` is False), returning the real ``person``/``labels`` with
-        ``motion=False``. This is the periodic still-cat scan: a sleeping cat makes
-        no motion to trip the pre-filter, so the loop forces an occasional look.
+        ``motion=False``. That is only about *whether* the net runs.
+
+        ``scan=True`` additionally selects the **still-cat scan pass**: the
+        higher-resolution locator net (``cat_scan_model``), its own
+        ``cat_scan_confidence``, and the ``cat_scan_frames`` burst average. These
+        two were one flag until #111, which meant a button-triggered *boost* —
+        which only wants "run the net now" — silently ran the heavier scan pass
+        with the scan's thresholds, so the live feed showed detections the
+        camera's own settings would never produce for the length of the boost.
+        A boost passes ``force=True, scan=False``: the camera's own LIVE pass,
+        just triggered by a click instead of by motion.
         """
         import cv2
 
@@ -1309,7 +1319,7 @@ class PersonDetector:
                     )
                 return FrameOutcome(motion=False, person=False)
             self._read_fails = 0
-            if force and self.cat_scan_frames > 1:
+            if scan and self.cat_scan_frames > 1:
                 # Still-cat scans average a short burst of frames — noise drops
                 # ~√N on a still scene, and the burst aborts to the single frame
                 # the moment anything moves. Forced scans are not
@@ -1342,25 +1352,23 @@ class PersonDetector:
         self._push_ring(cropped)               # temporal-mosaic frame history (#68)
         # Run the net on real motion, when a forced still-cat scan asks for it,
         # or on every frame when the motion gate is off (#96).
-        if not force and (not detect or not (moved or not self.motion_gate)):
+        forced = force or scan          # the net runs regardless of the motion gate
+        if not forced and (not detect or not (moved or not self.motion_gate)):
             return FrameOutcome(motion=False, person=False)
 
-        # A forced (still-cat) scan may use its own cat threshold (#101): the
-        # locator gating below uses it, and it joins the decode floor so nothing
-        # it wants is filtered out before the threshold is applied.
+        # The still-cat SCAN may use its own cat threshold (#101): the locator
+        # gating below uses it, and it joins the decode floor so nothing it wants
+        # is filtered out before the threshold is applied. A plain forced look (a
+        # boost) keeps the camera's own threshold (#111).
         loc_thr = (self.cat_scan_confidence
-                   if force and self.cat_scan_confidence > 0 else self.cat_confidence)
+                   if scan and self.cat_scan_confidence > 0 else self.cat_confidence)
         floor = min(self.label_floor, self.confidence, self.cat_confidence, loc_thr)
-        # A forced (still-cat) scan uses the higher-resolution locator path; the
-        # motion/treat path stays fast at the native size.
+        # Only the still-cat SCAN uses the higher-resolution locator path. The
+        # motion/treat path — and a boost, which is just the live pass triggered
+        # by a click (#111) — stay on the camera's own live settings.
         fused = None
-        if force:
+        if scan:
             boxes = self._detect_locator(frame, floor)
-            hint = self.boost_hint()
-            if hint is not None:
-                # Targeted boost (0.42.0): also zoom the suspected spot at full
-                # resolution with the heaviest available model.
-                boxes = self._detect_hint(cropped, hint, floor, boxes)
         elif self.track_fusion:
             # Temporal fusion (0.37.0): decode down to the weak floor in the SAME
             # forward pass (the floor is a post-filter, not extra inference). Weak
@@ -1375,6 +1383,14 @@ class PersonDetector:
                 if lab in self.locator_classes and s >= self._FUSE_FLOOR])
         else:
             boxes = self._detect_boxes(frame, floor)
+        if forced:
+            hint = self.boost_hint()
+            if hint is not None:
+                # Targeted boost (0.42.0): also zoom the suspected spot at full
+                # resolution with the heaviest available model. Applies to any
+                # forced look (boost or scan) — it's aimed by an explicit box,
+                # not by the pass that produced the frame.
+                boxes = self._detect_hint(cropped, hint, floor, boxes)
         self._last_frame = cropped             # what the net saw (box coords match)
         now = time.monotonic()
         person_boxes = [b for lab, _s, b in boxes if lab == "person"]

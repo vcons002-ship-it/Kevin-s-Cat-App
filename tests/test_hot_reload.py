@@ -139,10 +139,10 @@ def test_forced_scan_uses_its_own_confidence():
 
     det._ensure_cap = lambda: _Cap()
     det._run_net = lambda img, floor, size=None: [("cat", 0.6, (10, 10, 90, 90))]
-    out = det.read_and_detect(force=True)             # a 0.6 cat on the scan…
+    out = det.read_and_detect(force=True, scan=True)   # a 0.6 cat on the scan…
     assert "cat" not in out.labels                     # …below the 0.8 scan bar
     det._run_net = lambda img, floor, size=None: [("cat", 0.85, (10, 10, 90, 90))]
-    out = det.read_and_detect(force=True)
+    out = det.read_and_detect(force=True, scan=True)
     assert "cat" in out.labels                          # 0.85 clears it
 
 
