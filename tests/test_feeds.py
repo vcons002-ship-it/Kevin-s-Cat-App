@@ -107,6 +107,25 @@ def test_freed_feed_repicks_the_most_recent_unheld_camera():
     assert set(out) == {"Kitchen", "Study"}
 
 
+def test_two_feeds_never_show_the_same_camera_exhaustive():
+    # #116 came in as "both feeds showed the office". The router turned out to be
+    # innocent, so this pins that down for good: every reachable sequence of
+    # active-camera sets (3 cameras, gaps inside and past the hold window) must
+    # leave the two slots on different cameras.
+    import itertools
+
+    cams = ["A", "B", "C"]
+    subsets = [list(c) for r in range(len(cams) + 1)
+               for c in itertools.combinations(cams, r)]
+    steps = list(itertools.product(subsets, [0.5, 2.0, 5.0]))
+    for seq in itertools.product(steps, repeat=3):
+        fr, t = FeedRouter(hold_s=3.0, persist_s=1.0), 0.0
+        for active, dt in seq:
+            t += dt
+            got = _cams(fr.update(t, {c: t for c in active}, slots=2))
+            assert got[0] is None or got[0] != got[1], (seq, t, got)
+
+
 def test_slot_count_changes_are_handled():
     fr = FeedRouter(hold_s=2.0, persist_s=0.0)
     fr.update(0.0, {"Kitchen": 0.0, "Hall": 0.0}, slots=2)
@@ -178,6 +197,28 @@ def test_feeds_endpoint_follows_the_camera_with_the_cat(monkeypatch):
     loop._cam_status = {"Kitchen": {"track_cats": True}}
     client = create_app(loop).test_client()
     assert client.get("/api/feeds").get_json()["slots"][0]["camera"] == "Kitchen"
+
+
+def test_frontend_never_mirrors_the_main_feed():
+    # #116's real cause was in the browser, not the router: with Follow off the
+    # second feed is steered by its own picker, which bypasses the router — and a
+    # <select> defaults to its first option, i.e. the main feed's camera. No JS
+    # runtime here, so this is a source-level guard over the three fixes (verified
+    # behaviourally in a browser).
+    import pathlib
+
+    import d20app
+
+    js = (pathlib.Path(d20app.__file__).parent / "static" / "app.js").read_text(
+        encoding="utf-8")
+    # 1. Whatever chose it, the second feed never mirrors the main one.
+    assert "if (pick && pick.camera === primaryCam) pick = null;" in js
+    # 2. The manual picker is nudged off a collision rather than mirroring.
+    assert 'cam = camNames().find((n) => n !== primaryCam) || "";' in js
+    # 3. Repopulating the pickers must not default the second onto the first's camera.
+    assert 'names.find((n) => n !== primary)' in js
+    # 4. Changing the main camera re-checks the second feed.
+    assert "updateSecondFeed(null);   // #116" in js
 
 
 def test_feeds_endpoint_honours_the_configured_knobs(monkeypatch):

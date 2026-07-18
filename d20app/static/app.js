@@ -354,8 +354,17 @@ function populateLiveCameras() {
     if (!sel) continue;
     const prev = sel.value;
     sel.innerHTML = opts;
-    if (names.includes(prev)) sel.value = prev;
-    else if (id === "live-camera2" && names.length > 1) sel.value = names[1];
+    if (id === "live-camera2") {
+      // Never default to (or keep) the main feed's camera — a <select> otherwise
+      // lands on the first option, which is exactly what made both feeds show the
+      // same room (#116).
+      const primary = $("live-camera").value || "";
+      sel.value = (names.includes(prev) && prev !== primary)
+        ? prev
+        : (names.find((n) => n !== primary) || "");
+    } else if (names.includes(prev)) {
+      sel.value = prev;
+    }
   }
   syncFeedControls();
 }
@@ -729,16 +738,42 @@ async function pollFeeds() {
   updateSecondFeed(secondary);
 }
 
+const camNames = () =>
+  Array.from($("live-camera").options).map((o) => o.value).filter(Boolean);
+
 function updateSecondFeed(slot) {
   const wrap = $("feed2-wrap"), img = $("live-img2"), label = $("feed2-label");
-  // With Follow off the user steers the second feed from its own picker.
-  const pick = followOn ? slot
-    : ($("live-camera2").value ? {camera: $("live-camera2").value, source: "manual"} : null);
+  const primaryCam = $("live-camera").value || "";
+  let pick = null;
+  if (followOn) {
+    pick = slot && slot.camera ? slot : null;
+  } else {
+    // Follow off: the user steers this feed from its own picker — which bypasses
+    // the router, so the "two feeds are never the same camera" rule has to be
+    // enforced here too (#116). Nudge the picker to a different room rather than
+    // silently mirroring the main feed.
+    let cam = $("live-camera2").value || "";
+    if (cam && cam === primaryCam) {
+      cam = camNames().find((n) => n !== primaryCam) || "";
+      $("live-camera2").value = cam;
+    }
+    pick = cam ? { camera: cam, source: "manual" } : null;
+  }
+  // Belt and braces: whatever chose it, this feed never mirrors the main one.
+  if (pick && pick.camera === primaryCam) pick = null;
   const show = feed2On && isRunning && $("live-enabled").checked
     && pick && pick.camera && watchableCam(pick.camera);
   if (!show) {
-    if (feed2Cam !== null) { img.src = ""; feed2Cam = null; }
-    wrap.classList.add("hidden");
+    if (feed2Cam !== null) { feed2Cam = null; }
+    img.removeAttribute("src");
+    // Say why there's nothing to show rather than leaving a blank slot.
+    const oneCam = feed2On && isRunning && camNames().length < 2;
+    if (oneCam) {
+      wrap.classList.remove("hidden");
+      label.textContent = "A second feed needs a second camera.";
+    } else {
+      wrap.classList.add("hidden");
+    }
     return;
   }
   wrap.classList.remove("hidden");
@@ -1847,7 +1882,12 @@ function wire() {
   if (tov) tov.onchange = () => refreshStatus();   // rebuilds the stream URL (0.39.0)
   const lkv = $("lastknown-overlay");
   if (lkv) lkv.onchange = () => refreshStatus();   // rebuilds the stream URL (0.42.0)
-  $("live-camera").onchange = () => { catRotate = false; if (liveOn) { liveOn = false; } refreshStatus(); };
+  $("live-camera").onchange = () => {
+    catRotate = false;
+    if (liveOn) { liveOn = false; }
+    updateSecondFeed(null);   // #116: move the 2nd feed off a collision with this one
+    refreshStatus();
+  };
   $("cat_scan_interval").onchange = () => {
     if (lastCfg) { lastCfg.cat_scan_interval = Number($("cat_scan_interval").value); renderWorkflowLine(); }
     saveConfig();

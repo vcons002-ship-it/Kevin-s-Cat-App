@@ -11,6 +11,23 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.52.1] — 2026-07-18
+
+### Fixed
+- **The two live feeds could show the same camera** (#116, found in live use). The
+  feed *router* was not at fault — it already refuses to give one camera to two
+  slots. The convergence came from the **manual** path: with **🐾 Follow** off, the
+  second feed is steered by its own picker, and a `<select>` defaults to its first
+  option — the same camera the main feed is on. So ticking **⧉ 2nd** without Follow
+  mirrored the main feed immediately, with no cats or movement involved.
+  Now enforced as an invariant rather than at one site: repopulating the pickers
+  never lands the second on the main feed's camera; the manual picker is nudged to
+  a free room (and the dropdown shows it, so the UI doesn't lie); a final guard
+  drops any pick that matches the main feed, whatever chose it — so even a bad
+  router answer can't mirror. Changing the **main** camera now re-checks the second
+  feed, and with only one camera available the slot says so instead of blanking or
+  mirroring.
+
 ## [0.52.0] — 2026-07-18
 
 ### Added
