@@ -11,6 +11,47 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.52.0] — 2026-07-18
+
+### Added
+- **Follow mode** (#113) — a **🐾 Follow** toggle by the live feed. The app already
+  knows which room every cat is in; with Follow on the feed switches itself, so you
+  watch a cat move around the house instead of changing camera by hand.
+- **Optional second live feed** (#113) — a **⧉ 2nd** toggle adds a companion feed.
+  Two cats in two rooms → one cat each; a single cat (with Follow on) → the second
+  feed shows the room she just came from. Off by default.
+- New `d20app/feeds.py` holds the whole decision as pure, time-injected logic, so
+  the behaviour is deterministic and testable rather than buried in the browser.
+  **The design is sticky on purpose** — the naive "every feed shows the most recent
+  cat" rule makes two cats fight over both feeds and lets a doorway pass yank the
+  feed off what you're watching. Instead each feed *adopts and holds* a camera:
+  it frees only after `follow_hold_seconds` with no cat there, a new room must have
+  been active for `follow_persist_seconds` before a free feed takes it, and feeds
+  never poach a camera another feed holds. Room-to-room reads as "new room primary,
+  old room secondary". Both knobs are config, expected to want live tuning.
+- `GET /api/feeds?slots=N` exposes the assignment to the GUI.
+
+### Changed
+- **The live-feed controls were re-laid out** (#113). The toggles used to sit inline
+  with the *Live detection* heading and the camera picker; adding two more made them
+  wrap onto extra lines and push the row below the header. They now have their own
+  thin bar under the heading, each toggle is nowrap (emoji and label stay centred on
+  each other), and on a narrow window the labels drop away leaving just the emoji —
+  the tooltips already carry the meaning. Root cause of the cramping was a bare
+  `label { flex: 1 }` rule stretching every toggle to fill the row.
+- **Both camera pickers are always visible**, one per feed. The picker used to hide
+  itself whenever there was one camera or fewer, which made it look missing. The
+  second is greyed out until there's a second feed to steer, and both are read-only
+  while Follow is driving them — still updating to show where each feed is.
+
+### Fixed
+- The last-known-location box was described as **grey** in the live-feed legend, the
+  toggle tooltip and the user guide; it has been **purple** since #106 (grey blended
+  into the frame). All three now say purple.
+
+**Note:** the switching *feel* is not yet tuned against real cats — `follow_hold_seconds`
+(3.0) and `follow_persist_seconds` (1.0) are reasonable defaults, not measured ones.
+
 ## [0.51.8] — 2026-07-18
 
 ### Fixed

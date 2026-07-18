@@ -1485,6 +1485,23 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                         "found": [r["camera"] for r in hits],
                         "best": best_cam["camera"] if best_cam else None})
 
+    @app.get("/api/feeds")
+    def api_feeds():
+        """Which camera each live feed should show (#113, Follow mode).
+
+        Sticky/debounced assignment — see :mod:`d20app.feeds`. ``slots`` is how
+        many feeds the GUI is showing (1 or 2).
+        """
+        try:
+            slots = max(1, min(2, int(request.args.get("slots", 1))))
+        except (TypeError, ValueError):
+            slots = 1
+        cfg = config_mod.load()
+        rows = app.config["loop"].feed_assignments(
+            slots, hold_s=cfg.follow_hold_seconds,
+            persist_s=cfg.follow_persist_seconds)
+        return jsonify({"slots": rows})
+
     @app.post("/api/cats/clear")
     def api_cats_clear():
         loop = app.config["loop"]

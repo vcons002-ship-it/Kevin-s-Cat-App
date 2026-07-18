@@ -107,24 +107,37 @@
     <section class="card">
       <div class="row log-head">
         <h2>Live detection</h2>
-        <div class="row">
-          <select id="live-camera" title="which camera to show"></select>
-          <label class="checkbox" title="paint the cat trail onto the live feed: silhouettes and a route line coloured by recency (blue = older → red = newest), updating live as the cat moves. Purely visual — detection is unaffected.">
-            <input type="checkbox" id="trail-overlay" /> 🌈 Trail
-          </label>
-          <label class="checkbox" title="grey box at the cat’s newest confirmed position, with its age — hidden while a live cat box is on screen, shown the moment she vanishes (fades after 30 min). Purely visual — detection is unaffected.">
-            <input type="checkbox" id="lastknown-overlay" checked /> 📍 Last
-          </label>
-          <label class="checkbox">
-            <input type="checkbox" id="smooth_feed" /> 🎞 Smooth
-          </label>
-          <label class="checkbox">
-            <input type="checkbox" id="live-enabled" checked /> 📺 Live
-          </label>
+        <div class="row feed-cams">
+          <select id="live-camera" title="which camera the main feed shows"></select>
+          <select id="live-camera2" title="which camera the second feed shows — enable ⧉ 2nd to choose one" disabled></select>
         </div>
+      </div>
+      <div class="feed-toggles">
+        <label class="checkbox" title="paint the cat trail onto the live feed: silhouettes and a route line coloured by recency (blue = older → red = newest), updating live as the cat moves. Purely visual — detection is unaffected.">
+          <input type="checkbox" id="trail-overlay" /> <span class="tgl-emoji">🌈</span><span class="tgl-text">Trail</span>
+        </label>
+        <label class="checkbox" title="purple box at the cat’s newest confirmed position, with its age — hidden while a live cat box is on screen, shown the moment she vanishes. It does not expire: it stays until a newer sighting replaces it or the log is cleared. Purely visual — detection is unaffected.">
+          <input type="checkbox" id="lastknown-overlay" checked /> <span class="tgl-emoji">📍</span><span class="tgl-text">Last</span>
+        </label>
+        <label class="checkbox" title="follow the cat around the house: the feed switches itself to whichever room has the cat. Sticky on purpose — it keeps showing a room for a few seconds after she stops being seen there, and ignores brief passes elsewhere, so it doesn't flick about. While on, the camera pickers show where each feed is (you can't steer them by hand).">
+          <input type="checkbox" id="follow-cat" /> <span class="tgl-emoji">🐾</span><span class="tgl-text">Follow</span>
+        </label>
+        <label class="checkbox" title="show a second feed. With two cats in two rooms you get one cat each; with a single cat (and Follow on) the second feed shows the room she just came from.">
+          <input type="checkbox" id="second-feed" /> <span class="tgl-emoji">⧉</span><span class="tgl-text">2nd</span>
+        </label>
+        <label class="checkbox" title="smoother live feed: grab frames on their own thread so the picture keeps moving between detections. Costs a little more CPU.">
+          <input type="checkbox" id="smooth_feed" /> <span class="tgl-emoji">🎞</span><span class="tgl-text">Smooth</span>
+        </label>
+        <label class="checkbox" title="stream the live feed to this browser. Off = no streaming (saves bandwidth/CPU); detection keeps running either way.">
+          <input type="checkbox" id="live-enabled" checked /> <span class="tgl-emoji">📺</span><span class="tgl-text">Live</span>
+        </label>
       </div>
       <div id="live-stage" class="roi-stage">
         <img id="live-img" class="hidden" alt="live detection feed" />
+      </div>
+      <div id="feed2-wrap" class="feed2 hidden">
+        <p id="feed2-label" class="muted feed2-label"></p>
+        <img id="live-img2" alt="second live feed" />
       </div>
       <p id="live-note" class="muted">Start watching to see the live feed.</p>
       <p class="help">

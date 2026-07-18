@@ -342,13 +342,22 @@ async function loadCamerasList() {
 }
 
 function populateLiveCameras() {
-  const sel = $("live-camera");
-  if (!sel) return;
-  const prev = sel.value;
   const names = activeCameras.length ? activeCameras : cameras.map((c) => c.name);
-  sel.innerHTML = names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
-  sel.style.display = names.length > 1 ? "" : "none";   // only show when there's a choice
-  if (names.includes(prev)) sel.value = prev;
+  const opts = names.length
+    ? names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")
+    : `<option value="">no cameras yet</option>`;
+  // Both pickers stay VISIBLE even with one camera (they used to hide themselves,
+  // which is why the picker seemed missing) — the second one is disabled until
+  // there's a second feed to steer, and both are disabled while Follow drives them.
+  for (const id of ["live-camera", "live-camera2"]) {
+    const sel = $(id);
+    if (!sel) continue;
+    const prev = sel.value;
+    sel.innerHTML = opts;
+    if (names.includes(prev)) sel.value = prev;
+    else if (id === "live-camera2" && names.length > 1) sel.value = names[1];
+  }
+  syncFeedControls();
 }
 
 // Detected network / USB cameras feed the "add camera" flow.
@@ -672,7 +681,7 @@ function updateLiveView(running) {
     img.classList.remove("hidden");
     const parts = ["Live — green = person, orange = cat"];
     if (trail) parts.push("trail: blue = older → red = newest");
-    if (lk) parts.push("grey = last known location");
+    if (lk) parts.push("purple = last known location");
     note.textContent = parts.join(" · ") + ".";
     liveOn = true; liveCam = cam; liveTrail = trail; liveLastKnown = lk;
   } else if (!want && liveOn) {
@@ -682,6 +691,63 @@ function updateLiveView(running) {
     note.textContent = running
       ? "Live feed off — tick “Show live feed” to view."
       : "Start watching to see the live feed.";
+  }
+}
+
+// ---- Follow mode + second feed (#113) --------------------------------------
+// The sticky/debounced "which camera does each feed show" decision lives in the
+// backend (d20app/feeds.py) so it's testable; this just renders the answer and,
+// crucially, only re-points a stream when its camera actually CHANGES — setting
+// img.src restarts the MJPEG connection, so re-pointing every poll would stutter.
+let followOn = false, feed2On = false, feed2Cam = null;
+
+// Follow drives both pickers, so they're read-only while it's on (they still show
+// where each feed is). The second picker is only steerable when there IS a second
+// feed and Follow isn't already choosing for it.
+function syncFeedControls() {
+  const cam1 = $("live-camera"), cam2 = $("live-camera2");
+  if (cam1) cam1.disabled = followOn;
+  if (cam2) cam2.disabled = followOn || !feed2On;
+}
+
+async function pollFeeds() {
+  if (!isRunning || (!followOn && !feed2On)) { updateSecondFeed(null); return; }
+  if (!followOn) { updateSecondFeed(null); return; }   // manual: the picker decides
+  const { body } = await api(`/api/feeds?slots=${feed2On ? 2 : 1}`);
+  if (!body || !Array.isArray(body.slots)) return;
+  const [primary, secondary] = body.slots;
+  if (primary && primary.camera && watchableCam(primary.camera)
+      && $("live-camera").value !== primary.camera) {
+    $("live-camera").value = primary.camera;
+    boostCam(primary.camera);      // keep the room we follow to actively detecting
+    updateLiveView(isRunning);
+  }
+  // Keep the (disabled) second picker showing what that feed is actually on.
+  if (secondary && secondary.camera && watchableCam(secondary.camera)) {
+    $("live-camera2").value = secondary.camera;
+  }
+  updateSecondFeed(secondary);
+}
+
+function updateSecondFeed(slot) {
+  const wrap = $("feed2-wrap"), img = $("live-img2"), label = $("feed2-label");
+  // With Follow off the user steers the second feed from its own picker.
+  const pick = followOn ? slot
+    : ($("live-camera2").value ? {camera: $("live-camera2").value, source: "manual"} : null);
+  const show = feed2On && isRunning && $("live-enabled").checked
+    && pick && pick.camera && watchableCam(pick.camera);
+  if (!show) {
+    if (feed2Cam !== null) { img.src = ""; feed2Cam = null; }
+    wrap.classList.add("hidden");
+    return;
+  }
+  wrap.classList.remove("hidden");
+  label.textContent = pick.source === "last-seen"
+    ? `${pick.camera} — where she came from`
+    : pick.source === "manual" ? pick.camera : `${pick.camera} — cat here now`;
+  if (pick.camera !== feed2Cam) {          // only on a real change
+    img.src = `/api/stream?camera=${encodeURIComponent(pick.camera)}&ts=${Date.now()}`;
+    feed2Cam = pick.camera;
   }
 }
 
@@ -824,6 +890,8 @@ async function showCatJump() {
 
 // Cycle the live feed between rooms that currently have a cat (when armed).
 function rotateCatFeed() {
+  // Follow mode owns the feed while it's on — the two must not fight (#113).
+  if (followOn) return;
   if (!catRotate || !liveOn || catCams.length < 2) return;
   catRotateIdx = (catRotateIdx + 1) % catCams.length;
   const name = catCams[catRotateIdx];
@@ -1662,6 +1730,20 @@ async function loadLog() {
 function wire() {
   const retry = $("init-retry");
   if (retry) retry.onclick = retryInitialLoad;
+  // Follow mode / second feed (#113).
+  $("follow-cat").onchange = () => {
+    followOn = $("follow-cat").checked;
+    if (followOn) catRotate = false;           // don't fight the Show-cat rotation
+    syncFeedControls();
+    pollFeeds();
+  };
+  $("second-feed").onchange = () => {
+    feed2On = $("second-feed").checked;
+    syncFeedControls();
+    if (!feed2On) updateSecondFeed(null);
+    pollFeeds();
+  };
+  $("live-camera2").onchange = () => updateSecondFeed(null);
   $("speaker-refresh").onclick = () => loadSpeakers(true);
   $("speaker-select").onchange = updateSpeakerWarning;
   $("use_speech").onchange = applySpeechVisibility;
@@ -1903,7 +1985,7 @@ function startPolling() {
   loadCats();
   loadVersion();
   setInterval(() => { refreshStatus(); loadLog(); }, 3000);
-  setInterval(loadCats, 1200);
+  setInterval(() => { loadCats(); pollFeeds(); }, 1200);
   setInterval(rotateCatFeed, 4000);   // rotate among rooms with a cat when armed
 }
 

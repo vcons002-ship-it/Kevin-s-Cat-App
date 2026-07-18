@@ -53,7 +53,7 @@ measured, not guessed. Per watched camera, for every frame:
    room, and only animal-sized blobs are kept. View it as a still (🌈 Show
    trail) or live: the **🌈 Trail overlay** checkbox by the live feed paints it
    onto the stream, updating as the cat moves. Next to it, **📍 Last known**
-   (on by default) keeps a grey, age-labelled box at the newest *confirmed*
+   (on by default) keeps a purple, age-labelled box at the newest *confirmed*
    cat position — "where was she last?" stays answered even when nothing is
    detected right now. It hides itself while a live cat box is on screen (the
    live box is the answer), reappears the moment she vanishes at the exact

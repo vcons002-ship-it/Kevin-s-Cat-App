@@ -22,6 +22,7 @@ from .activitylog import ActivityLog
 from .caster import Caster, SoundServer
 from .cats import CatTracker, zone_for
 from .detector import PersonDetector, mask_credentials
+from .feeds import FeedRouter
 from .snapshots import SnapshotStore
 
 log = logging.getLogger("d20app.loop")
@@ -179,6 +180,8 @@ class DetectionLoop:
         self._active_cams: set[str] | None = None       # round-robin: which cameras detect now (None = all)
         self._scan_last: dict[str, dict] = {}           # name -> {ts, found}: last still-scan (#94)
         self._scan_lock = threading.Lock()              # guards _scan_last in-place writes (H2)
+        self._feeds = FeedRouter()                      # Follow mode: camera per feed (#113)
+        self._feeds_lock = threading.Lock()             # web thread mutates router state
 
     def _caster_for(self, cfg) -> Caster:
         """A single long-lived Caster so speaker connections stay open."""
@@ -293,8 +296,9 @@ class DetectionLoop:
         det = self._pick(name)
         return det.live_version() if det is not None else 0
 
-    def cats_present_cameras(self) -> list:
-        """Names of **cat-tracking** cameras seeing a cat now, newest sighting first.
+    def cat_camera_times(self) -> dict:
+        """``{camera: monotonic last-cat-seen}`` for **cat-tracking** cameras with a
+        cat on them right now.
 
         A cat is "present" if the net saw one within ``_cat_flash_ttl`` — a window
         sized to the scan interval so a *still* cat re-found by the periodic forced
@@ -303,15 +307,34 @@ class DetectionLoop:
         """
         status = self._cam_status
         now = time.monotonic()
-        seen = []
+        seen = {}
         for cam_name, det in self._detectors.items():
             if not status.get(cam_name, {}).get("track_cats"):
                 continue
             last = det.cat_last_seen()
             if last and now - last <= self._cat_flash_ttl:
-                seen.append((last, cam_name))
-        seen.sort(reverse=True)        # most-recent sighting first
-        return [name for _, name in seen]
+                seen[cam_name] = last
+        return seen
+
+    def cats_present_cameras(self) -> list:
+        """Names of cameras seeing a cat now, newest sighting first."""
+        seen = self.cat_camera_times()
+        return sorted(seen, key=lambda n: seen[n], reverse=True)
+
+    def feed_assignments(self, slots: int = 1, hold_s: float | None = None,
+                         persist_s: float | None = None) -> list:
+        """Which camera each live feed should show (#113, Follow mode).
+
+        Sticky and debounced — see :mod:`d20app.feeds`. Returns one
+        ``{"camera", "source"}`` per slot.
+        """
+        if hold_s is not None:
+            self._feeds.hold_s = float(hold_s)
+        if persist_s is not None:
+            self._feeds.persist_s = float(persist_s)
+        with self._feeds_lock:
+            return self._feeds.update(time.monotonic(),
+                                      self.cat_camera_times(), slots)
 
     def cat_present(self) -> bool:
         """True if **any cat-tracking** camera has a cat on it right now."""
@@ -606,6 +629,7 @@ class DetectionLoop:
             self._threads = []
             self._cat_boost = {}       # drop any pending detection boosts
             self._scan_last = {}
+            self._feeds.reset()        # a new session starts with no feed holds (#113)
             self._viewing = {}
             self._active_cams = None
             caster.close()             # drop held speaker connections when we stop
