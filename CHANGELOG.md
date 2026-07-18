@@ -11,6 +11,21 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.2] — 2026-07-17
+
+### Fixed
+- **Intermittent HTTP 500 on the `/api/cats` poll** (audit
+  `docs/reviews/2026-07-09-full-code-audit.md`, Finding H2). `DetectionLoop.last_scan()`
+  (the web thread, hit every 1.2 s by the GUI) iterated `_scan_last` while a
+  detection worker thread inserts keys in place — a concurrent insert during the
+  `.items()` iteration raised `RuntimeError: dictionary changed size during
+  iteration`, 500ing the poll (most likely in the first scan cycle, worst with
+  several cat-tracking cameras). Added a dedicated `_scan_lock`: `last_scan()`
+  now snapshots under it (`list(...items())`) and the worker's in-place write is
+  guarded by it. The detection loop itself was unaffected. Covered by a new
+  concurrency regression test in `tests/test_still_scan_model.py` (verified to
+  reproduce the race before the fix).
+
 ## [0.51.1] — 2026-07-17
 
 ### Fixed

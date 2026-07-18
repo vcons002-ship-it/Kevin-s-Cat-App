@@ -2,6 +2,7 @@
 camera's live model, and its last run is glanceable.
 """
 
+import threading
 import time
 
 import numpy as np
@@ -106,3 +107,54 @@ def test_cam_status_carries_last_scan():
     loop._scan_last = {"Room": {"ts": time.time() - 120.0, "found": True}}
     row = loop.cam_status()[0]
     assert 115 <= row["scan_ago_s"] <= 125 and row["scan_found"] is True
+
+
+def test_last_scan_is_safe_under_concurrent_writes():
+    # H2: last_scan() (web thread, the 1.2 s /api/cats poll) iterates _scan_last
+    # while a worker thread inserts keys IN PLACE at `_scan_last[name] = {...}`.
+    # An unguarded iteration then raises "dictionary changed size during
+    # iteration" → a 500 on the poll. Drive both real paths concurrently and
+    # assert nothing raises. (Verified to fail before the _scan_lock fix.)
+    loop = DetectionLoop()
+    # Pre-seed so each last_scan() iterates a non-trivial dict — this widens the
+    # window in which a concurrent size change would trip an unguarded iteration,
+    # making a regression fail reliably rather than flakily.
+    now = time.time()
+    for i in range(200):
+        loop._scan_last[f"seed-{i}"] = {"ts": now, "found": False}
+
+    errors = []
+    stop = threading.Event()
+
+    def writer():
+        # Churn at BOUNDED size (add one key, drop an older one) so the dict size
+        # keeps changing under the reader — the exact trigger — without growing
+        # without limit (which would just make each snapshot slower and slower).
+        i = 0
+        try:
+            while not stop.is_set():
+                with loop._scan_lock:      # mirror the worker's guarded write site
+                    loop._scan_last[f"cam-{i}"] = {"ts": time.time(),
+                                                   "found": bool(i % 2)}
+                    loop._scan_last.pop(f"cam-{i - 100}", None)
+                i += 1
+        except Exception as e:            # noqa: BLE001 — surface, don't swallow
+            errors.append(("writer", repr(e)))
+
+    t = threading.Thread(target=writer, daemon=True)
+    t.start()
+    try:
+        for _ in range(2000):
+            try:
+                loop.last_scan()          # web-thread read; must never raise
+            except Exception as e:        # noqa: BLE001
+                errors.append(("reader", repr(e)))
+                break
+    finally:
+        stop.set()
+        t.join(timeout=5)
+
+    assert not errors, f"concurrent _scan_last access raised: {errors}"
+    # Still returns a coherent newest-scan result afterward.
+    result = loop.last_scan()
+    assert result is not None and set(result) >= {"camera", "ago_s", "found"}
