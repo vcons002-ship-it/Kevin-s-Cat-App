@@ -915,6 +915,12 @@ class PersonDetector:
         return {"box": box, "label": label, "score": score,
                 "age_s": max(0.0, time.time() - ts)}
 
+    def clear_confirmed(self) -> None:
+        """Drop the live 'last confirmed cat' track so the last-known-location
+        overlay disappears (e.g. when the sightings log is cleared, #112)."""
+        with self._live_lock:
+            self._cat_live_confirmed = None
+
     @staticmethod
     def _age_label(seconds: float) -> str:
         """'42s' / '7m' / '3h' — compact age for on-feed overlay labels."""

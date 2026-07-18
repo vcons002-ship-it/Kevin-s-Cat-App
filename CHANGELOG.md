@@ -11,6 +11,24 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.5] — 2026-07-18
+
+### Changed
+- **"Last known location" box no longer fades after 30 minutes** (#112). The grey
+  overlay used to vanish once a sighting aged past `_LAST_KNOWN_TTL` (1800 s) —
+  backwards for its best use case, since it's *most* useful exactly when a cat has
+  been still/asleep for a long stretch, and the box already carries its own age
+  label. It now persists until a newer sighting replaces it, the loop restarts, or
+  the sightings log is cleared. Unwanted/stale boxes are hidden with the existing
+  **📍 Last** live-view toggle (per-camera opt-out), not a timer.
+
+### Fixed
+- **Clearing the sightings log now also clears the drawn overlay box** (#112).
+  `POST /api/cats/clear` previously cleared only the log, leaving the detector's
+  live confirmation track drawing the box; with the fade removed it would linger
+  until a loop restart. It now also drops that track (`DetectionLoop.clear_last_known()`
+  → `PersonDetector.clear_confirmed()`), so a log clear removes the box too.
+
 ## [0.51.4] — 2026-07-17
 
 ### Fixed

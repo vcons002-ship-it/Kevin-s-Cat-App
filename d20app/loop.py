@@ -31,10 +31,11 @@ _MOTION_LOG_INTERVAL = 10.0
 # live feed keeps drawing a box around the cat (even a still one) while the user looks.
 _CAT_BOOST_SECONDS = 20.0
 
-# How long a camera's newest recorded sighting stays on the live feed as the grey
-# "last known location" box (0.42.0). Long-ish on purpose: stale-but-labelled beats
-# absent — the box carries its own age, so 25 minutes old reads as 25 minutes old.
-_LAST_KNOWN_TTL = 1800.0
+# The grey "last known location" box (0.42.0) does NOT self-expire (#112): it's most
+# useful exactly when a cat has been still/asleep a long time, and it carries its own
+# age label, so stale-but-labelled beats absent. It persists until a newer sighting
+# replaces it, the loop restarts, or the sightings log is cleared (which also drops the
+# live confirmation track via clear_last_known()).
 
 # How long a camera stays pinned-active after the GUI last fetched a frame of it, so a
 # camera you're watching never sleeps under round-robin (refreshed each streamed frame).
@@ -237,8 +238,9 @@ class DetectionLoop:
 
     def _last_known(self, name: str | None) -> dict | None:
         """The streamed camera's newest confirmed cat position as an overlay
-        payload, or None (nothing known, older than :data:`_LAST_KNOWN_TTL`, or
-        no camera).
+        payload, or None (nothing known, or no camera). The box does not expire
+        on a timer (#112) — it carries its own age label and persists until a
+        newer sighting replaces it or the log is cleared.
 
         Prefers the detector's live confirmation track (0.42.1) — updated on
         every ≥cat_confidence detection, so the grey box points at the *true*
@@ -251,16 +253,26 @@ class DetectionLoop:
         det = self._detectors.get(cam)
         if det is not None:
             live = det.last_confirmed()
-            if live and live["age_s"] <= _LAST_KNOWN_TTL:
+            if live:
                 return {"box": live["box"], "label": live["label"],
                         "age_s": live["age_s"]}
         s = self.cats.last_for(cam)
         if not s or not s.get("box"):
             return None
         age = time.time() - s.get("ts", 0.0)
-        if not 0 <= age <= _LAST_KNOWN_TTL:
+        if age < 0:                       # future ts (clock skew) — ignore, no upper bound
             return None
         return {"box": s["box"], "label": s.get("label", "cat"), "age_s": age}
+
+    def clear_last_known(self) -> None:
+        """Drop every running detector's live confirmation track — the overlay's
+        live source — so clearing the sightings log also clears the drawn box
+        (#112: with the fade removed, the box would otherwise linger until a
+        loop restart)."""
+        for det in self._detectors.values():
+            clear = getattr(det, "clear_confirmed", None)   # stub-tolerant
+            if clear:
+                clear()
 
     def live_version(self, name: str | None = None) -> int:
         """Frame/box version of a camera's detector (0 if not running)."""

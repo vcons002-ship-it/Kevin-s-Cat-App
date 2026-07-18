@@ -1487,7 +1487,9 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
 
     @app.post("/api/cats/clear")
     def api_cats_clear():
-        app.config["loop"].cats.clear()
+        loop = app.config["loop"]
+        loop.cats.clear()
+        loop.clear_last_known()   # #112: also drop the live overlay box, not just the log
         return jsonify({"ok": True})
 
     # -- "Test detection" tool (upload a photo/video, tune settings, draw boxes) --

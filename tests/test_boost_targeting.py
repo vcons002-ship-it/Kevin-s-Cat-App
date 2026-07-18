@@ -153,13 +153,63 @@ def test_live_feed_draws_last_known_by_default(tmp_path):
     assert loop.live_jpeg("Room", last_known=False) == plain   # opt-out honoured
 
 
-def test_last_known_expires_after_ttl(tmp_path):
+def test_last_known_does_not_expire(tmp_path):
+    # #112: the last-known box must persist well beyond the old 30-min fade — it's
+    # most useful exactly when a cat has been still/asleep for a long time.
     loop, det = _running_loop(tmp_path)
     det._publish_frame(np.full((360, 640, 3), 110, np.uint8))
     plain = loop.live_jpeg("Room", last_known=False)
     loop.cats.record("Room", (280, 100, 360, 180), (640, 360), 0.8)
-    loop.cats._sightings[-1]["ts"] -= 4000.0        # age it past _LAST_KNOWN_TTL
-    assert loop.live_jpeg("Room") == plain
+    loop.cats._sightings[-1]["ts"] -= 4000.0        # ~66 min old (past the old 1800s TTL)
+    assert loop.live_jpeg("Room") != plain          # still drawn — no fade
+    lk = loop._last_known("Room")
+    assert lk is not None and lk["age_s"] >= 3000    # box carries its (large) age label
+
+
+def test_clear_last_known_drops_the_overlay(tmp_path):
+    # #112: with the fade gone, clearing the sightings log must also drop the live
+    # confirmation track so the box disappears instead of lingering indefinitely.
+    loop, det = _running_loop(tmp_path)
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: [("cat", 0.8, (400, 120, 480, 200))]
+    det.read_and_detect(detect=True)                 # baseline frame
+    _move(frames)
+    det.read_and_detect(detect=True)
+    assert det.last_confirmed() is not None
+    assert loop._last_known("Room") is not None
+
+    loop.clear_last_known()
+    assert det.last_confirmed() is None              # live track dropped
+    assert loop._last_known("Room") is None          # no log entry either → nothing known
+
+
+def test_cats_clear_endpoint_clears_the_overlay(tmp_path):
+    # The /api/cats/clear endpoint clears both the log and the live overlay box (#112).
+    from d20app.webapp import create_app
+    loop, det = _running_loop(tmp_path)
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: [("cat", 0.8, (400, 120, 480, 200))]
+    det.read_and_detect(detect=True)
+    _move(frames)
+    det.read_and_detect(detect=True)
+    assert det.last_confirmed() is not None
+
+    client = create_app(loop).test_client()
+    resp = client.post("/api/cats/clear")
+    assert resp.status_code == 200 and resp.get_json() == {"ok": True}
+    assert det.last_confirmed() is None
 
 
 def test_live_feed_draws_the_lead_box_while_boosting(tmp_path):
