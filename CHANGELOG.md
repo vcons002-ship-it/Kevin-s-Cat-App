@@ -11,6 +11,23 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.1] — 2026-07-17
+
+### Fixed
+- **HTTP 500 on routine config saves** (audit `docs/reviews/2026-07-09-full-code-audit.md`,
+  Finding H1). Since 0.50.0 every GUI control auto-saves on `change`, and
+  `POST /api/config` feeds the raw JSON straight into `config.update()`.
+  `_coerce` ran `int(float(raw))` / `float(raw)` with no guard, so clearing any
+  numeric input (sending `""`) — or a client sending `null` — raised inside the
+  coercion loop and 500'd the whole save (`config.yaml` was left untouched, so
+  not a permanent brick, but an unhandled error on a normal action). `_coerce`
+  now treats a blank/`null`/unparseable numeric as "keep this field's current
+  saved value" (falling back to the dataclass default when there's no prior
+  value), so it can no longer raise and a stray blank auto-save can't clobber a
+  real setting (mitigates the H1×M3 interaction). Type is still taken from the
+  dataclass default. Covered by new tests in
+  `tests/test_config_and_preview.py`.
+
 ## [0.51.0] — 2026-07-09
 
 ### Fixed

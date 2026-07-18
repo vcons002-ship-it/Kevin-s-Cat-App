@@ -276,23 +276,40 @@ def update(values: dict, path: str = CONFIG_PATH) -> Config:
     for key, raw in values.items():
         if key not in _KNOWN_FIELDS:
             continue
-        setattr(cfg, key, _coerce(raw, defaults[key]))
+        # Pass the field's current value so a blank/bad numeric keeps it (H1/M3),
+        # while its *type* is still taken from the dataclass default.
+        setattr(cfg, key, _coerce(raw, defaults[key], getattr(cfg, key)))
     save(cfg, path)
     return cfg
 
 
-def _coerce(raw, default):
-    """Coerce ``raw`` (often a string from a form) to ``default``'s type."""
+def _coerce(raw, default, current=None):
+    """Coerce ``raw`` (often a string from a form) to ``default``'s type.
+
+    ``raw`` frequently arrives from an auto-saving HTML control, so a numeric
+    field may be blank (``""``) or ``null`` when the user clears its input. Treat
+    those — and any unparseable value — as "keep this field's current value"
+    instead of raising: an unguarded ``int(float(""))`` / ``float(None)`` would
+    500 the whole ``POST /api/config`` (audit H1). ``current`` is the value to
+    keep on a blank/bad input (the field's existing saved value, passed by
+    ``update()``); when it's ``None`` — no prior value, e.g. building a fresh
+    camera dict — we fall back to ``default``. Keeping the current value stops a
+    spurious blank auto-save from clobbering a real setting (audit M3).
+    """
     if default is None:
         return raw
     if isinstance(default, bool):
         if isinstance(raw, str):
             return raw.strip().lower() in ("1", "true", "yes", "on")
         return bool(raw)
-    if isinstance(default, int):
-        return int(float(raw))
-    if isinstance(default, float):
-        return float(raw)
+    if isinstance(default, (int, float)):   # bool handled above (bool is an int)
+        keep = current if current is not None else default
+        if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+            return keep
+        try:
+            return int(float(raw)) if isinstance(default, int) else float(raw)
+        except (TypeError, ValueError):
+            return keep
     if isinstance(default, str):
         return "" if raw is None else str(raw)
     return raw
