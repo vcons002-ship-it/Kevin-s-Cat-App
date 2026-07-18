@@ -27,3 +27,8 @@ snapshot.jpg
 
 # Detection snapshots written at runtime
 snapshots/
+
+# This machine's model provenance (#109): entries for files generated/adopted
+# here. Deliberately NOT committed, so a `git reset --hard` refreshes the repo
+# manifest without wiping local provenance and re-flagging valid local models.
+d20app/models/models_manifest.local.json

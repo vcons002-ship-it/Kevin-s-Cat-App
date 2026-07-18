@@ -11,6 +11,39 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.6] — 2026-07-18
+
+### Changed
+- **Provisioning verifies and adopts valid existing models instead of rebuilding
+  them** (#109). `provision()` treated every non-`ok` row as "regenerate", so a
+  file that was present and perfectly valid but had no manifest entry
+  (`unverified`) was re-exported from scratch — minutes of work to recreate bytes
+  that were already fine. It now re-runs that file's own verification *in place*
+  first and, if it passes, stamps it into the manifest and moves on (seconds).
+  Adoption is held to the same bar as generation, so an export we can't vouch for
+  is never silently blessed — it falls through to a rebuild: ONNX via the existing
+  golden-head check, engines by actually deserializing them with TensorRT (the
+  real check, since engines are GPU/TRT-version specific). `stale` files (hash
+  changed since vetting) still always regenerate.
+- `ultralytics` is now required only when something must actually be **built** —
+  adopting existing valid files needs no build-time deps. As a result,
+  `provision()` on an already-complete lineup reports "nothing to do" instead of
+  erroring about a missing build dep.
+
+### Fixed
+- **Locally-generated model provenance no longer wiped by `git reset --hard`**
+  (#109). The manifest was trying to be both "what the repo ships" (committed) and
+  "what this machine generated" (local), so every repo update replaced it with
+  upstream's — which only knows the bundled models — re-flagging every local model
+  as unknown-provenance and triggering slow rebuilds. Split in two: the committed
+  `models_manifest.json`, plus a gitignored `models_manifest.local.json` for
+  entries generated/adopted on this machine. `load_manifest()` returns them merged
+  (local wins) and `provision()` only ever writes the local one.
+
+**Note:** the TensorRT engine-adoption success path is **not yet runtime-verified**
+(needs a GPU/TRT host). It is written fail-safe — any failure falls back to the
+previous rebuild behaviour — so the worst case is no improvement, not a regression.
+
 ## [0.51.5] — 2026-07-18
 
 ### Changed

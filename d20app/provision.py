@@ -14,7 +14,20 @@ Design:
   no entry → *unverified* (exactly the stale-manual-export case); absent →
   *missing*. Engines are per-GPU, so their manifest entries are written at
   build time on that machine and never committed.
-- **provision()** regenerates whatever the audit flags, from the Ultralytics
+- The manifest is **split in two** (#109) because it was trying to be both
+  "what the repo ships" and "what THIS machine built": the committed repo file
+  above, plus ``models_manifest.local.json`` (gitignored) for entries this
+  machine generated or adopted. ``load_manifest()`` returns the two merged
+  (local wins) and ``provision()`` only ever writes the local one — so a
+  ``git reset --hard`` refreshes the repo manifest without wiping local
+  provenance and re-flagging perfectly good local models.
+- **provision()** first tries to **verify-and-adopt** an *unverified* file
+  (present, but no manifest entry): it re-runs that file's own verification in
+  place and, if it passes, stamps it into the local manifest — seconds, instead
+  of a minutes-long rebuild of a file that was already fine (#109). Adoption is
+  as strict as generation's check, so an export we cannot vouch for is never
+  silently blessed; it falls through to a rebuild. Only *missing*, *stale*, or
+  failed-verification files are regenerated, from the Ultralytics
   ``.pt`` weights (downloaded on demand), with the golden recipe
   (``end2end=False`` → raw ``(1, 84, 8400)`` head, ``nms=False``), FP16/FP32
   per the variant, then verifies the head and stamps the manifest.
@@ -43,6 +56,9 @@ from . import yolo
 _log = logging.getLogger("d20.provision")
 
 MANIFEST_NAME = "models_manifest.json"
+# This machine's own provenance (gitignored, #109): entries for files generated or
+# adopted here. Kept out of the repo manifest so a `git reset --hard` can't wipe them.
+LOCAL_MANIFEST_NAME = "models_manifest.local.json"
 
 # sha cache so repeated audits don't re-hash ~100 MB files: path -> (mtime, size, sha)
 _SHA_CACHE: dict = {}
@@ -92,8 +108,7 @@ def _sha256(path: str) -> str:
     return sha
 
 
-def load_manifest(models_dir: str | None = None) -> dict:
-    path = os.path.join(_models_dir(models_dir), MANIFEST_NAME)
+def _read_json(path: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -102,11 +117,40 @@ def load_manifest(models_dir: str | None = None) -> dict:
         return {}
 
 
-def save_manifest(manifest: dict, models_dir: str | None = None) -> None:
-    path = os.path.join(_models_dir(models_dir), MANIFEST_NAME)
+def _write_json(path: str, data: dict) -> None:
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, indent=1, sort_keys=True)
+        json.dump(data, fh, indent=1, sort_keys=True)
         fh.write("\n")
+
+
+def load_manifest(models_dir: str | None = None) -> dict:
+    """The repo manifest overlaid with this machine's local one (local wins).
+
+    The committed file vouches for what the repo ships; the gitignored local file
+    records what this machine generated or adopted (#109), so a ``git reset --hard``
+    updates the former without erasing the latter."""
+    mdir = _models_dir(models_dir)
+    merged = _read_json(os.path.join(mdir, MANIFEST_NAME))
+    merged.update(_read_json(os.path.join(mdir, LOCAL_MANIFEST_NAME)))
+    return merged
+
+
+def load_local_manifest(models_dir: str | None = None) -> dict:
+    """Only this machine's entries (what ``provision()`` writes)."""
+    return _read_json(os.path.join(_models_dir(models_dir), LOCAL_MANIFEST_NAME))
+
+
+def save_manifest(manifest: dict, models_dir: str | None = None) -> None:
+    """Write the **repo** (committed) manifest — what the repo ships.
+
+    ``provision()`` never calls this; it writes local provenance via
+    :func:`save_local_manifest` so git updates can't clobber it (#109)."""
+    _write_json(os.path.join(_models_dir(models_dir), MANIFEST_NAME), manifest)
+
+
+def save_local_manifest(manifest: dict, models_dir: str | None = None) -> None:
+    """Write this machine's own (gitignored) manifest."""
+    _write_json(os.path.join(_models_dir(models_dir), LOCAL_MANIFEST_NAME), manifest)
 
 
 def audit(models_dir: str | None = None) -> list:
@@ -199,14 +243,53 @@ def _verify_golden_head(path: str, size: int, precision: str):
     return True, "golden head (cv2 forward)"
 
 
-def provision(targets=None, force: bool = False, progress=None,
-              models_dir: str | None = None) -> list:
-    """Generate every flagged file (or ``targets``); returns the refreshed audit.
+def _verify_engine(path: str):
+    """(verdict, note) for an existing ``.engine``: deserialize it with TensorRT.
 
-    Needs ``ultralytics`` (build-time only) — raises an actionable
-    ``RuntimeError`` if absent rather than installing anything. Engines are
-    skipped (with a message) unless the driver clears the #82 CUDA-13 gate."""
-    say = progress or (lambda msg: _log.info("%s", msg))
+    That IS the real check — engines are GPU/TRT-version specific and
+    deserialization fails if the file was built elsewhere, which is exactly what
+    the runtime would hit. Anything that goes wrong (no tensorrt here, no GPU,
+    corrupt file) reports "not verified" so the caller rebuilds rather than
+    adopting on faith."""
+    try:
+        import tensorrt as trt
+
+        with open(path, "rb") as fh:
+            data = yolo._strip_engine_metadata(fh.read())
+        engine = trt.Runtime(trt.Logger(trt.Logger.WARNING)).deserialize_cuda_engine(data)
+        if engine is None:
+            return False, "TensorRT could not deserialize it (built on another GPU?)"
+        return True, "deserialized by TensorRT on this GPU"
+    except ImportError:
+        return False, "tensorrt not importable here — can't vouch for the engine"
+    except Exception as exc:        # noqa: BLE001 — any failure means "don't adopt"
+        return False, f"engine check failed: {exc}"
+
+
+def _verify_existing(path: str, *, kind: str, size: int, precision: str):
+    """(verdict, note) — can we vouch for a file that's on disk but unmanifested?
+
+    Adoption (#109) is held to the same bar as generation's own check, so an
+    export we cannot verify is never silently stamped ok — that's the
+    stale-26x failure this module exists to prevent. A ``False`` verdict just
+    means "rebuild it", never "trust it anyway"."""
+    if kind == "engine":
+        return _verify_engine(path)
+    try:
+        return _verify_golden_head(path, size, precision)
+    except Exception as exc:        # noqa: BLE001 — bad head / unreadable = don't adopt
+        return False, str(exc)
+
+
+def _manifest_entry(path: str, row: dict, size: int, note: str) -> dict:
+    return {"sha256": _sha256(path), "precision": row["precision"],
+            "kind": row["kind"], "imgsz": size, "note": note, "ts": time.time()}
+
+
+def _require_ultralytics():
+    """The ``YOLO`` class, or an actionable error. Called only when something
+    actually has to be *built* — adopting an existing valid file needs no
+    build-time deps at all (#109)."""
     if not ultralytics_available():
         raise RuntimeError(
             "model provisioning needs the 'ultralytics' package (build-time "
@@ -215,8 +298,19 @@ def provision(targets=None, force: bool = False, progress=None,
             "for you.")
     from ultralytics import YOLO
 
+    return YOLO
+
+
+def provision(targets=None, force: bool = False, progress=None,
+              models_dir: str | None = None) -> list:
+    """Generate every flagged file (or ``targets``); returns the refreshed audit.
+
+    Needs ``ultralytics`` (build-time only) — raises an actionable
+    ``RuntimeError`` if absent rather than installing anything. Engines are
+    skipped (with a message) unless the driver clears the #82 CUDA-13 gate."""
+    say = progress or (lambda msg: _log.info("%s", msg))
     mdir = _models_dir(models_dir)
-    manifest = load_manifest(models_dir)
+    local = load_local_manifest(models_dir)
     rows = audit(models_dir)
     todo = [r for r in rows
             if (force or r["status"] != "ok")
@@ -224,6 +318,21 @@ def provision(targets=None, force: bool = False, progress=None,
     driver = yolo._driver_cuda_version()
     for row in todo:
         path = os.path.join(mdir, row["file"])
+        size = yolo.MODELS.get(row["variant"], {}).get("size", 640)
+        # Verify-and-adopt (#109): a file that's present but unmanifested is
+        # re-verified in place and stamped in — seconds, versus a pointless
+        # minutes-long rebuild of a file that was already valid. Only an export
+        # we can actually vouch for is adopted; anything else falls through.
+        if row["status"] == "unverified" and not force:
+            ok, note = _verify_existing(path, kind=row["kind"], size=size,
+                                        precision=row["precision"])
+            if ok:
+                local[row["file"]] = _manifest_entry(
+                    path, row, size, f"adopted existing file; {note}")
+                save_local_manifest(local, models_dir)
+                say(f"adopted {row['file']} — verified in place, no rebuild ({note})")
+                continue
+            say(f"can't adopt {row['file']}: {note} — rebuilding")
         if row["kind"] == "engine":
             if driver is None or driver < yolo._TRT_MIN_CUDA:
                 say(f"skip {row['file']}: driver CUDA {driver} < "
@@ -231,10 +340,10 @@ def provision(targets=None, force: bool = False, progress=None,
                     "upgrade; the onnx lineup still provisions")
                 continue
         say(f"building {row['file']} ({row['status']}) …")
+        YOLO = _require_ultralytics()
         base = row["variant"].replace("_fp16", "")
         model = YOLO(f"{base}.pt")
         model.model.model[-1].end2end = False           # golden head (#70 §2)
-        size = yolo.MODELS.get(row["variant"], {}).get("size", 640)
         if row["kind"] == "engine":
             built = model.export(format="engine", imgsz=size, half=True,
                                  simplify=True, dynamic=False, batch=1)
@@ -252,12 +361,8 @@ def provision(targets=None, force: bool = False, progress=None,
             note = f"{note}; {head_note}"
             if not ok:
                 say(f"  ⚠ {row['file']}: {head_note}")
-        manifest[row["file"]] = {
-            "sha256": _sha256(path), "precision": row["precision"],
-            "kind": row["kind"], "imgsz": size, "note": note,
-            "ts": time.time(),
-        }
-        save_manifest(manifest, models_dir)
+        local[row["file"]] = _manifest_entry(path, row, size, note)
+        save_local_manifest(local, models_dir)          # #109: local, not the repo file
         say(f"  done {row['file']}")
     if not todo:
         say("nothing to do — lineup is complete and verified")

@@ -96,6 +96,132 @@ def test_provision_without_ultralytics_is_actionable(tmp_path, monkeypatch):
     assert "ultralytics" in msg and "never installs" in msg
 
 
+# ---- #109: verify-and-adopt instead of rebuilding a valid file ----------------------
+def _explode(*a, **k):
+    raise AssertionError("rebuilt a file that should have been adopted")
+
+
+def test_unverified_file_is_adopted_not_rebuilt(tmp_path, monkeypatch):
+    # A present-but-unmanifested file that passes its own verification is stamped
+    # into the manifest in place — no multi-minute regeneration (#109).
+    mdir = str(tmp_path)
+    _write(mdir, "yolo26x.onnx")
+    monkeypatch.setattr(provision, "_verify_existing",
+                        lambda path, **kw: (True, "golden head (stubbed)"))
+    monkeypatch.setattr(provision, "_require_ultralytics", _explode)
+
+    msgs = []
+    rows = provision.provision(targets=["yolo26x.onnx"], models_dir=mdir,
+                               progress=msgs.append)
+
+    assert {r["file"]: r for r in rows}["yolo26x.onnx"]["status"] == "ok"
+    assert any("adopted" in m for m in msgs)
+    # Adoption is recorded as local provenance, not in the committed repo manifest.
+    assert "yolo26x.onnx" in provision.load_local_manifest(models_dir=mdir)
+    assert "yolo26x.onnx" not in _read_repo_manifest(mdir)
+
+
+def test_unverifiable_file_is_never_silently_adopted(tmp_path, monkeypatch):
+    # The invariant: a file we cannot vouch for is rebuilt, never blessed.
+    mdir = str(tmp_path)
+    _write(mdir, "yolo26x.onnx")
+    monkeypatch.setattr(provision, "_verify_existing",
+                        lambda path, **kw: (False, "NOT a golden export"))
+    monkeypatch.setattr(provision, "ultralytics_available", lambda: False)
+
+    msgs = []
+    with pytest.raises(RuntimeError):        # falls through to the rebuild path
+        provision.provision(targets=["yolo26x.onnx"], models_dir=mdir,
+                            progress=msgs.append)
+    assert provision.load_local_manifest(models_dir=mdir) == {}     # nothing stamped
+    assert any("can't adopt" in m for m in msgs)
+
+
+def test_stale_file_is_rebuilt_not_adopted(tmp_path, monkeypatch):
+    # `stale` (hash differs from its entry) means the file changed since vetting —
+    # it must regenerate, not take the adopt shortcut (#109 is only for unverified).
+    mdir = str(tmp_path)
+    _write(mdir, "yolo26x.onnx")
+    provision.save_manifest({"yolo26x.onnx": {"sha256": "not-the-real-hash",
+                                              "kind": "onnx", "precision": "fp32"}},
+                            models_dir=mdir)
+    assert {r["file"]: r for r in provision.audit(models_dir=mdir)
+            }["yolo26x.onnx"]["status"] == "stale"
+    monkeypatch.setattr(provision, "_verify_existing", _explode)   # must not be consulted
+    monkeypatch.setattr(provision, "ultralytics_available", lambda: False)
+    with pytest.raises(RuntimeError):
+        provision.provision(targets=["yolo26x.onnx"], models_dir=mdir,
+                            progress=lambda m: None)
+
+
+def test_adoption_needs_no_build_time_deps(tmp_path, monkeypatch):
+    # Adopting a valid file must not require ultralytics at all — that dep is only
+    # needed to actually build something.
+    mdir = str(tmp_path)
+    _write(mdir, "yolo26x.onnx")
+    monkeypatch.setattr(provision, "ultralytics_available", lambda: False)
+    monkeypatch.setattr(provision, "_verify_existing", lambda path, **kw: (True, "ok"))
+    rows = provision.provision(targets=["yolo26x.onnx"], models_dir=mdir,
+                               progress=lambda m: None)
+    assert {r["file"]: r for r in rows}["yolo26x.onnx"]["status"] == "ok"
+
+
+# ---- #109: local manifest survives a repo-manifest reset ----------------------------
+def _read_repo_manifest(mdir):
+    return provision._read_json(os.path.join(mdir, provision.MANIFEST_NAME))
+
+
+def test_local_manifest_survives_a_repo_manifest_reset(tmp_path):
+    # Simulates `git reset --hard`: the committed manifest is replaced by upstream's
+    # (which only knows the bundled files), but local provenance is untouched.
+    mdir = str(tmp_path)
+    _write(mdir, "yolo26x.onnx")
+    sha = provision._sha256(os.path.join(mdir, "yolo26x.onnx"))
+    provision.save_local_manifest(
+        {"yolo26x.onnx": {"sha256": sha, "kind": "onnx", "precision": "fp32"}},
+        models_dir=mdir)
+    provision.save_manifest({"yolo11n.onnx": {"sha256": "upstream"}}, models_dir=mdir)
+
+    by_file = {r["file"]: r for r in provision.audit(models_dir=mdir)}
+    assert by_file["yolo26x.onnx"]["status"] == "ok"     # still vouched for locally
+
+
+def test_local_manifest_entry_wins_over_the_repo_one(tmp_path):
+    mdir = str(tmp_path)
+    _write(mdir, "yolo26x.onnx")
+    sha = provision._sha256(os.path.join(mdir, "yolo26x.onnx"))
+    provision.save_manifest({"yolo26x.onnx": {"sha256": "stale-upstream-hash"}},
+                            models_dir=mdir)
+    provision.save_local_manifest({"yolo26x.onnx": {"sha256": sha}}, models_dir=mdir)
+    assert provision.load_manifest(models_dir=mdir)["yolo26x.onnx"]["sha256"] == sha
+    assert {r["file"]: r for r in provision.audit(models_dir=mdir)
+            }["yolo26x.onnx"]["status"] == "ok"
+
+
+def test_verify_existing_rejects_a_garbage_file(tmp_path):
+    # Real (unstubbed) verification: a non-model file is rejected rather than
+    # raising out of provision() — the caller rebuilds it.
+    p = tmp_path / "yolo26x.onnx"
+    p.write_bytes(b"definitely not an onnx model")
+    ok, note = provision._verify_existing(str(p), kind="onnx", size=640,
+                                          precision="fp32")
+    assert ok is False and note
+
+
+def test_verify_engine_is_fail_safe(tmp_path):
+    # No tensorrt (or a bad file) must report "can't vouch", never adopt on faith.
+    p = tmp_path / "yolo26x.engine"
+    p.write_bytes(b"not a serialized engine")
+    ok, note = provision._verify_engine(str(p))
+    assert ok is False and note
+
+
+def test_local_manifest_is_gitignored():
+    # The whole point of the split: git must not track this machine's provenance.
+    with open(".gitignore", encoding="utf-8") as fh:
+        assert provision.LOCAL_MANIFEST_NAME in fh.read()
+
+
 # ---- webapp: audit + provision endpoints -------------------------------------------
 def test_api_models_audit_shape():
     body = create_app().test_client().get("/api/models/audit").get_json()
