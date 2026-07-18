@@ -6,17 +6,29 @@
 > for maintenance conventions read [`CLAUDE.md`](CLAUDE.md). This file is the
 > current-state snapshot that ties them together.
 
-_Snapshot date: 2026-07-08 · version **0.50.0** · `main` @ `a714dec`_
+_Snapshot date: 2026-07-17 · version **0.51.0** · `main` @ `afc7746` (PR #114)_
+
+> Also read [`LIVE_TESTING_CONTEXT.md`](LIVE_TESTING_CONTEXT.md) — findings from running
+> the app on 7 real cameras that a static review can't see (live issues 30–34, the current
+> GPU/TensorRT architecture, the motion-verdict weakness, and the resolved NMS question).
 
 ---
 
 ## 1. What it is
 
-A CPU-only "D20 treat roller." A background loop watches one or more cameras for a
-**person** (cats are *tracked* but never trigger a roll), rolls a die on each allowed
-detection, and on a winning roll plays a chime or spoken message on a Google Home
-and/or the local PC speakers — the cue that it's OK to give the cat a treat. A Flask
-single-page GUI configures and runs everything. No Docker, no cloud, no account.
+A "D20 treat roller." A background loop watches one or more cameras for a **person**
+(cats are *tracked* but never trigger a roll), rolls a die on each allowed detection,
+and on a winning roll plays a chime or spoken message on a Google Home and/or the local
+PC speakers — the cue that it's OK to give the cat a treat. A Flask single-page GUI
+configures and runs everything. No Docker, no cloud, no account.
+
+Inference now runs on **GPU** as the primary path — **YOLO 26x** on a **TensorRT** FP16
+engine (golden `(1,84,8400)` no-NMS head; the app strips Ultralytics' metadata header;
+engines are locked to the exact TRT version + GPU). TensorRT made 26x cheap enough
+(~18 ms untiled, ~93 ms 3×3-tiled on the NAS 3070) that the model tier collapsed to one
+model — 11n is no longer used on GPU in any config. onnxruntime-CUDA and `cv2.dnn` CPU
+remain as fallbacks. A moondream VLM validator tier and a motion pre-filter still gate
+detection. See [`CLAUDE.md`](CLAUDE.md) for the full driver/stack specifics.
 
 ---
 
@@ -24,17 +36,22 @@ single-page GUI configures and runs everything. No Docker, no cloud, no account.
 
 | | |
 |---|---|
-| Version | **0.50.0** (`d20app/__init__.py`) |
-| Default branch | `main` @ `a714dec` (all shipped work is merged here) |
-| Integration branch | `Dev` — develop here, PR `Dev → main`, merge only when asked |
-| Tests | **404 passing** across 35 files — `./venv/bin/python -m pytest -q` (~85 s) |
+| Version | **0.51.0** (`d20app/__init__.py`) |
+| Trunk | `main` @ `afc7746` (all shipped work is merged here; PR #114) |
+| Dev branch | `kev` — Kevin develops here, PRs `kev → main` for the maintainer's review |
+| Tests | **~410 passing** across 36 files — `./venv/bin/python -m pytest -q` (~3 min) |
 | Python | 3.11+, virtualenv at `./venv` |
-| Working tree | clean; local `main` and `Dev` synced to origin |
+| Working tree | clean |
 
 **Run / setup**
 - Launch: `./venv/bin/python run.py` → prints `http://<lan-ip>:8080` GUI URL.
 - Setup: `setup.sh` (Linux/apt), `setup.ps1` / `setup.bat` + `start.bat` (Windows).
 - Camera diagnostic: `check_camera.py`.
+
+**Hosts:** the production host is the **NAS** (RTX 3070, headless/compute-only, driver
+610.43.02 / CUDA UMD 13.3, torch 2.12.1+cu130, TensorRT 11.1.0.106) — a pull-only
+consumer that runs the app but never develops on it. Dev + benchmarking happen on a
+separate **RTX 5090** box.
 
 ---
 
@@ -45,7 +62,7 @@ single-page GUI configures and runs everything. No Docker, no cloud, no account.
 | `d20app/webapp.py` | 2157 | Flask JSON API + serves `templates/index.html`, `static/{app.js,style.css}`. Every `/api/*` endpoint. |
 | `d20app/detector.py` | 1416 | Motion pre-filter + person/cat detection; ROI, adjustments, tiling, still-scan/locator path, live frame publishing, `reconfigure()` hot-reload. |
 | `d20app/loop.py` | 935 | Orchestrator: one `PersonDetector` + worker thread per watched camera; shared cooldown gate; per-camera roles (`roll`/`track_cats`); still-scan scheduler; hot-reload cadence. |
-| `d20app/yolo.py` | 695 | YOLO runner abstraction over `cv2.dnn` (CPU) + accelerator backends (onnxruntime-CUDA, OpenVINO, TensorRT); `resolve_variant`, `detect_boxes[_tiled]`, `boost_variant`. |
+| `d20app/yolo.py` | 696 | YOLO runner abstraction. **GPU-primary:** TensorRT engine (the settled path) → onnxruntime-CUDA; `cv2.dnn`/OpenVINO CPU/iGPU as fallbacks. `resolve_variant`, `detect_boxes`, `merge_nms` (per-class), `boost_variant`, engine-metadata strip. |
 | `d20app/trail.py` | 381 | `TrailTracker`: null-frame silhouettes coloured by recency ("cat trail"), path + legend, person-box exclusion. |
 | `d20app/moondream.py` | 379 | Optional VLM (`query`, `detect_regions`); local moondream2 / cloud moondream3; majority voting. |
 | `d20app/escalation.py` | 366 | Pure crop-math + the VLM escalation "ladder" (zoom+YOLO → VLM detect → voted query); CPU velocity predictor. |
@@ -55,23 +72,26 @@ single-page GUI configures and runs everything. No Docker, no cloud, no account.
 | `d20app/cats.py` | 241 | `CatTracker`: file-backed sightings (when/camera/where/source + snapshot); `describe_region()` thirds-grid. |
 | `discovery.py` / `fusion.py` / `activitylog.py` / `dice.py` / `snapshots.py` / `heatmap.py` | | ONVIF+Cast+USB discovery / track fusion / activity log / RollGate + roll logic / snapshot store / sighting heat-map. |
 
-Models (`models/*.onnx`) are **gitignored** — provisioned locally via `provision.py` /
-`models/export_*.py`. A model that can't load raises a clear error (no silent fallback).
+Models (`models/*.onnx`) and TensorRT engines (`models/*.engine`) are **gitignored** —
+provisioned locally via `provision.py` / `models/export_*.py` / `models/export_trt_engine.py`.
+Engines are GPU- and TRT-version-specific, built once per machine. A model that can't
+load raises a clear error (no silent fallback).
 
 ---
 
 ## 4. Conventions (how this repo is maintained)
 
-- **Branching:** never commit straight to `main`. Develop on `Dev`, PR `Dev → main`,
-  merge only when the maintainer asks. (GitHub's merge commits show "Unverified" — expected.)
+- **Branching:** never commit straight to `main`. Kevin develops on `kev` and PRs
+  `kev → main` for the maintainer's review. (GitHub's merge commits show "Unverified" —
+  expected, don't rewrite.)
 - **Per change:** bump `d20app/__init__.py` `__version__`, add a `CHANGELOG.md` entry,
   run the full suite, then commit. Update `README.md` / `ROADMAP.md` / `CLAUDE.md` test
   counts when behaviour or counts change.
 - **Optional deps degrade gracefully** with a clear message (onvif, gTTS, playsound3,
-  moondream, onnxruntime-gpu, openvino) — the core install stays lean.
+  moondream, onnxruntime-gpu, openvino, tensorrt/cuda-python) — the core install stays lean.
 - **Honesty bar:** be explicit about what's verified vs. reviewed-but-not-run-on-hardware
-  (see §7). The maintainer's standard: "better than Kevin's Claude" — say plainly when
-  something is uncertain or untested.
+  (see §7). Say plainly when something is uncertain or untested — verify against the
+  actual current code/runtime before asserting.
 
 ---
 
@@ -103,6 +123,7 @@ From `DESIGN_RATIONALE.md`, the four questions any change must pass:
 | 0.48.0 | #100–#106 | **Config hot-reload** (workers re-read every ~2 s, `reconfigure()`); **motion-off runs the live path** (not the scan path); per-camera **live tiling**; find/GUI fixes. |
 | 0.49.0 | #101 #102 | **Per-mode settings restructure** — still-scan + find each a global settings group (model/tiling/overlap/confidence + "each camera's own"); per-camera scan-model removed; last-scan indicator moved to Cat-cam. |
 | 0.50.0 | #102 §2 | **Uniform GUI save behavior** (every control auto-saves on change); bottom button → "Save all settings" + explained; **cooldown applies live** (`_apply_shared_reload`); honest labels on the two genuinely start-time settings. |
+| 0.51.0 | PR #114 | **Two memory-leak fixes** — capture released on every reconnect (`_release_cap`); MJPEG stream can't spin forever (heartbeat + no-frame timeout). **Runtime-confirmed 2026-07-17** — stable over a 10+ hr live run, all cameras; the reconnect/steady-state leak is resolved. |
 
 ---
 
@@ -111,9 +132,14 @@ From `DESIGN_RATIONALE.md`, the four questions any change must pass:
 **CI-verified:** all detection/crop/mapping/ladder-decision logic, config coercion,
 endpoint behaviour, GUI wiring (headless Playwright render checks + behavioral audits).
 
+**Run live, finding recorded:** track fusion has been exercised on real cameras. It
+*works*, but is **near-useless for this setup** (Kevin's cats score ~0.93 clean and
+rarely need weak-hit recovery) and may be a **net FP source** (issue 31) — the
+`fusion_debug` logging in issue 31 is partly to decide whether to keep fusion at all.
+Not an open verification item; an open *keep-or-cut* question.
+
 **NOT yet run on real hardware** (the "NAS validation queue" in `DESIGN_RATIONALE.md`
 §277, and much of the Windows + local-USB/audio path). Do not claim these work:
-0. Track fusion on real walking-cat footage.
 1. Whether moondream can reason over a temporal frame-mosaic at all.
 2. `detect()` real-world quality + coordinate orientation. (Context: the maintainer's
    benchmarks put VLMs at 37–42% false positives on the decoy set vs tuned yolo26x at
@@ -129,22 +155,44 @@ shipped depends on it.
 
 ---
 
-## 8. Open issues — status
+## 8. Open work — status
 
-**32 issues are "open," but all are already addressed and merged.** The maintainer merges
-the PRs but doesn't close the issues, so the open list overstates outstanding work. The
-newest is **#106** (GUI layout pass #2) — verified complete against the tree, including its
-two "claimed-done-but-didn't-take" items (escalation toggle now in `escalation-card`; camera
-Edit arrow flips ▾/▴). Issues #91–#106 map to versions 0.44.0–0.50.0 above.
+The GitHub #91–#106 set (versions 0.44.0–0.50.0) all shipped; the maintainer merges PRs
+without closing issues, so that "open" list overstates outstanding work. The real open
+work now lives in three docs, **not** as GitHub issues:
 
-There is **no un-actioned issue and no un-answered reporter feedback** as of this snapshot.
-An offer stands with the maintainer to bulk-**close** the shipped issues (`state_reason:
-completed`) so the open list reflects reality — not yet done (closing others' issues is a
-heavier action, left for explicit go-ahead).
+**a) Audit findings — documented, NOT yet fixed** (`docs/reviews/2026-07-09-full-code-audit.md`;
+index in `2026-07-09-audit-fixes-handoff.md`). No CRITICAL issues. Recommended slice, in
+order — each a small one-function fix + test:
 
-**Watch for the recurring pattern:** issue reporter `OmarTheHippo` re-files items "marked
-done that didn't take." Verify fixes against the actual tree before claiming done — don't
-trust a prior comment.
+| # | Sev | Finding | Location |
+|---|-----|---------|----------|
+| H1 | HIGH | `_coerce` raises on blank/`None` numeric → **HTTP 500 on routine auto-saves**. Proven at runtime. | `config.py:284-298` |
+| H2 | HIGH | `last_scan()` iterates `_scan_last` while workers insert keys → **intermittent 500** on the 1.2 s `/api/cats` poll. | `loop.py:375` vs `:743` |
+| H3 | HIGH | One failed request during `init()` **bricks the UI**. | `app.js:1860-1874` |
+| M1 | MED | **Inline URL credentials leak** via `GET /api/config` + `/api/cameras/saved`. | `webapp.py:937,946` |
+| M2–M8 | MED | SSRF via `camera_url`; frontend save races (M3/M4); NMS (M5, see §b); `config.example.yaml` missing 17 fields (M6); list/dict coercion (M7); `stop()` join-timeout (M8). | see audit doc |
+
+Plus 14 LOW items. **Fastest-ROI slice: H1 → H2 → M1.**
+
+**b) The NMS question is RESOLVED** (was the M5-vs-issue-31 contradiction). Confirmed by
+reading the current code: `yolo.py` `merge_nms` (cross-tile) is **per-class** (issue 31
+is right); the class-agnostic NMS M5 flags is a *different* site, `detect_boxes:666`
+(single-pass). Both findings are correct about their own function — they were never the
+same code; `LIVE_TESTING_CONTEXT.md`'s "same code ~line 666" framing was the error. Any
+fix must respect that they pull opposite ways (M5 wants less cross-class suppression;
+issue 31 wants opt-in dog+cat merge before fusion) — don't unify them.
+
+**c) Kevin's live-testing findings 30–34** (`LIVE_TESTING_CONTEXT.md`) — surfaced by
+running on 7 real cameras, invisible to static review: provisioning regenerates valid
+models instead of verify-and-adopt (30); track-fusion class conflation + `fusion_debug`
+(31); find-my-cat leaks settings into the live detector + mis-tags boost (32); "last
+known" box shouldn't fade at 30 min (33); Follow mode + second live feed (34). Plus the
+**motion-verdict weakness**: `contourArea` after a 5×5 MORPH_OPEN under-triggers on
+thin/distant cat motion.
+
+**Watch for the recurring pattern:** items get "marked done that didn't take." Verify
+fixes against the actual tree/runtime before claiming done — don't trust a prior comment.
 
 ---
 
@@ -162,27 +210,38 @@ trust a prior comment.
 
 ## 10. Standing constraints (session/agent operating rules)
 
-- **Model identity** (`claude-opus-4-8`) must **never** appear in commits, PR titles/bodies,
-  code, or any pushed artifact — chat replies only.
-- **Commit trailer** ends with the `Co-Authored-By` + `Claude-Session` lines; **PR bodies**
-  end with the "🤖 Generated with Claude Code" + session-link footer.
-- **GitHub scope:** only `vcons002-ship-it/kevin-s-cat-app`. Use `mcp__github__*` tools
-  (no `gh` CLI). Don't open a PR unless asked; be frugal with issue/PR comments.
-- **Never** disable TLS or unset `HTTPS_PROXY`; outbound HTTPS goes through the agent proxy.
-- **`moondream_api_key`** is never logged or returned by any endpoint.
-- **Push:** `git push -u origin Dev`; retry network failures with backoff (2/4/8/16 s).
+- **Who's who:** Kevin (GitHub `OmarTheHippo`) is the developer and has the **only**
+  live-camera environment — runtime-confirmation tasks are his. The original maintainer
+  now reviews PRs. Verify against the actual current code/runtime before asserting; Kevin
+  reliably catches over-eager hypotheses. Give specific, falsifiable claims.
+- **Branching / push:** develop on `kev`, `git push -u origin kev`, open a PR `kev → main`
+  for review. Don't commit straight to `main`. Don't open a PR unless asked.
+- **Commit trailer** ends with `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`;
+  **PR bodies** end with the "🤖 Generated with [Claude Code](https://claude.com/claude-code)" footer.
+- **GitHub:** repo is `vcons002-ship-it/Kevin-s-Cat-App`; use the `gh` CLI. Be frugal
+  with issue/PR comments.
+- **No hardcoding usage from descriptive labels** (e.g. "workhorse"/"light"/"heavy") —
+  expose neutral, configurable mechanisms. Hardcoding-from-labels has caused real bugs here.
+- **`moondream_api_key`** / `camera_password` are never logged or returned by any endpoint
+  (except the M1 inline-URL leak still to be fixed — §8).
+- **Never disable TLS verification** for outbound HTTPS (moondream cloud, discovery, etc.).
 
 ---
 
 ## 11. Suggested pick-up points
 
-Nothing is blocking. If the maintainer wants more work, natural next steps:
+Nothing is blocking. Natural next steps, roughly in priority order:
 
-1. **Close the shipped issues** on GitHub (quick, pending the maintainer's go-ahead).
-2. **NAS validation pass** — the queue in §7 is the highest-value unknown; a single real
-   frame with a known cat position validates `detect()` orientation first.
-3. **Optional per-mode granularity** — the maintainer was offered per-camera (vs global)
-   still-scan/find settings, and fully-live speaker/keep-warm changes; both deferred as
-   "say the word."
-4. **`caption()` report cards, cat re-ID (5090 benchmark), BLE-collar identity** — noted
+1. ~~Runtime-confirm the 0.51.0 memory-leak fix~~ — **DONE (2026-07-17):** stable over a
+   10+ hr live run on all cameras; the reconnect/steady-state leak is resolved. A separate
+   potential leak under **heavy live reconfiguration** remains unverified — orthogonal and
+   low-priority; file/fix it separately if it's ever reproduced.
+2. **Land the audit slice H1 → H2 → M1** (§8a) — three small one-function fixes + tests,
+   overlaps Kevin's save-coherence observations.
+3. **Kevin's live findings 30–34** and the motion-verdict weakness (§8c) — pick from
+   `LIVE_TESTING_CONTEXT.md`. Provisioning verify-and-adopt (30) and the find-my-cat state
+   leak (32) are the highest-value.
+4. **NAS validation pass** — the VLM/trail/co-residency queue in §7 is the remaining
+   hardware unknown (the GPU YOLO path itself is now live-established).
+5. **`caption()` report cards, cat re-ID (5090 benchmark), BLE-collar identity** — noted
    future ideas in `ROADMAP.md`, none committed.

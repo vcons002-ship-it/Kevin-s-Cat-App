@@ -167,6 +167,7 @@ class DetectionLoop:
         self._viewing: dict[str, float] = {}            # name -> deadline; the GUI is streaming this camera
         self._active_cams: set[str] | None = None       # round-robin: which cameras detect now (None = all)
         self._scan_last: dict[str, dict] = {}           # name -> {ts, found}: last still-scan (#94)
+        self._scan_lock = threading.Lock()              # guards _scan_last in-place writes (H2)
 
     def _caster_for(self, cfg) -> Caster:
         """A single long-lived Caster so speaker connections stay open."""
@@ -372,7 +373,13 @@ class DetectionLoop:
         glanceable "still scan: Ns ago — cat found / no cat" for the Cat-cam
         section. None if no scan has run this session."""
         best = None
-        for name, s in self._scan_last.items():
+        # Snapshot under the lock: a worker thread inserts keys in place at
+        # ``_scan_last[name] = ...`` (H2), so iterating the live dict here can
+        # raise "dictionary changed size during iteration" → a 500 on the 1.2 s
+        # /api/cats poll.
+        with self._scan_lock:
+            items = list(self._scan_last.items())
+        for name, s in items:
             if best is None or s["ts"] > best[1]["ts"]:
                 best = (name, s)
         if best is None:
@@ -740,8 +747,9 @@ class DetectionLoop:
                 if force_scan and not outcome.motion:
                     streak = 0
                     cat = _locator_hit(detector, outcome) if track_cats else None
-                    self._scan_last[name] = {"ts": time.time(),   # glanceable (#94)
-                                             "found": cat is not None}
+                    with self._scan_lock:                         # H2: guard in-place insert
+                        self._scan_last[name] = {"ts": time.time(),   # glanceable (#94)
+                                                 "found": cat is not None}
                     if cat is not None:
                         if not cat_seen_still:
                             label, score, box = cat

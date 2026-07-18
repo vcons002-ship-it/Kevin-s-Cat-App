@@ -20,6 +20,19 @@ body {
   line-height: 1.45;
 }
 main { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
+/* Startup-failure banner (H3): a failed first load shows this instead of a blank
+   UI, with a Retry that re-runs the load. Sticky at the top so it's unmissable. */
+.init-error {
+  display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center;
+  justify-content: center; text-align: center;
+  position: sticky; top: 0; z-index: 100;
+  background: var(--stop); color: #fff; padding: 10px 14px; font-size: 0.9rem;
+}
+.init-error[hidden] { display: none; }
+.init-error button {
+  background: #fff; color: var(--stop); border: 0; border-radius: 6px;
+  padding: 4px 14px; font-weight: 600; cursor: pointer;
+}
 /* Links: explicit colours for the dark theme (browser defaults are bright blue /
    unreadable purple-when-visited against the dark-blue background). #36 */
 a { color: var(--link); text-decoration: none; }

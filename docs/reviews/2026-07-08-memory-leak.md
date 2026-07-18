@@ -174,6 +174,11 @@ likely cause of the process OOM.
 
 ## How to confirm which leak (runtime observation)
 
+> **Outcome (2026-07-17):** confirmed on the real cameras — the 0.51.0 fixes held over a
+> **10+ hour live run on all cameras; the reconnect / steady-state leak is resolved.** A
+> separate potential leak under heavy live reconfiguration (rapid hot-reload churn) remains
+> unverified and low-priority. See `docs/reviews/2026-07-09-audit-fixes-handoff.md`.
+
 The two findings are distinguishable by simple runtime instrumentation:
 
 - **Finding 1 (native / FFmpeg):** crashes even with the browser live feed

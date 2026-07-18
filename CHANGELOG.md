@@ -11,6 +11,74 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.4] — 2026-07-17
+
+### Fixed
+- **A failed first load could permanently brick the UI** (audit
+  `docs/reviews/2026-07-09-full-code-audit.md`, Finding H3). `api()` didn't wrap
+  `fetch` in try/catch and `init()` had no `.catch`, so a single network blip on
+  the first `/api/models` or `/api/config` rejected the promise and aborted
+  `init()` **before any `setInterval` registered** — no polling, no live feed,
+  blank/partial UI until a hard reload. Defense in depth: `api()` now returns a
+  handled `{ok:false, …}` shape instead of rejecting on a network error; the
+  recurring polls moved into `startPolling()`, which `init()` calls
+  unconditionally after its try/catch so they always run and recover the UI once
+  the backend is reachable; and a genuine outage now shows a sticky **Retry**
+  banner (`loadConfig()` reports reachability, and Retry re-runs only the data
+  load — no re-wiring, no stacked pollers). Covered by source-level guards in
+  `tests/test_frontend_init_resilience.py` (no JS runtime in the suite);
+  behaviour verified in a browser (outage → visible retry → recovery).
+
+## [0.51.3] — 2026-07-17
+
+### Fixed
+- **Inline URL credentials leaked in cleartext** via `GET /api/config` and
+  `GET /api/cameras/saved` (audit `docs/reviews/2026-07-09-full-code-audit.md`,
+  Finding M1). Both responses masked only the dedicated `*_password` fields but
+  returned the stream URL verbatim, so credentials pasted inline
+  (`rtsp://user:pass@host` — a common RTSP form the app itself builds) were sent
+  in cleartext to any unauthenticated LAN device, violating the "mask
+  credentials everywhere" invariant. Both response builders now run the URL
+  through the existing `mask_credentials` helper (`rtsp://user:pass@host` →
+  `rtsp://user:***@host`). To stop that masked value from being written back over
+  the real credential on a routine re-save, a new `_unmask_url` guard keeps the
+  stored URL when the client echoes back an unedited masked URL (mirroring the
+  blank-password-on-resave guards), wired into both `POST /api/config` and
+  `POST /api/cameras/saved`. Covered by new tests in
+  `tests/test_webapp_cameras.py`.
+
+## [0.51.2] — 2026-07-17
+
+### Fixed
+- **Intermittent HTTP 500 on the `/api/cats` poll** (audit
+  `docs/reviews/2026-07-09-full-code-audit.md`, Finding H2). `DetectionLoop.last_scan()`
+  (the web thread, hit every 1.2 s by the GUI) iterated `_scan_last` while a
+  detection worker thread inserts keys in place — a concurrent insert during the
+  `.items()` iteration raised `RuntimeError: dictionary changed size during
+  iteration`, 500ing the poll (most likely in the first scan cycle, worst with
+  several cat-tracking cameras). Added a dedicated `_scan_lock`: `last_scan()`
+  now snapshots under it (`list(...items())`) and the worker's in-place write is
+  guarded by it. The detection loop itself was unaffected. Covered by a new
+  concurrency regression test in `tests/test_still_scan_model.py` (verified to
+  reproduce the race before the fix).
+
+## [0.51.1] — 2026-07-17
+
+### Fixed
+- **HTTP 500 on routine config saves** (audit `docs/reviews/2026-07-09-full-code-audit.md`,
+  Finding H1). Since 0.50.0 every GUI control auto-saves on `change`, and
+  `POST /api/config` feeds the raw JSON straight into `config.update()`.
+  `_coerce` ran `int(float(raw))` / `float(raw)` with no guard, so clearing any
+  numeric input (sending `""`) — or a client sending `null` — raised inside the
+  coercion loop and 500'd the whole save (`config.yaml` was left untouched, so
+  not a permanent brick, but an unhandled error on a normal action). `_coerce`
+  now treats a blank/`null`/unparseable numeric as "keep this field's current
+  saved value" (falling back to the dataclass default when there's no prior
+  value), so it can no longer raise and a stray blank auto-save can't clobber a
+  real setting (mitigates the H1×M3 interaction). Type is still taken from the
+  dataclass default. Covered by new tests in
+  `tests/test_config_and_preview.py`.
+
 ## [0.51.0] — 2026-07-09
 
 ### Fixed

@@ -37,7 +37,7 @@ from . import discovery
 from . import escalation
 from . import moondream as vlm
 from .cats import box_in_exit_zone, zone_for
-from .detector import PersonDetector, grab_frame_jpeg, sample_video_frames
+from .detector import PersonDetector, grab_frame_jpeg, mask_credentials, sample_video_frames
 from .loop import DetectionLoop, _camera_source
 
 ALLOWED_SOUND_EXT = {".wav", ".mp3", ".ogg", ".m4a", ".aac"}
@@ -922,12 +922,29 @@ def _run_vlm_items(items: list, model: str, batch_id=None, mode="local", api_key
     return verdicts, skipped, cancelled
 
 
+def _unmask_url(incoming: str, stored: str) -> str:
+    """Keep ``stored`` when ``incoming`` is just its masked echo (the GUI sending
+    back an unedited masked URL), else take ``incoming`` as a genuine edit.
+
+    The GET responses mask a URL's inline password (``rtsp://user:pass@host`` →
+    ``rtsp://user:***@host``, M1). Without this guard a routine re-save would
+    persist that ``***`` mask over the real credential — the same trap the
+    blank-password guards avoid for the dedicated password field.
+    """
+    incoming = incoming or ""
+    stored = stored or ""
+    if stored and incoming == mask_credentials(stored) and incoming != stored:
+        return stored
+    return incoming
+
+
 def _mask_cameras(cameras, cfg=None) -> list:
     """Saved cameras with full per-camera settings, raw passwords stripped.
 
     Each entry is coerced to a complete camera dict (missing settings filled from
     the global defaults) so the GUI editor always has every field; the password is
-    replaced by a ``has_password`` flag.
+    replaced by a ``has_password`` flag, and any inline URL credential is masked
+    (M1: ``rtsp://user:pass@host`` must not leak via GET /api/cameras/saved).
     """
     out = []
     for c in cameras or []:
@@ -936,6 +953,7 @@ def _mask_cameras(cameras, cfg=None) -> list:
         full = config_mod.coerce_camera(c, cfg)
         full.pop("password", None)
         full["has_password"] = bool(c.get("password"))
+        full["url"] = mask_credentials(str(full.get("url") or ""))
         out.append(full)
     return out
 
@@ -944,6 +962,8 @@ def _public_config(cfg) -> dict:
     """Config as a browser-safe dict: strip passwords, expand the camera list."""
     d = cfg.asdict()
     d.pop("camera_password", None)
+    # Mask an inline URL credential in the legacy single-camera URL too (M1).
+    d["camera_url"] = mask_credentials(str(d.get("camera_url") or ""))
     # The Moondream API key is a secret: never send it to the browser — expose only
     # whether one is set (the GUI shows "key set" / a paste field accordingly). #59
     d.pop("moondream_api_key", None)
@@ -1208,6 +1228,11 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         # Don't overwrite a stored password with an empty form field.
         if not values.get("camera_password"):
             values.pop("camera_password", None)
+        # GET masks an inline URL credential; don't let its masked echo overwrite
+        # the real stored URL on a routine save (M1).
+        if "camera_url" in values:
+            values["camera_url"] = _unmask_url(values.get("camera_url"),
+                                               config_mod.load().camera_url)
         # Same for the Moondream API key: a blank field on save keeps the stored key
         # (the GUI only sends it when the user actually types a new one). #59
         if not (values.get("moondream_api_key") or "").strip():
@@ -1234,6 +1259,10 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         cfg = config_mod.load()
         cams = [c for c in (cfg.cameras or []) if isinstance(c, dict)]
         existing = next((c for c in cams if c.get("name") == name), None)
+        # GET masks an inline URL credential; if the client echoed that masked URL
+        # back unchanged, keep the stored one instead of persisting the mask (M1).
+        if existing is not None:
+            url = _unmask_url(url, existing.get("url", ""))
         # Start from the existing entry (so unspecified settings persist), overlay
         # the incoming fields, then coerce to a complete per-camera dict.
         merged = dict(existing or {})
