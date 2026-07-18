@@ -11,6 +11,24 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.3] — 2026-07-17
+
+### Fixed
+- **Inline URL credentials leaked in cleartext** via `GET /api/config` and
+  `GET /api/cameras/saved` (audit `docs/reviews/2026-07-09-full-code-audit.md`,
+  Finding M1). Both responses masked only the dedicated `*_password` fields but
+  returned the stream URL verbatim, so credentials pasted inline
+  (`rtsp://user:pass@host` — a common RTSP form the app itself builds) were sent
+  in cleartext to any unauthenticated LAN device, violating the "mask
+  credentials everywhere" invariant. Both response builders now run the URL
+  through the existing `mask_credentials` helper (`rtsp://user:pass@host` →
+  `rtsp://user:***@host`). To stop that masked value from being written back over
+  the real credential on a routine re-save, a new `_unmask_url` guard keeps the
+  stored URL when the client echoes back an unedited masked URL (mirroring the
+  blank-password-on-resave guards), wired into both `POST /api/config` and
+  `POST /api/cameras/saved`. Covered by new tests in
+  `tests/test_webapp_cameras.py`.
+
 ## [0.51.2] — 2026-07-17
 
 ### Fixed
