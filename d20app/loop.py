@@ -9,7 +9,9 @@ state, last roll, last treat) back to the GUI.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -40,6 +42,14 @@ _CAT_BOOST_SECONDS = 20.0
 # How long a camera stays pinned-active after the GUI last fetched a frame of it, so a
 # camera you're watching never sleeps under round-robin (refreshed each streamed frame).
 _VIEW_TTL = 8.0
+
+# Opt-in fusion diagnostics (#110): one JSON record per fusion decision, written
+# only while `fusion_debug` is on. Kept OUT of the activity feed on purpose — it's
+# for analysing behaviour in aggregate, not for the user to watch.
+FUSION_EVENTS_PATH = os.environ.get(
+    "D20_FUSION_EVENTS",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "fusion_events.jsonl"))
 
 
 def _parse_hhmm(value: str):
@@ -361,6 +371,25 @@ class DetectionLoop:
             image=snap)
         return sighting
 
+    def _drain_fusion_events(self, name: str, detector) -> None:
+        """Append the fuser's diagnostic records to ``fusion_events.jsonl`` (#110).
+
+        A no-op unless ``fusion_debug`` is on (the fuser collects nothing
+        otherwise), and deliberately **separate from the activity feed** so
+        troubleshooting never clutters what the user watches. One JSON object per
+        line so a run can be analysed in aggregate.
+        """
+        take = getattr(detector, "take_fusion_events", None)   # absent on test stubs
+        events = take() if take else []
+        if not events:
+            return
+        try:
+            with open(FUSION_EVENTS_PATH, "a", encoding="utf-8") as fh:
+                for ev in events:
+                    fh.write(json.dumps({"camera": name, **ev}) + "\n")
+        except OSError:     # diagnostics must never break the detection loop
+            log.exception("could not write %s", FUSION_EVENTS_PATH)
+
     def boost_detection(self, name: str, seconds: float | None = None,
                         box=None) -> bool:
         """Run the net continuously on ``name`` for ``seconds`` (default
@@ -506,6 +535,7 @@ class DetectionLoop:
                 live_tiling=spec.get("live_tiling", "off"),
                 live_tile_overlap=spec.get("live_tile_overlap", 0.2),
                 track_fusion=spec["track_fusion"],
+                fusion_debug=cfg.fusion_debug,   # global troubleshooting flag (#110)
                 cat_confidence=spec["cat_confidence"],
                 locator_classes=spec["locator_classes"],
             )
@@ -758,6 +788,7 @@ class DetectionLoop:
                 # and MOVED was confirmed as one cat — record it like any sighting.
                 if track_cats:
                     self._record_fused(name, cam_label, spec, detector)
+                self._drain_fusion_events(name, detector)   # no-op unless fusion_debug
 
                 # Periodic still-cat scan with no real motion: the net ran anyway and
                 # may have found a sleeping cat. Record it on the rising edge (so a

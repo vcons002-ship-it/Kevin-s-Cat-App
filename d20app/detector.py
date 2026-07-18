@@ -313,7 +313,8 @@ class PersonDetector:
                  cat_scan_model: str = "", cat_scan_confidence: float = 0.0,
                  cat_confidence: float = 0.5,
                  live_tiling: str = "off", live_tile_overlap: float = 0.2,
-                 locator_classes=None, track_fusion: bool = True) -> None:
+                 locator_classes=None, track_fusion: bool = True,
+                 fusion_debug: bool = False) -> None:
         self.source = source
         self.confidence = confidence
         # The locator ("the cat") path: which classes count, and the confidence they
@@ -341,6 +342,7 @@ class PersonDetector:
         self.live_tiling = live_tiling or "off"
         self.live_tile_overlap = float(live_tile_overlap)
         self.track_fusion = bool(track_fusion)
+        self.fusion_debug = bool(fusion_debug)   # opt-in fusion diagnostics (#110)
         self._locator_runner = None     # lazily-loaded larger-input YOLO net (Option A)
         self._locator_size = None
         self._locator_model = None
@@ -490,7 +492,8 @@ class PersonDetector:
         "confidence", "cat_confidence", "label_floor", "cat_scan_tiling",
         "cat_scan_tile_overlap", "cat_scan_frames", "cat_scan_model",
         "cat_scan_confidence", "live_tiling", "live_tile_overlap",
-        "track_fusion", "gamma", "brightness", "contrast", "saturation",
+        "track_fusion", "fusion_debug", "gamma", "brightness", "contrast",
+        "saturation",
     )
 
     def reconfigure(self, spec: dict) -> bool:
@@ -506,7 +509,7 @@ class PersonDetector:
             "confidence": float, "cat_confidence": float, "label_floor": float,
             "cat_scan_tile_overlap": float, "live_tile_overlap": float,
             "cat_scan_confidence": float,
-            "cat_scan_frames": int, "track_fusion": bool,
+            "cat_scan_frames": int, "track_fusion": bool, "fusion_debug": bool,
             "gamma": float, "brightness": int, "contrast": float,
             "saturation": float, "cat_scan_tiling": str, "live_tiling": str,
             "cat_scan_model": lambda v: (v or "").strip(),
@@ -816,6 +819,30 @@ class PersonDetector:
             return self.cat_confidence
         return self.label_floor
 
+    def _merge_locator_aliases(self, boxes: list, floor: float) -> list:
+        """Collapse dog→cat when "count dog as the cat" is on (#110).
+
+        In a no-dog household the toggle says a dog detection IS the cat — YOLO's
+        cat/dog boundary is unreliable and frequently labels the cat a dog. But
+        per-class NMS (``yolo.merge_nms``) groups by label, so a strong ``dog``
+        box and the weak ``cat`` halo on the **same animal** both survive as two
+        detections. Relabelling dog→cat and re-running per-class NMS merges them
+        into one box, and NMS keeps the higher score — so the strong reading wins
+        and confirms as a plain strong cat.
+
+        Toggle OFF (a real-dog household) is left untouched: there, dog and cat are
+        genuinely different animals and must stay separate.
+        """
+        from . import yolo
+
+        lc = self.locator_classes
+        if "dog" not in lc or "cat" not in lc:
+            return boxes
+        if not any(lab == "dog" for lab, _s, _b in boxes):
+            return boxes
+        relabelled = [("cat" if lab == "dog" else lab, s, b) for lab, s, b in boxes]
+        return yolo.merge_nms(relabelled, floor)
+
     def _is_locator_hit(self, label: str, score: float, threshold=None) -> bool:
         """True if ``label`` counts as 'the cat' for the locator at its threshold.
         ``threshold`` overrides ``cat_confidence`` (the still-scan uses its own,
@@ -914,6 +941,12 @@ class PersonDetector:
         box, label, score, ts = rec
         return {"box": box, "label": label, "score": score,
                 "age_s": max(0.0, time.time() - ts)}
+
+    def take_fusion_events(self) -> list:
+        """Drain the fuser's diagnostic records (#110). Empty unless
+        ``fusion_debug`` is on; the loop writes them to ``fusion_events.jsonl``."""
+        take = getattr(self._fusion, "take_events", None)
+        return take() if take else []
 
     def clear_confirmed(self) -> None:
         """Drop the live 'last confirmed cat' track so the last-known-location
@@ -1368,21 +1401,29 @@ class PersonDetector:
         # by a click (#111) — stay on the camera's own live settings.
         fused = None
         if scan:
-            boxes = self._detect_locator(frame, floor)
+            boxes = self._merge_locator_aliases(
+                self._detect_locator(frame, floor), floor)
         elif self.track_fusion:
             # Temporal fusion (0.37.0): decode down to the weak floor in the SAME
             # forward pass (the floor is a post-filter, not extra inference). Weak
             # locator hits feed the fuser only — everything the rest of the app
             # sees (boxes, live feed, labels) is still thresholded at `floor`, so
             # nothing weak leaks out except as a fused, movement-checked confirm.
-            raw_boxes = self._detect_boxes(frame, min(floor, self._FUSE_FLOOR))
+            fuse_floor = min(floor, self._FUSE_FLOOR)
+            raw_boxes = self._merge_locator_aliases(
+                self._detect_boxes(frame, fuse_floor), fuse_floor)
             boxes = [b for b in raw_boxes if b[1] >= floor]
             self._fusion.frame_size = (cropped.shape[1], cropped.shape[0])
+            # A track holding a box this strong was already confirmed by the normal
+            # path — fusion stands down rather than re-reporting it as weak (#110).
+            self._fusion.strong_at = loc_thr
+            self._fusion.debug = self.fusion_debug
             fused = self._fusion.update(None, [
-                (s, b) for lab, s, b in raw_boxes
+                (s, b, lab) for lab, s, b in raw_boxes      # label kept for diagnostics
                 if lab in self.locator_classes and s >= self._FUSE_FLOOR])
         else:
-            boxes = self._detect_boxes(frame, floor)
+            boxes = self._merge_locator_aliases(
+                self._detect_boxes(frame, floor), floor)
         if forced:
             hint = self.boost_hint()
             if hint is not None:

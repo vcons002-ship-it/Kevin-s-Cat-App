@@ -11,6 +11,44 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.8] — 2026-07-18
+
+### Fixed
+- **Overlapping dog + cat boxes merge into one strong cat when "count dog as the
+  cat" is on** (#110). Per-class NMS (`yolo.merge_nms`) groups by label, so a
+  strong `dog` box and the weak `cat` halo on the *same animal* both survived as
+  two detections — and the halo fed the fuser separately. With the toggle on,
+  dog is now relabelled to cat before a second per-class NMS pass, which collapses
+  them into a single box keeping the higher score, so the strong reading wins and
+  the sighting is labelled `cat`. Toggle **off** (a real-dog household) is
+  untouched: dog and cat stay separate, and `merge_nms` keeps its per-class
+  nature — this is a targeted transform, not the (separate, opposite-direction)
+  audit M5 change at `detect_boxes`.
+- **Track fusion no longer takes credit for detections the normal path already
+  confirmed** (#110). `fusion.py`'s own rules said strong boxes "confirm on their
+  own through the normal path", but nothing enforced it: every locator box above
+  the weak floor fed the fuser with no upper bound, so an obviously-strong cat
+  accumulated into a "confirmed by track fusion (N **weak** hits)" line. A track
+  containing a box ≥ `cat_confidence` now defers (new `strong_at`). Strong boxes
+  still *extend* tracks, so track continuity is unchanged. This also explains
+  fusion confirms seen on frames where cats scored well above the bar.
+
+### Added
+- **`fusion_debug`** (default **off**, #110) — troubleshooting-only diagnostics
+  for deciding whether fusion earns its keep. When on, each fusion decision
+  (`confirmed` / `deferred_strong_box` / `below_min_travel`) writes one JSON
+  record to a gitignored **`fusion_events.jsonl`**: per-hit score + **class
+  label** + box, net travel vs the min-travel threshold, whether a strong box
+  coexisted, plus track id, hit count and span. Fusion hits now carry their label
+  (they were fed label-stripped, so a weak *dog* couldn't be told from a weak
+  *cat*). Deliberately **separate from the activity feed** — with the flag off,
+  fusion adds nothing new to what the user watches.
+
+**Note:** not yet runtime-verified on real cameras — whether this removes the
+spurious "weak hits" lines in practice is Kevin's to confirm. Running a session
+with `fusion_debug: true` is the intended way to answer the open question of
+whether track fusion is a net win for this setup.
+
 ## [0.51.7] — 2026-07-18
 
 ### Fixed

@@ -28,6 +28,63 @@ def test_moving_weak_track_confirms_exactly_once():
     assert out["box"][0] >= 150                  # the LATEST position, not the first
 
 
+def test_track_with_a_strong_box_does_not_fuse(monkeypatch):
+    # #110: a box that already cleared the normal single-frame bar was confirmed by
+    # the normal path — fusion must stand down instead of re-reporting it as
+    # "N weak hits" (which is what made a real weak recovery indistinguishable from
+    # a redundant misfire).
+    f = TrackFuser(frame_size=(640, 360), strong_at=0.5)
+    walk = _walk(5)
+    walk[2] = [(0.82, walk[2][0][1])]            # one frame is strongly detected
+    assert [c for c in (f.update(1000.0 + i, h) for i, h in enumerate(walk)) if c] == []
+
+    # …and with no strong box in the track, the weak recovery still confirms.
+    f2 = TrackFuser(frame_size=(640, 360), strong_at=0.5)
+    assert [c for c in (f2.update(1000.0 + i, h) for i, h in enumerate(_walk(5))) if c]
+
+
+def test_strong_guard_off_by_default_keeps_old_behaviour():
+    # strong_at=0 (the default) = no guard, so existing callers are unaffected.
+    f = TrackFuser(frame_size=(640, 360))
+    walk = _walk(5)
+    walk[2] = [(0.9, walk[2][0][1])]
+    assert [c for c in (f.update(1000.0 + i, h) for i, h in enumerate(walk)) if c]
+
+
+def test_fusion_debug_records_per_hit_score_label_and_travel():
+    # #110 diagnostics: opt-in, structured, and enough to tell a genuine weak
+    # recovery from a misfire on the halo of an already-strong detection.
+    f = TrackFuser(frame_size=(640, 360), strong_at=0.5, debug=True)
+    walk = [[(0.35, b, "cat")] for hits in _walk(5) for _s, b in hits]
+    for i, h in enumerate(walk):
+        f.update(1000.0 + i, h)
+    events = f.take_events()
+    assert events and f.take_events() == []          # drained
+    ev = next(e for e in events if e["event"] == "confirmed")
+    assert ev["n"] >= 4 and ev["track"]
+    assert ev["strong_box_present"] is False
+    assert ev["travel_px"] >= ev["min_travel_px"]
+    assert all(h["label"] == "cat" for h in ev["hits"])
+    assert all(0.0 <= h["score"] <= 1.0 for h in ev["hits"])
+
+
+def test_fusion_debug_records_a_deferral_with_the_strong_flag():
+    f = TrackFuser(frame_size=(640, 360), strong_at=0.5, debug=True)
+    walk = _walk(5)
+    walk[2] = [(0.82, walk[2][0][1])]
+    for i, h in enumerate(walk):
+        f.update(1000.0 + i, h)
+    ev = next(e for e in f.take_events() if e["event"] == "deferred_strong_box")
+    assert ev["strong_box_present"] is True and ev["score_max"] >= 0.8
+
+
+def test_fusion_debug_off_collects_nothing():
+    f = TrackFuser(frame_size=(640, 360), strong_at=0.5)
+    for i, h in enumerate(_walk(5)):
+        f.update(1000.0 + i, h)
+    assert f.take_events() == []
+
+
 def test_stationary_decoy_never_confirms():
     f = TrackFuser(frame_size=(640, 360))
     box = (200, 100, 260, 160)                   # the cushion: weak hits, zero travel
@@ -100,6 +157,51 @@ def test_detector_fuses_weak_hits_and_filters_them_from_live_boxes():
     assert fused and fused["n"] >= 4
     assert det.take_fused_hit() is None          # claimed exactly once
     assert det._cat_last_seen > 0                # presence updated
+
+
+def _boxes_of(det, frames, hits):
+    """Run one detect pass with `hits` as the net's output; return the kept boxes."""
+    class _Cap:
+        def read(self):
+            return True, frames[-1]
+
+    det._ensure_cap = lambda: _Cap()
+    det._run_net = lambda img, floor, size=None: list(hits)
+    det.read_and_detect(detect=True)                  # motion baseline
+    f = frames[-1].copy()
+    f[200:280, 300:380] = 220
+    frames.append(f)
+    det.read_and_detect(detect=True)
+    return det._last_boxes
+
+
+def test_dog_and_cat_merge_into_one_strong_cat_when_toggle_on():
+    # #110: with "count dog as the cat" on, a strong dog box and the weak cat halo
+    # on the SAME animal are one animal — they must merge into a single strong cat
+    # that confirms through the normal path (not dribble into fusion as weak hits).
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+    det = PersonDetector(source="unused", cat_confidence=0.5,
+                         locator_classes=["cat", "dog"], track_fusion=False)
+    box = (300, 100, 380, 180)
+    boxes = _boxes_of(det, frames, [("dog", 0.85, box), ("cat", 0.30, box)])
+
+    cats = [b for b in boxes if b[0] == "cat"]
+    assert len(cats) == 1 and not [b for b in boxes if b[0] == "dog"]
+    assert cats[0][1] == 0.85                         # the STRONG reading survives
+    assert det.last_confirmed()["label"] == "cat"     # confirmed via the normal path
+
+
+def test_dog_and_cat_stay_separate_when_toggle_off():
+    # A real-dog household: dog and cat are different animals — never merge.
+    frames = [np.full((360, 640, 3), 110, np.uint8)]
+    det = PersonDetector(source="unused", cat_confidence=0.5,
+                         locator_classes=["cat"], track_fusion=False)
+    box = (300, 100, 380, 180)
+    boxes = _boxes_of(det, frames, [("dog", 0.85, box), ("cat", 0.55, box)])
+
+    labels = sorted(b[0] for b in boxes)
+    assert labels == ["cat", "dog"]                   # both kept, unmerged
+    assert det.last_confirmed()["label"] == "cat"     # and the dog is not "the cat"
 
 
 def test_detector_fusion_off_keeps_single_frame_behaviour():

@@ -107,6 +107,7 @@ class Config:
     cat_scan_imgsz: int = 0          # LEGACY, no effect since 0.40.0 (#79): the >640 "locator input" hypothesis was benchmarked and rejected — 960/1280 measured WORSE than 640 (#70); tiling is the resolution lever. Kept so old configs still load; any value falls back to native + tiling.
     cat_scan_frames: int = 3         # still-cat scan only: average this many back-to-back frames before the net (sensor noise drops ~sqrt(N) on a still scene — helps dim/noisy frames; any motion mid-burst falls back to the single frame). 1 = off; capped at 8. The fast treat path never averages.
     track_fusion: bool = True        # temporal score fusion: a string of WEAK cat detections (below cat_confidence) that chain smoothly and actually MOVE across the frame is confirmed as one sighting (source "track") — the recall-raising mirror of confirm_frames. Pure YOLO evidence; the movement requirement is the decoy guard (a cushion never travels). Off = judge every frame alone (pre-0.37.0 behaviour).
+    fusion_debug: bool = False       # troubleshooting only (#110): write one structured record per fusion decision to fusion_events.jsonl — per-hit score/label/box, net travel vs the threshold, and whether a strong box coexisted. OFF by default and adds NOTHING to the activity feed; it exists to tell a genuine weak-cat recovery apart from a redundant misfire.
 
     # --- CPU saving ---
     pause_during_cooldown: bool = True   # skip the neural net while in the between-rolls cooldown (nothing it sees can trigger anyway); resumes just before the window reopens
@@ -173,6 +174,7 @@ _CAMERA_FROM_CFG = {
     "live_tiling": "live_tiling",
     "live_tile_overlap": "live_tile_overlap",
     "track_fusion": "track_fusion",
+    "fusion_debug": "fusion_debug",
     "motion_sensitivity": "motion_sensitivity",
     "motion_min_area_frac": "motion_min_area_frac",
     "motion_diff_threshold": "motion_diff_threshold",

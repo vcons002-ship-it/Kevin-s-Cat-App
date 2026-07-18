@@ -22,6 +22,9 @@ activity.log
 # Cat sightings log (written by the app)
 cats.log
 
+# Opt-in fusion diagnostics (#110), written only while fusion_debug is on
+fusion_events.jsonl
+
 # Diagnostic snapshot from check_camera.py
 snapshot.jpg
 
