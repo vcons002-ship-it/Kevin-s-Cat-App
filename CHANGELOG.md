@@ -11,6 +11,24 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.51.4] — 2026-07-17
+
+### Fixed
+- **A failed first load could permanently brick the UI** (audit
+  `docs/reviews/2026-07-09-full-code-audit.md`, Finding H3). `api()` didn't wrap
+  `fetch` in try/catch and `init()` had no `.catch`, so a single network blip on
+  the first `/api/models` or `/api/config` rejected the promise and aborted
+  `init()` **before any `setInterval` registered** — no polling, no live feed,
+  blank/partial UI until a hard reload. Defense in depth: `api()` now returns a
+  handled `{ok:false, …}` shape instead of rejecting on a network error; the
+  recurring polls moved into `startPolling()`, which `init()` calls
+  unconditionally after its try/catch so they always run and recover the UI once
+  the backend is reachable; and a genuine outage now shows a sticky **Retry**
+  banner (`loadConfig()` reports reachability, and Retry re-runs only the data
+  load — no re-wiring, no stacked pollers). Covered by source-level guards in
+  `tests/test_frontend_init_resilience.py` (no JS runtime in the suite);
+  behaviour verified in a browser (outage → visible retry → recovery).
+
 ## [0.51.3] — 2026-07-17
 
 ### Fixed

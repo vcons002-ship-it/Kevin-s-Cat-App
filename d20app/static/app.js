@@ -2,7 +2,15 @@
 
 const $ = (id) => document.getElementById(id);
 const api = async (path, opts) => {
-  const res = await fetch(path, opts);
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch (_) {
+    // Network error / server unreachable: return a handled shape instead of
+    // rejecting, so a single blip can't abort init() before its pollers are
+    // registered and brick the UI (H3). Callers already handle {ok:false}.
+    return { ok: false, body: null, netError: true };
+  }
   let body = null;
   try { body = await res.json(); } catch (_) { /* no body */ }
   return { ok: res.ok, body };
@@ -508,7 +516,7 @@ function renderWorkflowLine() {
 
 async function loadConfig() {
   const { body: cfg } = await api("/api/config");
-  if (!cfg) return;
+  if (!cfg) return false;   // couldn't reach the app — signal it so init() can show the retry (H3)
   lastCfg = cfg;
   renderWorkflowLine();
   for (const f of FIELDS) {
@@ -555,6 +563,7 @@ async function loadConfig() {
   };
   if (!testTouched) setTestControls(camDefaults);   // seed the test tool from saved settings
   updateOdds();
+  return true;
 }
 
 function gatherConfig() {
@@ -1651,6 +1660,8 @@ async function loadLog() {
 
 // ---- wiring ----------------------------------------------------------------
 function wire() {
+  const retry = $("init-retry");
+  if (retry) retry.onclick = retryInitialLoad;
   $("speaker-refresh").onclick = () => loadSpeakers(true);
   $("speaker-select").onchange = updateSpeakerWarning;
   $("use_speech").onchange = applySpeechVisibility;
@@ -1857,11 +1868,36 @@ async function loadVersion() {
   if (body && body.version) $("app-version").textContent = "v" + body.version;
 }
 
-async function init() {
-  wire();
+function showInitError() {
+  const el = $("init-error");
+  if (el) el.hidden = false;
+}
+function clearInitError() {
+  const el = $("init-error");
+  if (el) el.hidden = true;
+}
+
+// The one-time data load that seeds the whole UI. Kept separate from init() so a
+// failure can be retried without re-wiring handlers or stacking pollers (H3).
+// Returns whether the backend was reachable (the /api/config bootstrap loaded).
+async function loadInitialData() {
   await loadModelOptions();      // before config seeds #t_model and before cameras render (#50)
-  await loadConfig();
+  const reached = await loadConfig();
   await Promise.all([loadSpeakers(false), loadSounds(), loadCamerasList(), loadBenchOptions(), loadVlmStatus()]);
+  return reached;
+}
+
+function applyLoadResult(reached) {
+  if (reached) clearInitError(); else showInitError();
+}
+
+function retryInitialLoad() {
+  loadInitialData().then(applyLoadResult).catch(() => showInitError());
+}
+
+// Start the recurring polls. Runs unconditionally (even if the first load failed),
+// so the UI recovers on its own once the backend is reachable again (H3).
+function startPolling() {
   refreshStatus();
   loadLog();
   loadCats();
@@ -1869,6 +1905,19 @@ async function init() {
   setInterval(() => { refreshStatus(); loadLog(); }, 3000);
   setInterval(loadCats, 1200);
   setInterval(rotateCatFeed, 4000);   // rotate among rooms with a cat when armed
+}
+
+async function init() {
+  wire();
+  try {
+    applyLoadResult(await loadInitialData());
+  } catch (err) {
+    // A failed first load must not brick the UI (H3): show a visible retry and
+    // still start the pollers below, which recover on their own.
+    console.error("initial load failed", err);
+    showInitError();
+  }
+  startPolling();
 }
 
 init();
