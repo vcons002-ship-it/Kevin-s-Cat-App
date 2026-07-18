@@ -568,6 +568,10 @@ async function loadConfig() {
   if ($("find_tiling")) $("find_tiling").innerHTML = optsHTML(TILING_OPTS, cfg.find_tiling || "3x3");
   if ($("find_tile_overlap")) $("find_tile_overlap").value = cfg.find_tile_overlap ?? 0.35;
   if ($("find_confidence")) $("find_confidence").value = cfg.find_confidence ?? 0;
+  // Gear-popup settings (#117).
+  if ($("follow_hold_seconds")) $("follow_hold_seconds").value = cfg.follow_hold_seconds ?? 3.0;
+  if ($("follow_persist_seconds")) $("follow_persist_seconds").value = cfg.follow_persist_seconds ?? 1.0;
+  if ($("fusion_debug")) $("fusion_debug").checked = !!cfg.fusion_debug;
   activeCameras = Array.isArray(cfg.active_cameras) ? cfg.active_cameras.slice() : [];
   // Defaults for a brand-new camera = the current global detection settings.
   camDefaults = {
@@ -613,6 +617,11 @@ function gatherConfig() {
     find_tiling: $("find_tiling").value,
     find_tile_overlap: Number($("find_tile_overlap").value),
     find_confidence: Number($("find_confidence").value),
+    // Per-section gear popups (#117). Both are hot: the follow knobs are re-read
+    // on every feed poll, and fusion_debug rides the running detectors' reload.
+    follow_hold_seconds: Number($("follow_hold_seconds").value),
+    follow_persist_seconds: Number($("follow_persist_seconds").value),
+    fusion_debug: $("fusion_debug").checked,
   };
   return values;
 }
@@ -736,6 +745,45 @@ async function pollFeeds() {
     $("live-camera2").value = secondary.camera;
   }
   updateSecondFeed(secondary);
+}
+
+// ---- per-section gear popups (#117) ----------------------------------------
+// One pattern, reused: a ⚙ in a section header opens that section's settings.
+// Anchored (not modal) so a knob can be twisted while watching the feed behind it.
+function closeGearPopups(keep) {
+  for (const pop of document.querySelectorAll(".gear-popup")) {
+    if (pop !== keep) pop.classList.add("hidden");
+  }
+  for (const btn of document.querySelectorAll(".gear")) {
+    btn.setAttribute("aria-expanded",
+      String(!!keep && btn.dataset.popup === keep.id));
+  }
+}
+
+function wireGearPopups() {
+  for (const btn of document.querySelectorAll(".gear")) {
+    btn.setAttribute("aria-expanded", "false");
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const pop = $(btn.dataset.popup);
+      if (!pop) return;
+      const opening = pop.classList.contains("hidden");
+      closeGearPopups(opening ? pop : null);   // only one open at a time
+      pop.classList.toggle("hidden", !opening);
+    };
+  }
+  for (const btn of document.querySelectorAll(".gear-close")) {
+    btn.onclick = () => closeGearPopups(null);
+  }
+  // Dismissible: click anywhere outside, or Escape.
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".gear-popup") && !e.target.closest(".gear")) {
+      closeGearPopups(null);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeGearPopups(null);
+  });
 }
 
 const camNames = () =>
@@ -1915,10 +1963,13 @@ function wire() {
   // Global still-scan + find settings (#101/#102) auto-save on change.
   for (const id of ["cat_scan_model", "scan_tiling", "scan_tile_overlap",
                     "scan_frames", "scan_confidence", "find_scan", "find_model",
-                    "find_tiling", "find_tile_overlap", "find_confidence"]) {
+                    "find_tiling", "find_tile_overlap", "find_confidence",
+                    // gear-popup settings (#117) — same auto-save, so they apply live
+                    "follow_hold_seconds", "follow_persist_seconds", "fusion_debug"]) {
     const el = $(id);
     if (el) el.onchange = saveConfig;
   }
+  wireGearPopups();
   $("cats-clear").onclick = async () => { await api("/api/cats/clear", { method: "POST" }); loadCats(); };
 
   // Test-detection tool

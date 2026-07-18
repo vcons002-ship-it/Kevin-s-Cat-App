@@ -11,6 +11,32 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.53.0] — 2026-07-18
+
+### Added
+- **Per-section ⚙ settings popups** (#117) — a section's tunables now live behind a
+  gear in its header instead of sitting in the persistent scroll, so the main view
+  stays about watching. Anchored under the header rather than modal (twist a knob
+  and watch the feed behind it), one open at a time, dismissed by ✕, clicking
+  outside, or Escape. This establishes the per-section pattern; more gears follow.
+  - **Live detection** → the follow-mode knobs `follow_hold_seconds` ("Hold") and
+    `follow_persist_seconds` ("Switch after"), previously config-file only. They
+    ride the existing auto-save path and are re-read on every feed poll, so a
+    change applies to the running app immediately — no restart.
+  - **Activity log** → the `fusion_debug` toggle, placed where its output is
+    reviewed. Also hot: it rides the running detectors' live reload.
+
+### Changed
+- **Cat-cam settings moved into its gear popup** (#117) — the still-scan settings,
+  find-my-cat settings and the "check for a still cat" interval are out of the
+  inline collapsibles, which reclaims a chunk of the Cat-cam section. This is a
+  **relocation only**: every control keeps its id, wiring, bound setting and
+  hot-reload; nothing was rebuilt or re-scoped.
+
+**Note:** rapid successive changes can still race — every control posts the whole
+form with no in-flight guard (audit M4), so two quick edits can silently revert one
+of them. Pre-existing, but these popups make it easier to hit; fixed separately.
+
 ## [0.52.1] — 2026-07-18
 
 ### Fixed

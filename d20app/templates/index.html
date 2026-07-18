@@ -30,7 +30,60 @@
 
     <!-- ===== Cat cam: the star of the show ===== -->
     <section class="card cats-card" id="cats-card">
-      <h2>🐱 Cat cam</h2>
+      <div class="row log-head gear-anchor">
+        <h2>🐱 Cat cam</h2>
+        <button class="gear" type="button" data-popup="catcam-settings"
+                title="Cat-cam settings — the periodic still-cat check, and what the still-scan and “Show me the cat!” passes run"
+                aria-label="Cat cam settings">⚙</button>
+        <div id="catcam-settings" class="gear-popup hidden" role="dialog" aria-label="Cat cam settings">
+          <div class="gear-popup-head">
+            <strong>Cat-cam settings</strong>
+            <button class="gear-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <label class="inline" title="A sleeping cat doesn't move, so it never trips the motion filter. Periodically run the net anyway to catch a still cat. More often = a still cat shows up sooner, but uses more CPU.">
+            Check for a still cat:
+            <select id="cat_scan_interval">
+              <option value="0">Always (most CPU)</option>
+              <option value="5">Every 5s</option>
+              <option value="15">Every 15s</option>
+              <option value="30">Every 30s</option>
+              <option value="60">Every 1 min</option>
+              <option value="120">Every 2 min</option>
+              <option value="300">Every 5 min</option>
+              <option value="-1">Off (motion only)</option>
+            </select>
+          </label>
+          <h4>Still-scan <span class="muted">— what the periodic still-cat check runs (all cameras)</span></h4>
+          <div class="grid">
+            <label title="the model the still scan runs — the scan gets ONE hard static look (a sleeping cat in a dark corner), so it wants the heavy model even when live detection runs a fast one (#94). 'each camera's own' = use that camera's live model.">Scan model
+              <select id="cat_scan_model"></select></label>
+            <label title="tile the frame so a small/distant cat fills more of the net (benchmark winner: 3×3)">Tiling
+              <select id="scan_tiling"></select></label>
+            <label title="how much neighbouring tiles overlap (benchmark: 0.35 for 3×3, 0.20 for 2×2)">Tile overlap
+              <input type="number" id="scan_tile_overlap" step="0.05" min="0" max="0.5" /></label>
+            <label title="average this many back-to-back frames before the net — cuts sensor noise on a still scene (helps dim rooms). 1 = off">Scan frames
+              <input type="number" id="scan_frames" min="1" max="8" /></label>
+            <label title="cat confidence for the scan; 0 = use each camera's own cat confidence">Scan confidence
+              <input type="number" id="scan_confidence" step="0.05" min="0" max="1" /></label>
+          </div>
+          <h4>Find my cat <span class="muted">— what “Show me the cat!” runs when it actively scans</span></h4>
+          <div class="grid">
+            <label class="checkbox" title="on click, run a real detection pass across the watched cameras — finds a STILL cat in a motionless room instead of jumping to the last sighting (#92)">
+              <input type="checkbox" id="find_scan"/> Active scan on click
+            </label>
+            <label title="the model the find pass runs — the heavy one is worth it here. 'each camera's own' = that camera's live model.">Find model
+              <select id="find_model"></select></label>
+            <label title="tiling for the find pass (a thorough look for a still cat)">Find tiling
+              <select id="find_tiling"></select></label>
+            <label title="overlap for find tiling">Find overlap
+              <input type="number" id="find_tile_overlap" step="0.05" min="0" max="0.5" /></label>
+            <label title="cat confidence for find; 0 = each camera's own">Find confidence
+              <input type="number" id="find_confidence" step="0.05" min="0" max="1" /></label>
+          </div>
+          <p class="hint">With active scan off, the button jumps to where a cat is
+            (or was last) seen — a still cat in a motionless room won't be found.</p>
+        </div>
+      </div>
       <button id="show-cat" class="show-cat" type="button">
         <span class="show-cat-emoji" aria-hidden="true">🐱</span>
         <span id="show-cat-label">Show me the cat!</span>
@@ -38,55 +91,9 @@
       <div id="find-feedback" class="muted" style="text-align:center;font-size:13px;min-height:1.1em"></div>
       <div id="cat-last" class="cat-last"><p class="muted">No cats seen yet.</p></div>
       <div class="cats-foot">
-        <label class="inline" title="A sleeping cat doesn't move, so it never trips the motion filter. Periodically run the net anyway to catch a still cat. More often = a still cat shows up sooner, but uses more CPU.">
-          Check for a still cat:
-          <select id="cat_scan_interval">
-            <option value="0">Always (most CPU)</option>
-            <option value="5">Every 5s</option>
-            <option value="15">Every 15s</option>
-            <option value="30">Every 30s</option>
-            <option value="60">Every 1 min</option>
-            <option value="120">Every 2 min</option>
-            <option value="300">Every 5 min</option>
-            <option value="-1">Off (motion only)</option>
-          </select>
-        </label>
         <button id="cats-clear" class="ghost" type="button">Clear log</button>
       </div>
       <div id="scan-last" class="muted" style="text-align:center;font-size:12px;min-height:1.1em"></div>
-      <details id="scan-settings">
-        <summary>⚙ Still-scan settings <span class="muted">— what the periodic still-cat check runs (all cameras)</span></summary>
-        <div class="grid" style="margin-top:8px">
-          <label title="the model the still scan runs — the scan gets ONE hard static look (a sleeping cat in a dark corner), so it wants the heavy model even when live detection runs a fast one (#94). 'each camera's own' = use that camera's live model.">Scan model
-            <select id="cat_scan_model"></select></label>
-          <label title="tile the frame so a small/distant cat fills more of the net (benchmark winner: 3×3)">Tiling
-            <select id="scan_tiling"></select></label>
-          <label title="how much neighbouring tiles overlap (benchmark: 0.35 for 3×3, 0.20 for 2×2)">Tile overlap
-            <input type="number" id="scan_tile_overlap" step="0.05" min="0" max="0.5" /></label>
-          <label title="average this many back-to-back frames before the net — cuts sensor noise on a still scene (helps dim rooms). 1 = off">Scan frames
-            <input type="number" id="scan_frames" min="1" max="8" /></label>
-          <label title="cat confidence for the scan; 0 = use each camera's own cat confidence">Scan confidence
-            <input type="number" id="scan_confidence" step="0.05" min="0" max="1" /></label>
-        </div>
-      </details>
-      <details id="find-settings">
-        <summary>⚙ Find-my-cat settings <span class="muted">— what “Show me the cat!” runs when it actively scans</span></summary>
-        <div class="grid" style="margin-top:8px">
-          <label class="checkbox" title="on click, run a real detection pass across the watched cameras — finds a STILL cat in a motionless room instead of jumping to the last sighting (#92)">
-            <input type="checkbox" id="find_scan"/> Active scan on click
-          </label>
-          <label title="the model the find pass runs — the heavy one is worth it here. 'each camera's own' = that camera's live model.">Find model
-            <select id="find_model"></select></label>
-          <label title="tiling for the find pass (a thorough look for a still cat)">Find tiling
-            <select id="find_tiling"></select></label>
-          <label title="overlap for find tiling">Find overlap
-            <input type="number" id="find_tile_overlap" step="0.05" min="0" max="0.5" /></label>
-          <label title="cat confidence for find; 0 = each camera's own">Find confidence
-            <input type="number" id="find_confidence" step="0.05" min="0" max="1" /></label>
-        </div>
-        <p class="hint">With active scan off, the button jumps to where a cat is
-          (or was last) seen — a still cat in a motionless room won't be found.</p>
-      </details>
       <details id="cat-sightings-box">
         <summary>🐾 Recent sightings</summary>
         <div id="cat-sightings"><p class="muted">No sightings yet.</p></div>
@@ -105,8 +112,25 @@
 
     <!-- ===== Live feed ===== -->
     <section class="card">
-      <div class="row log-head">
+      <div class="row log-head gear-anchor">
         <h2>Live detection</h2>
+        <button class="gear" type="button" data-popup="live-settings"
+                title="Live-detection settings — how quickly Follow switches rooms"
+                aria-label="Live detection settings">⚙</button>
+        <div id="live-settings" class="gear-popup hidden" role="dialog" aria-label="Live detection settings">
+          <div class="gear-popup-head">
+            <strong>Follow-mode tuning</strong>
+            <button class="gear-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="grid">
+            <label title="how long a feed keeps showing a room after the cat stops being seen there. Higher = stickier (rides out longer gaps and brief disappearances); lower = follows her out of the room sooner.">Hold (s)
+              <input type="number" id="follow_hold_seconds" step="0.5" min="0" max="60" /></label>
+            <label title="how long a new room must have had a cat before a free feed switches to it. This is the anti-flicker guard — raise it if a cat crossing a doorway yanks the feed away.">Switch after (s)
+              <input type="number" id="follow_persist_seconds" step="0.25" min="0" max="30" /></label>
+          </div>
+          <p class="hint">Applies immediately — no restart. Tune while watching:
+            jumpy → raise <b>Hold</b>; slow to follow her out of a room → lower it.</p>
+        </div>
         <div class="row feed-cams">
           <select id="live-camera" title="which camera the main feed shows"></select>
           <select id="live-camera2" title="which camera the second feed shows — enable ⧉ 2nd to choose one" disabled></select>
@@ -436,9 +460,25 @@
 
     <!-- ===== Activity log ===== -->
     <section class="card">
-      <div class="row log-head">
+      <div class="row log-head gear-anchor">
         <h2>Activity log</h2>
         <button id="log-clear" class="ghost" type="button">Clear</button>
+        <button class="gear" type="button" data-popup="log-settings"
+                title="Activity-log settings — fusion diagnostics"
+                aria-label="Activity log settings">⚙</button>
+        <div id="log-settings" class="gear-popup hidden" role="dialog" aria-label="Activity log settings">
+          <div class="gear-popup-head">
+            <strong>Diagnostics</strong>
+            <button class="gear-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <label class="checkbox" title="troubleshooting only: write one structured record per track-fusion decision to fusion_events.jsonl — each hit's score/label/box, how far the track travelled, and whether a strong box was already present. Adds nothing to this log.">
+            <input type="checkbox" id="fusion_debug" /> Log fusion decisions to <code>fusion_events.jsonl</code>
+          </label>
+          <p class="hint">Off by default. Turn on for a session to see whether track
+            fusion is recovering real weak sightings or just re-reporting cats a
+            strong detection already caught — the file is written next to the app,
+            and nothing extra appears in this log.</p>
+        </div>
       </div>
       <div id="log-list" class="log-list"><p class="muted">No activity yet.</p></div>
     </section>

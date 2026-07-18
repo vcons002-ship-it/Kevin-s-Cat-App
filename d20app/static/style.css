@@ -20,6 +20,40 @@ body {
   line-height: 1.45;
 }
 main { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
+/* Per-section gear popups (#117): a section's tunables live behind a ⚙ in its
+   header instead of sitting in the persistent scroll, so the main view stays about
+   watching. Anchored under the header rather than a modal — you're meant to twist a
+   knob and immediately watch the feed behind it. */
+.gear-anchor { position: relative; }
+.gear {
+  background: none; border: 1px solid var(--line); color: var(--muted);
+  border-radius: 8px; padding: 1px 8px; font-size: 15px; line-height: 1.5;
+  cursor: pointer; flex: 0 0 auto;
+}
+.gear:hover, .gear[aria-expanded="true"] { color: var(--ink); border-color: var(--accent); }
+.gear-popup {
+  position: absolute; top: 100%; right: 0; z-index: 60; margin-top: 6px;
+  width: min(460px, 92vw); max-height: 70vh; overflow-y: auto;
+  background: var(--card); border: 1px solid var(--accent); border-radius: 10px;
+  padding: 12px 14px 14px; box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  text-align: left;
+}
+.gear-popup.hidden { display: none; }
+.gear-popup-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 10px;
+}
+.gear-popup h4 {
+  margin: 14px 0 6px; font-size: 0.86rem; font-weight: 600; color: var(--ink);
+}
+.gear-popup h4 .muted { font-weight: 400; }
+.gear-popup .grid { margin-top: 2px; }
+.gear-popup .hint { margin: 10px 0 0; }
+.gear-close {
+  background: none; border: 0; color: var(--muted); cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 2px 4px;
+}
+.gear-close:hover { color: var(--ink); }
 /* Live-feed controls (#113). The toggles used to sit inline with the heading and
    the camera picker, which wrapped onto extra lines and pushed the row below the
    header. They now get their own thin bar: each toggle is nowrap (so an emoji is
