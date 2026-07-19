@@ -7,7 +7,36 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
-## [Unreleased]
+## [0.56.0] — 2026-07-19
+
+### Fixed
+- **Slow or distant cats could be missed entirely by the motion gate.** A cat
+  walked through a room, was clearly detectable in stills, and the app never
+  reacted — while replaying the same footage offline said motion should have fired
+  robustly. Both were right; they were measuring different things.
+
+  The motion verdict is an **area** test on the region that changed between two
+  frames, and it compared each frame against *whatever arrived last*. But RTSP
+  frames **queue**: each read returns the next frame off a backlog rather than the
+  newest one. Measured on three cameras, consecutive reads were only **33 ms apart
+  in video time** even though the loop reads every 200 ms — so a cat covered ~6×
+  less of the frame than any offline test assumed, and slow movers never reached
+  the threshold. On the reported clip, with the user's own settings, the same
+  footage fires **19/53** when sampled at `scan_fps` and **0/313** as the app
+  actually saw it, peaking at 71% of the area threshold.
+
+  `MotionPrefilter` now compares against **the newest frame at least
+  `motion_reference_ms` old in the video** (each frame's own stream timestamp),
+  instead of the previous one. Sensitivity no longer depends on buffering, camera
+  frame rate or inference load. On the same clip and settings that missed her:
+  **115/313 fires, and still 0/307 on a matched empty clip** — a 37% fire rate
+  against the offline tester's 37%, so tuning done against clips now transfers to
+  the live app.
+
+  Smooth mode is unaffected (it drains the camera, so its frames are already
+  current). Cameras that don't report a stream position fall back to the previous
+  behaviour rather than breaking. `motion_reference_ms: 0` restores the old
+  behaviour exactly.
 
 ### Added
 - Two offline diagnostic scripts (no app changes) for investigating a cat that

@@ -54,20 +54,24 @@ def _camera_spec(name):
     return targets[0], float(targets[0]["scan_fps"])
 
 
-def _run(frames, prefilter_args, roi, adjust):
-    """Feed frames through a fresh prefilter; return (fires, total, margins)."""
+def _run(frames, prefilter_args, roi, adjust, gap_ms=None):
+    """Feed frames through a fresh prefilter; return (fires, total, margins).
+
+    ``gap_ms`` is how far apart the frames are in the video, so the prefilter's
+    reference-age lookback sees the same timeline the live app does.
+    """
     import cv2
 
     mp = MotionPrefilter(**prefilter_args)
     fires, margins = 0, []
-    for frame in frames:
+    for idx, frame in enumerate(frames):
         # Exactly the live order: adjustments, then ROI crop, then grayscale.
         img = apply_image_adjustments(frame, **adjust)
         if roi:
             x, y, w, h = roi
             img = img[y:y + h, x:x + w]
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        moved = mp.update(gray)
+        moved = mp.update(gray, ts_ms=None if gap_ms is None else idx * gap_ms)
         fires += bool(moved)
         h, w = gray.shape[:2]
         min_area = mp.min_area_frac * h * w
@@ -107,6 +111,9 @@ def main() -> None:
     ap.add_argument("--area-frac", type=float, help="override motion_min_area_frac")
     ap.add_argument("--diff", type=int, help="override motion_diff_threshold")
     ap.add_argument("--blob-px", type=int, help="override motion_min_blob_px")
+    ap.add_argument("--reference-ms", type=int, default=None,
+                    help="compare against a frame this old IN THE VIDEO "
+                         "(default: the camera's motion_reference_ms)")
     args = ap.parse_args()
 
     spec, scan_fps = _camera_spec(args.camera)
@@ -121,6 +128,10 @@ def main() -> None:
         "min_blob_px": args.blob_px if args.blob_px is not None
         else int(spec["motion_min_blob_px"]) if spec else 14,
     }
+    cfg_all = config_mod.load()
+    reference_ms = (args.reference_ms if args.reference_ms is not None
+                    else int(getattr(cfg_all, "motion_reference_ms", 0)))
+    prefilter_args["reference_ms"] = reference_ms
     roi = (spec or {}).get("roi") or None
     adjust = {k: (spec or {}).get(k, d) for k, d in
               (("gamma", 1.0), ("brightness", 0), ("contrast", 1.0), ("saturation", 1.0))}
@@ -138,6 +149,10 @@ def main() -> None:
           f"diff={prefilter_args['diff_threshold']} "
           f"min_blob_px={prefilter_args['min_blob_px']}")
     print(f"           roi={roi or 'none'}  adjustments={adjust}")
+    print(f"           motion_reference_ms={reference_ms}"
+          + ("  (0 = compare with the previous frame, whatever age that is)"
+             if not reference_ms else
+             "  (comparison spans this much video regardless of frame spacing)"))
     if roi:
         print("           NOTE: an ROI is set — it crops before motion, which also "
               "shrinks the\n                 area threshold (min_area = frac x H x W).")
@@ -151,7 +166,8 @@ def main() -> None:
     print("-" * 74)
     for name, frames, gap in (("every-frame", src_frames, gap_every),
                               ("sampled", sampled, gap_sampled)):
-        fires, n, margins = _run(frames, prefilter_args, roi, adjust)
+        fires, n, margins = _run(frames, prefilter_args, roi, adjust,
+                                 gap_ms=gap * 1000.0 if gap else None)
         peak = max((b for b, _ in margins), default=0.0)
         thr = margins[0][1] if margins else 0.0
         ratio = (peak / thr) if thr else 0.0

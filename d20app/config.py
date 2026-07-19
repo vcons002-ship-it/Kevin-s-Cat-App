@@ -95,6 +95,7 @@ class Config:
     motion_min_area_frac: float = 0.003  # fraction of the frame that must change to count as motion (higher = less sensitive)
     motion_diff_threshold: int = 25      # per-pixel brightness change to count a pixel as moved (higher = less sensitive)
     motion_min_blob_px: int = 14         # reject change regions thinner than this (rejects thin artifact lines)
+    motion_reference_ms: int = 200   # compare each frame against the newest one at least this old IN THE VIDEO, rather than whatever arrived last. RTSP frames queue, so consecutive reads were measured only ~33ms apart in video time even though the loop reads every 200ms — and the motion test is an AREA test, so a cat covers ~6x less of it and slow/distant cats were missed. 0 = previous frame (pre-0.56 behaviour).
 
     # --- Cat check (still/sleeping cats produce no motion to trigger the net) ---
     cat_scan_interval: float = 30.0  # how often (sec) a cat-tracking camera runs the net even with no motion, to catch a still/sleeping cat: >0 = every N seconds (default 30), 0 = always on (net every frame; most CPU), <0 = off (motion only, legacy behaviour)

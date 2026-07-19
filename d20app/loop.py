@@ -561,6 +561,7 @@ class DetectionLoop:
                 motion_diff_threshold=spec["motion_diff_threshold"],
                 motion_min_blob_px=spec["motion_min_blob_px"],
                 motion_gate=str(spec.get("motion_sensitivity", "")) != "off",
+                motion_reference_ms=cfg.motion_reference_ms,
                 model=spec["model"],
                 accelerator=spec["accelerator"],
                 smooth_feed=spec["smooth_feed"],

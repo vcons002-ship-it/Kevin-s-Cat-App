@@ -133,7 +133,7 @@ def _detector_with_motion(track_fusion=True):
             return True, frame
 
     det._ensure_cap = lambda: _Cap()
-    det._motion.update = lambda gray: True       # every frame "moves"
+    det._motion.update = lambda gray, ts_ms=None: True   # every frame "moves"
     return det
 
 

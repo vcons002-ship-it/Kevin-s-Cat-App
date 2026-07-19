@@ -232,14 +232,34 @@ class MotionPrefilter:
 
     The first frame reports **no** motion (nothing to compare against yet), so a
     static scene never triggers detection until something really moves.
+
+    **What "consecutive frames" means matters enormously.** The verdict is an *area*
+    test on the changed region, and a walking cat covers ~6x more of it in 200 ms
+    than in 33 ms. The loop reads at ``scan_fps`` (say every 200 ms of wall clock),
+    but RTSP frames queue: measured on three cameras, consecutive reads were only
+    **33 ms apart in video time**, because each read returns the next frame off a
+    backlog rather than the newest one. A cat that a 200 ms-spaced test fires on
+    19/53 times fires **0/313** at 33 ms — it peaks at 71% of the area threshold and
+    never clears it. That is a real missed cat, not a tuning problem.
+
+    So ``reference_ms`` compares against the newest frame at least that old *in the
+    video* (using each frame's own timestamp), instead of whatever arrived last.
+    Sensitivity then stops depending on buffering, camera frame rate or inference
+    load — and offline tuning against clips means what it says.
     """
 
     def __init__(self, min_area_frac: float = 0.003, diff_threshold: int = 25,
-                 min_blob_px: int = 14) -> None:
+                 min_blob_px: int = 14, reference_ms: int = 0) -> None:
         self.min_area_frac = min_area_frac
         self.diff_threshold = diff_threshold
         self.min_blob_px = min_blob_px
+        # How far apart, IN THE VIDEO, the two compared frames should be. 0 = the
+        # previous frame handed in, whatever age that is. See the class docstring.
+        from collections import deque
+
+        self.reference_ms = int(reference_ms)
         self._prev = None
+        self._history = deque(maxlen=12)            # (ts_ms, blurred gray)
         self._kernel = None
         # WHERE the last update saw motion (the escalation ladder's "look here"
         # hints, #66-era data we used to throw away): up to _max_blobs solid-blob
@@ -254,18 +274,48 @@ class MotionPrefilter:
         self.last_blobs_ts: float = 0.0
         self._max_blobs = 8
 
-    def update(self, gray) -> bool:
+    def _reference(self, clean, ts_ms):
+        """The frame to diff against: the newest one at least ``reference_ms`` old.
+
+        With ``reference_ms = 0`` (or no timestamps) this is just the previous
+        frame, which is the historical behaviour. Otherwise it reaches back through
+        the history — necessary because the caller's frames may be far closer
+        together in video time than in wall clock (see the class docstring).
+        """
+        if self.reference_ms <= 0 or ts_ms is None:
+            return self._prev
+        cutoff = ts_ms - self.reference_ms
+        ref = None
+        for stamp, frame in self._history:          # oldest → newest
+            if stamp <= cutoff:
+                ref = frame                          # newest frame that's old enough
+            else:
+                break
+        # Nothing old enough yet (just started, or a gap in the stream): fall back
+        # to the oldest we have rather than skipping the check entirely.
+        if ref is None and self._history:
+            ref = self._history[0][1]
+        return ref if ref is not None else self._prev
+
+    def update(self, gray, ts_ms: float | None = None) -> bool:
         import cv2  # local import: keep module importable without OpenCV
 
         # Median blur kills salt-and-pepper noise and thin corruption lines
         # without widening real edges (a Gaussian blur would smear a 1px line
         # into a band that survives later filtering).
         clean = cv2.medianBlur(gray, 5)
-        if self._prev is None:
+        ref = self._reference(clean, ts_ms)
+        if ts_ms is not None:
+            self._history.append((float(ts_ms), clean))
+            # Keep only what the lookback needs, so this doesn't grow with runtime.
+            span = max(self.reference_ms * 2, 1000)
+            while len(self._history) > 2 and ts_ms - self._history[0][0] > span:
+                self._history.popleft()
+        if ref is None:
             self._prev = clean
             self.last_blobs = []
             return False
-        delta = cv2.absdiff(self._prev, clean)
+        delta = cv2.absdiff(ref, clean)
         self._prev = clean
         _, thresh = cv2.threshold(delta, self.diff_threshold, 255, cv2.THRESH_BINARY)
         if self._kernel is None:
@@ -314,7 +364,7 @@ class PersonDetector:
                  cat_confidence: float = 0.5,
                  live_tiling: str = "off", live_tile_overlap: float = 0.2,
                  locator_classes=None, track_fusion: bool = True,
-                 fusion_debug: bool = False) -> None:
+                 fusion_debug: bool = False, motion_reference_ms: int = 0) -> None:
         self.source = source
         self.confidence = confidence
         # The locator ("the cat") path: which classes count, and the confidence they
@@ -412,6 +462,7 @@ class PersonDetector:
             min_area_frac=motion_min_area_frac,
             diff_threshold=motion_diff_threshold,
             min_blob_px=motion_min_blob_px,
+            reference_ms=motion_reference_ms,
         )
         # The "cat trail" (#67): null-frame silhouettes coloured by recency, fed by
         # every frame read. Cheap (capped working resolution) and thread-safe.
@@ -1314,6 +1365,11 @@ class PersonDetector:
         """
         import cv2
 
+        # When in the VIDEO this frame sits. The synchronous path fills it from the
+        # stream's own clock below; smooth mode drains the camera continuously, so
+        # its frames are current and wall clock is already the right scale.
+        frame_ms = time.monotonic() * 1000.0
+
         # Reconcile a smooth-mode toggle here, on the loop thread, so starting or
         # stopping the grab thread never races the camera read below.
         if self._smooth_desired != self.smooth_feed:
@@ -1352,6 +1408,13 @@ class PersonDetector:
                     )
                 return FrameOutcome(motion=False, person=False)
             self._read_fails = 0
+            # The frame's position IN THE STREAM. Reads come off a backlog, so
+            # this is far from wall-clock time and is what the prefilter needs.
+            try:
+                raw = cap.get(cv2.CAP_PROP_POS_MSEC)
+                frame_ms = float(raw) if raw and raw > 0 else None
+            except Exception:      # noqa: BLE001 — unsupported property
+                frame_ms = None
             if scan and self.cat_scan_frames > 1:
                 # Still-cat scans average a short burst of frames — noise drops
                 # ~√N on a still scene, and the burst aborts to the single frame
@@ -1371,7 +1434,9 @@ class PersonDetector:
 
         cropped = self._crop(frame)
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-        moved = self._motion.update(gray)      # keep the baseline fresh even when paused
+        # Smooth mode drains the camera itself, so its frames are already current
+        # and wall clock is the right scale; the sync path passes stream time.
+        moved = self._motion.update(gray, ts_ms=frame_ms)   # fresh even when paused
         # Cat-trail silhouettes + endpoint (#67). Fresh person boxes are blanked
         # out of the stamp (0.41.0): a human arm moves in cat-sized blobs, and
         # the trail is a cat trail. The boxes are the PREVIOUS net run's (the net
