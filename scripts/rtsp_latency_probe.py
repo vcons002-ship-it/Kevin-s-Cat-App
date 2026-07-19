@@ -58,11 +58,25 @@ def _resolve(args):
     return spec["name"], spec["source"]
 
 
-def _read(cap):
-    """One read, returning (ok, seconds_it_blocked)."""
+def _read(cap, cv2=None):
+    """One read → (ok, seconds_it_blocked, frame, stream_position_ms).
+
+    ``CAP_PROP_POS_MSEC`` is the frame's own timestamp in the stream, which is
+    what tells us how far apart two frames are *in the video* — as opposed to how
+    far apart we happened to read them. Those differ whenever frames queue, which
+    is the whole point of this probe. Not every camera provides it.
+    """
     t0 = time.perf_counter()
     ok, frame = cap.read()
-    return (ok and frame is not None), time.perf_counter() - t0, frame
+    blocked = time.perf_counter() - t0
+    pos = None
+    if cv2 is not None:
+        try:
+            raw = cap.get(cv2.CAP_PROP_POS_MSEC)
+            pos = float(raw) if raw and raw > 0 else None
+        except Exception:       # noqa: BLE001 — an unsupported property is fine
+            pos = None
+    return (ok and frame is not None), blocked, frame, pos
 
 
 def main() -> None:
@@ -97,17 +111,29 @@ def main() -> None:
         cap.release()
         sys.exit(f"could not open {mask_credentials(str(source))}")
 
+    import cv2
+
     try:
-        # --- native rate: read flat out briefly to see how fast frames arrive.
-        for _ in range(5):                       # discard connection warm-up
-            _read(cap)
+        # --- native rate. Reading flat out straight after connecting measures how
+        # fast a BACKLOG drains, not how fast frames arrive — on a queueing stream
+        # that over-reports badly. So: drain until reads stop coming back instantly,
+        # then measure over a steady window.
+        for _ in range(5):                       # connection warm-up
+            _read(cap, cv2)
+        drained, t_drain = 0, time.perf_counter()
+        while time.perf_counter() - t_drain < 8.0:
+            ok, blocked, _f, _p = _read(cap, cv2)
+            drained += 1
+            if ok and blocked > 0.008:           # waited for a frame → queue is empty
+                break
         t0, n = time.perf_counter(), 0
-        while time.perf_counter() - t0 < 3.0:
-            ok, _dt, _f = _read(cap)
+        while time.perf_counter() - t0 < 4.0:
+            ok, _dt, _f, _p = _read(cap, cv2)
             if ok:
                 n += 1
         native = n / max(1e-6, time.perf_counter() - t0)
-        print(f"stream delivers ~{native:.1f} fps when read flat out")
+        print(f"stream delivers ~{native:.1f} fps "
+              f"(measured after draining {drained} queued frames)")
         if native <= scan_fps * 1.15:
             print("  NOTE: the camera is no faster than the read rate, so there's "
                   "nothing to queue —\n        this test can't distinguish the two "
@@ -115,13 +141,17 @@ def main() -> None:
 
         # --- phase 1: read slowly, exactly like the app's synchronous path.
         first_frame = None
-        slow_reads, slow_block = 0, []
+        slow_reads, slow_block, stream_gaps = 0, [], []
+        prev_pos = None
         t_start = time.perf_counter()
         while time.perf_counter() - t_start < args.seconds:
-            ok, blocked, frame = _read(cap)
+            ok, blocked, frame, pos = _read(cap, cv2)
             if ok:
                 slow_reads += 1
                 slow_block.append(blocked)
+                if pos is not None and prev_pos is not None and pos > prev_pos:
+                    stream_gaps.append(pos - prev_pos)
+                prev_pos = pos
                 if first_frame is None:
                     first_frame = frame
             time.sleep(max(0.0, interval - blocked))
@@ -132,12 +162,31 @@ def main() -> None:
         print(f"         each slow read blocked {statistics.median(slow_block) * 1000:.1f} ms "
               "(median)")
 
+        # THE number the motion prefilter actually lives on: how far apart two
+        # consecutive reads are *in the video*, not in wall clock.
+        if stream_gaps:
+            gaps = sorted(stream_gaps)
+            med_gap = statistics.median(gaps)
+            print(f"\n         stream-time between consecutive reads: "
+                  f"median {med_gap:.0f} ms  (min {gaps[0]:.0f} / max {gaps[-1]:.0f})")
+            print(f"         you read every {interval * 1000:.0f} ms of wall clock, so the "
+                  f"prefilter sees {interval * 1000 / max(1e-6, med_gap):.1f}x less "
+                  "movement per diff\n         than a test that samples a clip at "
+                  "scan_fps.")
+            print("         (timestamps ARE usable on this camera — a fix can select a "
+                  "reference\n          frame by stream age, which is robust to jitter "
+                  "and dropped frames.)")
+        else:
+            print("\n         stream-time between reads: UNAVAILABLE — this camera "
+                  "doesn't report\n         CAP_PROP_POS_MSEC, so a fix has to count "
+                  "frames and assume a steady rate.")
+
         # --- phase 2: the tell. Queued frames come back instantly; a live stream
         # makes each read wait for the next frame.
         fast = []
         last_frame = None
         for _ in range(args.drain):
-            ok, blocked, frame = _read(cap)
+            ok, blocked, frame, _pos = _read(cap, cv2)
             if not ok:
                 break
             fast.append(blocked)
@@ -168,7 +217,6 @@ def main() -> None:
             print("  detection is not explained by frame spacing. Look elsewhere.")
 
         if args.save:
-            import cv2
             os.makedirs(args.save, exist_ok=True)
             for name, frame in (("first", first_frame), ("last", last_frame)):
                 if frame is not None:
