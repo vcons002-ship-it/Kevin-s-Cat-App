@@ -559,9 +559,10 @@ async function loadConfig() {
   if ($("find_tile_overlap")) $("find_tile_overlap").value = cfg.find_tile_overlap ?? 0.35;
   if ($("find_confidence")) $("find_confidence").value = cfg.find_confidence ?? 0;
   // Gear-popup settings (#117).
-  if ($("follow_hold_seconds")) $("follow_hold_seconds").value = cfg.follow_hold_seconds ?? 3.0;
-  if ($("follow_persist_seconds")) $("follow_persist_seconds").value = cfg.follow_persist_seconds ?? 1.0;
   if ($("fusion_debug")) $("fusion_debug").checked = !!cfg.fusion_debug;
+  if ($("swap_confirm_count")) $("swap_confirm_count").value = cfg.swap_confirm_count ?? 0;
+  if ($("camera_reuse_cooldown_seconds"))
+    $("camera_reuse_cooldown_seconds").value = cfg.camera_reuse_cooldown_seconds ?? 0;
   activeCameras = Array.isArray(cfg.active_cameras) ? cfg.active_cameras.slice() : [];
   // Defaults for a brand-new camera = the current global detection settings.
   camDefaults = {
@@ -607,11 +608,10 @@ function gatherConfig() {
     find_tiling: $("find_tiling").value,
     find_tile_overlap: Number($("find_tile_overlap").value),
     find_confidence: Number($("find_confidence").value),
-    // Per-section gear popups (#117). Both are hot: the follow knobs are re-read
-    // on every feed poll, and fusion_debug rides the running detectors' reload.
-    follow_hold_seconds: Number($("follow_hold_seconds").value),
-    follow_persist_seconds: Number($("follow_persist_seconds").value),
+    // Gear-popup setting (#117), hot: it rides the running detectors' reload.
     fusion_debug: $("fusion_debug").checked,
+    swap_confirm_count: Number($("swap_confirm_count").value),
+    camera_reuse_cooldown_seconds: Number($("camera_reuse_cooldown_seconds").value),
   };
   return values;
 }
@@ -726,6 +726,28 @@ function updateLiveView(running) {
 // crucially, only re-points a stream when its camera actually CHANGES — setting
 // img.src restarts the MJPEG connection, so re-pointing every poll would stutter.
 let followOn = false, feed2On = false, feed2Cam = null;
+// Feed locks are a runtime toggle owned by the browser (not saved): the poll sends
+// which slots are pinned and the router pins whatever those slots currently hold.
+const feedLocks = [false, false];
+
+function renderFeedLocks() {
+  feedLocks.forEach((locked, i) => {
+    const btn = $("lock-" + i);
+    if (!btn) return;
+    // Locks only mean anything while Follow is assigning feeds; with Follow off the
+    // pickers already decide, so the button would be a no-op.
+    const usable = followOn && isRunning && (i === 0 || feed2On);
+    btn.classList.toggle("hidden", !usable);
+    btn.setAttribute("aria-pressed", String(locked));
+    btn.textContent = locked ? "🔒" : "🔓";
+  });
+}
+
+function toggleFeedLock(i) {
+  feedLocks[i] = !feedLocks[i];
+  renderFeedLocks();
+  pollFeeds();
+}
 
 // Follow drives both pickers, so they're read-only while it's on (they still show
 // where each feed is). The second picker is only steerable when there IS a second
@@ -737,9 +759,13 @@ function syncFeedControls() {
 }
 
 async function pollFeeds() {
+  renderFeedLocks();
   if (!isRunning || (!followOn && !feed2On)) { updateSecondFeed(null); return; }
   if (!followOn) { updateSecondFeed(null); return; }   // manual: the picker decides
-  const { body } = await api(`/api/feeds?slots=${feed2On ? 2 : 1}`);
+  const slots = feed2On ? 2 : 1;
+  const locked = feedLocks.slice(0, slots)
+    .map((on, i) => (on ? i : null)).filter((i) => i !== null).join(",");
+  const { body } = await api(`/api/feeds?slots=${slots}&locked=${locked}`);
   if (!body || !Array.isArray(body.slots)) return;
   const [primary, secondary] = body.slots;
   if (primary && primary.camera && watchableCam(primary.camera)
@@ -1851,15 +1877,21 @@ function wire() {
     followOn = $("follow-cat").checked;
     if (followOn) catRotate = false;           // don't fight the Show-cat rotation
     syncFeedControls();
+    renderFeedLocks();
     pollFeeds();
   };
   $("second-feed").onchange = () => {
     feed2On = $("second-feed").checked;
     syncFeedControls();
+    renderFeedLocks();
     if (!feed2On) updateSecondFeed(null);
     pollFeeds();
   };
   $("live-camera2").onchange = () => updateSecondFeed(null);
+  for (const i of [0, 1]) {
+    const btn = $("lock-" + i);
+    if (btn) btn.onclick = () => toggleFeedLock(i);
+  }
   $("speaker-refresh").onclick = () => loadSpeakers(true);
   $("speaker-select").onchange = updateSpeakerWarning;
   $("use_speech").onchange = applySpeechVisibility;
@@ -1995,7 +2027,8 @@ function wire() {
                     "scan_frames", "scan_confidence", "find_scan", "find_model",
                     "find_tiling", "find_tile_overlap", "find_confidence",
                     // gear-popup settings (#117) — same auto-save, so they apply live
-                    "follow_hold_seconds", "follow_persist_seconds", "fusion_debug"]) {
+                    "fusion_debug", "swap_confirm_count",
+                    "camera_reuse_cooldown_seconds"]) {
     const el = $(id);
     if (el) el.onchange = saveConfig;
   }

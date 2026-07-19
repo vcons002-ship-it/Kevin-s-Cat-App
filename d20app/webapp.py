@@ -1496,11 +1496,16 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             slots = max(1, min(2, int(request.args.get("slots", 1))))
         except (TypeError, ValueError):
             slots = 1
+        # Locks are per-feed and live in the browser (a runtime toggle, not saved),
+        # so they arrive with the request: ?locked=0,1
+        locks = set()
+        for part in (request.args.get("locked") or "").split(","):
+            if part.strip().isdigit():
+                locks.add(int(part.strip()))
         cfg = config_mod.load()
-        rows = app.config["loop"].feed_assignments(
-            slots, hold_s=cfg.follow_hold_seconds,
-            persist_s=cfg.follow_persist_seconds)
-        return jsonify({"slots": rows})
+        return jsonify({"slots": app.config["loop"].feed_assignments(
+            slots, locks=locks, confirm=cfg.swap_confirm_count,
+            reuse_cooldown=cfg.camera_reuse_cooldown_seconds)})
 
     @app.post("/api/cats/clear")
     def api_cats_clear():

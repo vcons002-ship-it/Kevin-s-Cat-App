@@ -1,135 +1,164 @@
-"""Follow mode: which camera does each live feed show? (#113)
+"""Follow mode: which camera does each live feed show?
 
-The user has more rooms than feed slots, so when a cat walks out of frame they
-switch cameras by hand. The app already knows where every cat is; this routes
-that knowledge onto one or two feeds.
+**Base model — recency, and it holds.** Primary shows the camera that saw a cat
+most recently, secondary the next most recent. Those stick: further detections on
+either changes nothing (they don't even swap places). Only a detection on a camera
+*outside* the pair reshuffles it, and then it's simply "newest → primary, next
+newest → secondary". A still-scan hit outside the pair is such a detection, so it
+resets too.
 
-**The whole design is about NOT flickering.** The naive rule — "every feed shows
-the most recent cat" — makes two cats in two rooms fight over both feeds, and lets
-a cat crossing a doorway yank the feed off whatever you were watching. So:
+An earlier design gated assignment on whether a camera had a cat *right now*, with
+a hold timer and a debounce. That works for a cat walking between rooms and fails
+for a sleeping one: "right now" is only `cat_scan_interval + 2` seconds wide (**2 s**
+when the still-check is set to Always), so a sleeping cat dropped out between scans,
+the slot freed, and the feed hid — then reappeared on the next scan. Recency has no
+window: a room that saw a cat an hour ago still holds its slot.
 
-- Each slot **adopts** a camera and **holds** it. Slots never compete for
-  "most recent"; a slot's camera is its own until that camera goes quiet.
-- A hold is released only after ``hold_s`` seconds with **no cat** on it. Any new
-  detection on a held camera just refreshes the hold — it never causes a reassign.
-- A freed slot adopts the most-recent cat-camera **not already held** by another
-  slot, and only once that camera has been active for ``persist_s`` — so a brief
-  doorway transient can't claim a feed.
-- A secondary slot with nothing live to show falls back to the **previous room**
-  (the camera most recently released), which is what makes room-to-room read as
-  "new room primary, old room secondary". That fallback is never *held*: a real
-  live cat always outranks a stale last-seen view.
+**Two safeguards over the base model**, both off by default (0), for the case where
+overlapping camera views make a cat near an edge trigger both:
 
-Two cats in two rooms is therefore just the one-cat rule twice, independently —
-which is exactly why the feeds stay put. All timing is injected (``now``) so the
-behaviour is deterministic and testable.
+- ``swap_confirm_count`` — how many detections a new camera needs before it may
+  take a feed. 0/1 = the first detection swaps. Higher filters a transient pass
+  through an overlap.
+- ``camera_reuse_cooldown_seconds`` — how long a camera that just lost its slot is
+  barred from taking one again. Breaks a two-camera oscillation, which the confirm
+  count alone can't (both cameras keep genuinely detecting).
+
+**Locks sit on top of everything.** A locked slot is pinned to its current camera:
+never reassigned, never reset, and its camera is removed from the pool the unlocked
+slots choose from — so the locked view can't be duplicated, and its ongoing
+detections don't drag the other feed around. Locking pins the *view*, not the cat:
+if she leaves, the locked feed keeps showing that (now empty) room until unlocked.
+That's what makes "one cat asleep, one touring" workable — pin the sleeper, let the
+other feed follow.
 """
 
 from __future__ import annotations
 
-# Defaults; both are expected to want live tuning (#113), so they're config knobs.
-HOLD_SECS = 3.0        # a held camera survives this long with no cat before it frees
-PERSIST_SECS = 1.0     # a candidate must have been active this long to be adopted
+import time
 
-LIVE = "live"          # slot is showing a camera that has a cat on it now
-LAST_SEEN = "last-seen"  # secondary fallback: the room the cat just left
+LIVE = "live"            # this camera has a cat on it right now
+LAST_SEEN = "last-seen"  # holding the room where a cat was seen most recently
 
 
 class FeedRouter:
-    """Sticky, debounced camera→slot assignment. See the module docstring."""
+    """Recency-based, sticky camera→slot assignment. See the module docstring."""
 
-    def __init__(self, hold_s: float = HOLD_SECS, persist_s: float = PERSIST_SECS,
-                 max_recent: int = 8):
-        self.hold_s = float(hold_s)
-        self.persist_s = float(persist_s)
-        self._max_recent = int(max_recent)
-        self._slots: list[dict] = []      # {"camera", "last_active", "source"}
-        self._since: dict[str, float] = {}   # camera -> when it most recently became active
-        self._recent: list[str] = []      # released cameras, newest first ("previous room")
+    def __init__(self, swap_confirm_count: int = 0,
+                 camera_reuse_cooldown_seconds: float = 0.0):
+        self.swap_confirm_count = int(swap_confirm_count)
+        self.camera_reuse_cooldown_seconds = float(camera_reuse_cooldown_seconds)
+        self._pair: list = []            # camera per slot (None = empty)
+        self._locked: list = []          # lock flag per slot
+        self._prev: dict = {}            # last-seen snapshot, to spot NEW detections
+        self._pending: dict = {}         # camera -> detections counted toward a swap
+        self._released_at: dict = {}     # camera -> when it last lost a slot
 
     def reset(self) -> None:
-        """Forget all assignments (a new watch session starts clean)."""
-        self._slots, self._since, self._recent = [], {}, []
+        """Forget everything (a new watch session starts clean)."""
+        self._pair, self._locked = [], []
+        self._prev, self._pending, self._released_at = {}, {}, {}
 
-    def _note_previous(self, camera: str) -> None:
-        if not camera:
-            return
-        if camera in self._recent:
-            self._recent.remove(camera)
-        self._recent.insert(0, camera)
-        del self._recent[self._max_recent:]
+    def _fit(self, slots: int) -> None:
+        while len(self._pair) < slots:
+            self._pair.append(None)
+            self._locked.append(False)
+        del self._pair[slots:]
+        del self._locked[slots:]
 
-    def update(self, now: float, active: dict, slots: int = 1) -> list:
+    def _reusable(self, cam: str, now: float) -> bool:
+        """False while a just-displaced camera is serving its cooldown."""
+        if self.camera_reuse_cooldown_seconds <= 0:
+            return True
+        released = self._released_at.get(cam)
+        return released is None or (now - released) >= self.camera_reuse_cooldown_seconds
+
+    def update(self, last_seen: dict, slots: int = 1, present=None,
+               locks=None, now: float | None = None) -> list:
         """Assign cameras to ``slots`` feeds.
 
-        ``active`` is ``{camera: last_seen}`` for cameras with a cat **right now**
-        (any monotonic clock, same units as ``now``). Returns one dict per slot:
-        ``{"camera": name or None, "source": "live" | "last-seen" | None}``.
+        ``last_seen`` is ``{camera: timestamp}`` of when each camera last saw a cat
+        — **not** windowed, so a quiet room keeps its place. ``present`` is the
+        cameras with a cat right now, used only to label a slot. ``locks`` is an
+        iterable of slot indices the user has pinned. Returns one
+        ``{"camera", "source", "locked"}`` per slot.
         """
         slots = max(0, int(slots))
-        active = active or {}
+        now = time.monotonic() if now is None else float(now)
+        seen = {c: t for c, t in (last_seen or {}).items() if t}
+        present = set(present or ())
+        self._fit(slots)
+        for i in range(slots):
+            self._locked[i] = i in set(locks or ())
 
-        # Track how long each camera has been continuously active, so a transient
-        # can't be adopted. A camera that drops out loses its run.
-        for cam in list(self._since):
-            if cam not in active:
-                del self._since[cam]
-        for cam in active:
-            self._since.setdefault(cam, now)
+        # A camera whose timestamp advanced since the last poll saw something new.
+        new_hits = {c for c, t in seen.items() if t > self._prev.get(c, 0.0)}
+        self._prev = dict(seen)
 
-        # Grow/shrink to the requested slot count, keeping existing assignments.
-        while len(self._slots) < slots:
-            self._slots.append({"camera": None, "last_active": 0.0, "source": None})
-        for dropped in self._slots[slots:]:
-            self._note_previous(dropped["camera"])
-        del self._slots[slots:]
+        locked_cams = {c for c, lk in zip(self._pair, self._locked) if lk and c}
+        unlocked = [i for i in range(slots) if not self._locked[i]]
 
-        # Release pass. A LIVE hold survives `hold_s` of quiet; a LAST_SEEN filler
-        # is re-decided every round so a real cat can always take the slot.
-        for slot in self._slots:
-            cam = slot["camera"]
-            if not cam:
+        # An unlocked slot whose camera is no longer watched gives it up.
+        for i in unlocked:
+            if self._pair[i] and self._pair[i] not in seen:
+                self._released_at[self._pair[i]] = now
+                self._pair[i] = None
+
+        # Don't leave a hole above a filled slot: if the primary's camera stopped
+        # being watched, the secondary's should move up rather than the main feed
+        # sitting blank underneath a working one. Only unlocked slots shuffle, and
+        # this never reorders two occupied slots — it just closes gaps.
+        occupied = [self._pair[i] for i in unlocked if self._pair[i]]
+        for pos, i in enumerate(unlocked):
+            self._pair[i] = occupied[pos] if pos < len(occupied) else None
+
+        held = {c for c in self._pair if c}
+        # Locked cameras are out of the running for the other feeds entirely.
+        pool = {c: t for c, t in seen.items() if c not in locked_cams}
+        by_recency = sorted(pool, key=lambda c: pool[c], reverse=True)
+
+        # Count detections on cameras that aren't currently shown; anything already
+        # on a feed isn't a swap candidate, so its tally is irrelevant.
+        for cam in new_hits:
+            if cam in held or cam in locked_cams:
+                self._pending.pop(cam, None)
+            else:
+                self._pending[cam] = self._pending.get(cam, 0) + 1
+
+        need = max(1, self.swap_confirm_count)
+        trigger = next((c for c in by_recency
+                        if c not in held
+                        and self._pending.get(c, 0) >= need
+                        and self._reusable(c, now)), None)
+
+        if trigger is not None and unlocked:
+            # Reshuffle the UNLOCKED slots only: the trigger takes the first of
+            # them, the rest fall in by recency. Locked slots never move.
+            order = [trigger] + [c for c in by_recency
+                                 if c != trigger and self._reusable(c, now)]
+            for pos, i in enumerate(unlocked):
+                cam = order[pos] if pos < len(order) else None
+                if self._pair[i] and self._pair[i] != cam:
+                    self._released_at[self._pair[i]] = now
+                self._pair[i] = cam
+            self._pending.clear()
+
+        # Fill any still-empty unlocked slot (first run, or the second feed was just
+        # switched on). This isn't a swap, so it doesn't need confirmations — but it
+        # does respect the cooldown, or a just-displaced camera would walk straight
+        # back in through the side door.
+        taken = {c for c in self._pair if c}
+        for i in unlocked:
+            if self._pair[i]:
                 continue
-            if slot["source"] == LAST_SEEN:
-                slot["camera"], slot["source"] = None, None
-            elif cam in active:
-                slot["last_active"] = now
-            elif now - slot["last_active"] >= self.hold_s:
-                self._note_previous(cam)
-                slot["camera"], slot["source"] = None, None
+            cam = next((c for c in by_recency
+                        if c not in taken and self._reusable(c, now)), None)
+            if cam:
+                self._pair[i] = cam
+                taken.add(cam)
 
-        # Adopt pass, primary first.
-        for index, slot in enumerate(self._slots):
-            if slot["camera"]:
-                continue
-            taken = {s["camera"] for s in self._slots if s["camera"]}
-            ready = [c for c in active
-                     if c not in taken and now - self._since.get(c, now) >= self.persist_s]
-            if ready:
-                ready.sort(key=lambda c: active[c], reverse=True)   # most recent first
-                slot.update(camera=ready[0], last_active=now, source=LIVE)
-            elif index > 0:
-                # Secondary with no live cat of its own: show the previous room.
-                taken = {s["camera"] for s in self._slots if s["camera"]}
-                prev = next((c for c in self._recent if c not in taken), None)
-                if prev:
-                    slot.update(camera=prev, last_active=now, source=LAST_SEEN)
-
-        # Room-to-room must read as "new room primary, old room secondary". While
-        # the primary is still *holding* a room the cat just left, a secondary can
-        # legitimately adopt the room she walked into — so if the primary has no
-        # live cat and a later slot does, promote it and demote the stale room.
-        if self._slots and self._slots[0]["camera"] not in active:
-            primary = self._slots[0]
-            donor = next((s for s in self._slots[1:] if s["camera"] in active), None)
-            if donor is not None:
-                stale = primary["camera"]
-                primary.update(camera=donor["camera"],
-                               last_active=donor["last_active"], source=LIVE)
-                if stale:
-                    self._note_previous(stale)
-                    donor.update(camera=stale, last_active=now, source=LAST_SEEN)
-                else:
-                    donor.update(camera=None, last_active=0.0, source=None)
-
-        return [{"camera": s["camera"], "source": s["source"]} for s in self._slots]
+        return [{"camera": self._pair[i],
+                 "source": (None if not self._pair[i]
+                            else LIVE if self._pair[i] in present else LAST_SEEN),
+                 "locked": bool(self._locked[i])}
+                for i in range(slots)]

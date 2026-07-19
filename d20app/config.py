@@ -107,10 +107,12 @@ class Config:
     cat_scan_imgsz: int = 0          # LEGACY, no effect since 0.40.0 (#79): the >640 "locator input" hypothesis was benchmarked and rejected — 960/1280 measured WORSE than 640 (#70); tiling is the resolution lever. Kept so old configs still load; any value falls back to native + tiling.
     cat_scan_frames: int = 3         # still-cat scan only: average this many back-to-back frames before the net (sensor noise drops ~sqrt(N) on a still scene — helps dim/noisy frames; any motion mid-burst falls back to the single frame). 1 = off; capped at 8. The fast treat path never averages.
     track_fusion: bool = True        # temporal score fusion: a string of WEAK cat detections (below cat_confidence) that chain smoothly and actually MOVE across the frame is confirmed as one sighting (source "track") — the recall-raising mirror of confirm_frames. Pure YOLO evidence; the movement requirement is the decoy guard (a cushion never travels). Off = judge every frame alone (pre-0.37.0 behaviour).
-    # --- Follow mode (#113): which camera each live feed shows. Both knobs are
-    # expected to want live tuning — they control the anti-flicker feel.
-    follow_hold_seconds: float = 3.0     # a feed keeps showing its room for this long after the cat stops being seen there (higher = stickier, ignores longer gaps; lower = follows sooner)
-    follow_persist_seconds: float = 1.0  # a new room must have had a cat this long before a free feed switches to it — stops a doorway pass from yanking the feed
+    # --- Follow mode: feeds are assigned by sighting recency and HELD until a cat
+    # turns up outside the pair. Both knobs below are safeguards for overlapping
+    # camera views (a cat near a shared edge tripping two cameras); 0 = off, which
+    # is the plain recency behaviour.
+    swap_confirm_count: int = 0              # detections a NEW camera needs before it may take a feed. 0/1 = the first detection swaps. Raise it to ignore a transient pass through an overlap.
+    camera_reuse_cooldown_seconds: float = 0.0   # how long a camera that just lost its feed is barred from taking one again. Breaks a two-camera ping-pong, which the confirm count alone can't (both are genuinely detecting).
     fusion_debug: bool = False       # troubleshooting only (#110): write one structured record per fusion decision to fusion_events.jsonl — per-hit score/label/box, net travel vs the threshold, and whether a strong box coexisted. OFF by default and adds NOTHING to the activity feed; it exists to tell a genuine weak-cat recovery apart from a redundant misfire.
 
     # --- CPU saving ---

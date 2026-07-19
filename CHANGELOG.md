@@ -11,6 +11,62 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.55.0] — 2026-07-19
+
+### Fixed
+- **A second feed showing a sleeping cat kept blinking out and back**, with nothing
+  in the activity log to explain it. Assignment was gated on whether a camera had a
+  cat *right now*, and that window is only `cat_scan_interval + 2` seconds — just
+  **2 s** when the still-check is set to *Always*. A sleeping cat only re-registers
+  when a still-scan actually re-finds her, so any gap dropped her room out of
+  "active", the 3 s hold expired, the slot freed, and the feed hid — then the next
+  successful scan re-adopted it and it reappeared. It was silent in the log because
+  still-scan only logs on the **rising edge**, so repeated finds of the same
+  sleeping cat log nothing.
+
+### Changed
+- **Follow mode reworked around sighting recency instead of liveness.** Primary
+  shows the room that saw a cat most recently, secondary the next; both **hold**.
+  Further detections on either change nothing (they don't even swap places), and
+  only a detection on a camera *outside* the pair reshuffles it — then it's simply
+  newest → primary, next → secondary. A still-scan hit outside the pair counts as
+  such a detection. There is no window and no timer anywhere, so a room that saw a
+  cat an hour ago still holds its feed. The hold/debounce machinery (and its
+  `follow_hold_seconds` / `follow_persist_seconds` settings) is gone — it was built
+  for a cat walking between rooms and was simply wrong for a sleeping one.
+- An unlocked feed whose camera stops being watched no longer leaves a **hole above
+  a filled one** — slots compact upward, so the main feed can't sit blank under a
+  working second feed.
+
+### Added
+- **Feed lock** — a padlock in each live feed's corner pins that feed to its
+  current camera. A locked feed never reassigns and is immune to layout resets, and
+  its camera is **removed from the pool** the other feed chooses from, so it can't
+  be shown twice and its ongoing detections don't drag the other feed around.
+  Lock pins the *view*, not the cat: if she leaves, the locked feed keeps showing
+  that room until you unlock. This is the manual answer to "one cat asleep, one
+  touring" — pin the sleeper and let the other feed follow. Locks are a runtime
+  toggle held in the browser (sent as `?locked=`), not saved between sessions.
+- **Two Follow-mode safeguards** in the Live-detection ⚙, both **0 (off) by
+  default**, for overlapping camera views where a cat near a shared edge trips two
+  cameras:
+  - `swap_confirm_count` — detections a new camera needs before it may take a feed;
+    filters a transient pass through an overlap.
+  - `camera_reuse_cooldown_seconds` — how long a camera that just lost its feed is
+    barred from taking one again; breaks a two-camera ping-pong, which the confirm
+    count alone cannot, since in that case **both** cameras are genuinely detecting.
+
+  Both are hot-reloadable. Locked feeds ignore them entirely — they never reassign.
+
+**Known trade-off, accepted:** with one cat asleep and another touring, the tour
+will eventually push the sleeping cat's room off the pair, and she's out of view
+until a sweep finds her — which is what the lock is for. A ladder that runs a
+still-scan *before* switching, to decide which feed gives way, is the intended
+automatic fix later.
+
+**Not runtime-verified:** whether the flicker is actually gone, whether overlap
+ping-pong happens at all, and the lock button over a live picture.
+
 ## [0.54.0] — 2026-07-19
 
 A guided pass over the three sections used most while testing — header/status bar,

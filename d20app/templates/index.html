@@ -140,8 +140,29 @@
           <button class="popup-btn helpbtn" type="button" data-popup="live-help"
                   title="What this section does" aria-label="Live detection help">❓</button>
           <button class="popup-btn gear" type="button" data-popup="live-settings"
-                  title="Live-detection settings — how quickly Follow switches rooms"
+                  title="Live-detection settings — Follow-mode safeguards"
                   aria-label="Live detection settings">⚙</button>
+        </div>
+        <div id="live-settings" class="gear-popup hidden" role="dialog" aria-label="Live detection settings">
+          <div class="gear-popup-head">
+            <strong>Follow-mode safeguards</strong>
+            <button class="gear-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <p>
+            Feeds normally follow the two most recent sightings and hold. These two
+            only matter if <strong>overlapping camera views</strong> make a cat near
+            a shared edge trip both — leave them at 0 until that actually happens.
+          </p>
+          <div class="grid">
+            <label title="how many detections a NEW camera needs before it may take a feed. 0 or 1 = the first detection swaps. Raise it to ignore a cat briefly clipping the edge of another camera's view.">Confirm swaps
+              <input type="number" id="swap_confirm_count" step="1" min="0" max="20" /></label>
+            <label title="how long a camera that just lost its feed is barred from taking one again. Use this when two overlapping cameras ping-pong — the confirm count can't stop that on its own, because both are genuinely detecting.">Reuse cooldown (s)
+              <input type="number" id="camera_reuse_cooldown_seconds" step="1" min="0" max="600" /></label>
+          </div>
+          <p class="hint">Applies immediately — no restart. Confirm swaps filters a
+            one-off; the cooldown breaks two cameras fighting over the same cat.
+            Neither affects a <strong>locked</strong> feed — locked feeds never
+            reassign.</p>
         </div>
         <div id="live-help" class="gear-popup hidden" role="dialog" aria-label="Live detection help">
           <div class="gear-popup-head">
@@ -168,11 +189,12 @@
             screen and does not expire on a timer.
           </p>
           <p>
-            <strong>🐾 Follow</strong> switches the feed to whichever room has the
-            cat, and <strong>⧉ 2nd</strong> adds a second feed — two cats in two
-            rooms get one each; with a single cat the second shows the room she came
-            from. Switching is deliberately sticky so a cat crossing a doorway can't
-            yank the feed away; tune that with the ⚙.
+            <strong>🐾 Follow</strong> points the feed at the room that saw a cat
+            most recently, and <strong>⧉ 2nd</strong> adds a second feed showing the
+            room before that. Both <em>hold</em>: further detections in those rooms
+            change nothing, so the feeds don't reshuffle while you watch. They only
+            move when a cat turns up in a <em>third</em> room — then that becomes the
+            main feed and the previous one drops to second.
           </p>
           <p>
             <strong>🎞 Smooth</strong> runs a dedicated capture thread so the video
@@ -183,20 +205,6 @@
             by the camera's actual output rate.
           </p>
         </div>
-        <div id="live-settings" class="gear-popup hidden" role="dialog" aria-label="Live detection settings">
-          <div class="gear-popup-head">
-            <strong>Follow-mode tuning</strong>
-            <button class="gear-close" type="button" aria-label="Close">✕</button>
-          </div>
-          <div class="grid">
-            <label title="how long a feed keeps showing a room after the cat stops being seen there. Higher = stickier (rides out longer gaps and brief disappearances); lower = follows her out of the room sooner.">Hold (s)
-              <input type="number" id="follow_hold_seconds" step="0.5" min="0" max="60" /></label>
-            <label title="how long a new room must have had a cat before a free feed switches to it. This is the anti-flicker guard — raise it if a cat crossing a doorway yanks the feed away.">Switch after (s)
-              <input type="number" id="follow_persist_seconds" step="0.25" min="0" max="30" /></label>
-          </div>
-          <p class="hint">Applies immediately — no restart. Tune while watching:
-            jumpy → raise <b>Hold</b>; slow to follow her out of a room → lower it.</p>
-        </div>
       </div>
       <div class="feed-toggles">
         <label class="checkbox" title="paint the cat trail onto the live feed: silhouettes and a route line coloured by recency (blue = older → red = newest), updating live as the cat moves. Purely visual — detection is unaffected.">
@@ -205,7 +213,7 @@
         <label class="checkbox" title="purple box at the cat’s newest confirmed position, with its age — hidden while a live cat box is on screen, shown the moment she vanishes. It does not expire: it stays until a newer sighting replaces it or the log is cleared. Purely visual — detection is unaffected.">
           <input type="checkbox" id="lastknown-overlay" checked /> <span class="tgl-emoji">📍</span><span class="tgl-text">Last</span>
         </label>
-        <label class="checkbox" title="follow the cat around the house: the feed switches itself to whichever room has the cat. Sticky on purpose — it keeps showing a room for a few seconds after she stops being seen there, and ignores brief passes elsewhere, so it doesn't flick about. While on, the camera pickers show where each feed is (you can't steer them by hand).">
+        <label class="checkbox" title="follow the cats: the main feed shows the room that saw a cat most recently, the second feed the one before that. They HOLD — more detections in those rooms change nothing — and only reshuffle when a cat turns up somewhere else. While on, the camera pickers show where each feed is (you can't steer them by hand).">
           <input type="checkbox" id="follow-cat" /> <span class="tgl-emoji">🐾</span><span class="tgl-text">Follow</span>
         </label>
         <label class="checkbox" title="show a second feed. With two cats in two rooms you get one cat each; with a single cat (and Follow on) the second feed shows the room she just came from.">
@@ -219,11 +227,17 @@
         </label>
       </div>
       <div id="live-stage" class="roi-stage">
+        <button id="lock-0" class="feed-lock hidden" type="button" aria-pressed="false"
+                title="pin this feed to its camera so Follow can't move it — the locked room is also taken out of the running for the other feed">🔓</button>
         <img id="live-img" class="hidden" alt="live detection feed" />
       </div>
       <div id="feed2-wrap" class="feed2 hidden">
         <p id="feed2-label" class="muted feed2-label"></p>
-        <img id="live-img2" alt="second live feed" />
+        <div class="feed2-stage">
+          <button id="lock-1" class="feed-lock hidden" type="button" aria-pressed="false"
+                  title="pin this feed to its camera so Follow can't move it — the locked room is also taken out of the running for the other feed">🔓</button>
+          <img id="live-img2" alt="second live feed" />
+        </div>
       </div>
       <p id="live-note" class="muted">Start watching to see the live feed.</p>
     </section>

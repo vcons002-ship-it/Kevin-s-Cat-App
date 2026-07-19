@@ -56,7 +56,8 @@ def _tree():
 def test_three_gears_open_three_section_popups():
     t = _tree()
     assert set(t.gears) == {"catcam-settings", "live-settings", "log-settings"}
-    assert t.popups >= {"catcam-settings", "live-settings", "log-settings"}
+    assert t.popups >= {"catcam-settings", "live-settings", "log-settings",
+                        "live-help", "catcam-help"}
 
 
 def test_cat_cam_controls_were_relocated_into_the_popup():
@@ -76,7 +77,7 @@ def test_cat_cam_controls_were_relocated_into_the_popup():
 
 def test_new_settings_live_in_their_own_sections_popup():
     t = _tree()
-    for cid in ("follow_hold_seconds", "follow_persist_seconds"):
+    for cid in ("swap_confirm_count", "camera_reuse_cooldown_seconds"):
         assert "live-settings" in t.parents[cid]
     assert "log-settings" in t.parents["fusion_debug"]
 
@@ -84,16 +85,19 @@ def test_new_settings_live_in_their_own_sections_popup():
 def test_gear_settings_save_through_the_normal_hot_reload_path():
     # The knobs are meant to be twisted while watching — they must ride the same
     # auto-save/hot-reload path as every other setting, not need a restart.
-    for key in ("follow_hold_seconds", "follow_persist_seconds", "fusion_debug"):
+    for key in ("fusion_debug", "swap_confirm_count",
+                "camera_reuse_cooldown_seconds"):
         assert key in APP_JS
     save_list = APP_JS[APP_JS.index('"cat_scan_model", "scan_tiling"'):]
     save_list = save_list[:save_list.index("]")]
-    for key in ("follow_hold_seconds", "follow_persist_seconds", "fusion_debug"):
+    for key in ("fusion_debug", "swap_confirm_count",
+                "camera_reuse_cooldown_seconds"):
         assert key in save_list, f"{key} is not auto-saved on change"
     # and they're actually sent in the payload
     gather = APP_JS[APP_JS.index("function gatherConfig"):]
     gather = gather[:gather.index("\n}")]
-    for key in ("follow_hold_seconds", "follow_persist_seconds", "fusion_debug"):
+    for key in ("fusion_debug", "swap_confirm_count",
+                "camera_reuse_cooldown_seconds"):
         assert key in gather
 
 

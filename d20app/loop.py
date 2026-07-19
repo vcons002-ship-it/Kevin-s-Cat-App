@@ -321,20 +321,40 @@ class DetectionLoop:
         seen = self.cat_camera_times()
         return sorted(seen, key=lambda n: seen[n], reverse=True)
 
-    def feed_assignments(self, slots: int = 1, hold_s: float | None = None,
-                         persist_s: float | None = None) -> list:
-        """Which camera each live feed should show (#113, Follow mode).
+    def cat_last_seen_times(self) -> dict:
+        """``{camera: monotonic}`` of when each cat-tracking camera last saw a cat.
 
-        Sticky and debounced — see :mod:`d20app.feeds`. Returns one
-        ``{"camera", "source"}`` per slot.
+        **Not** windowed, unlike :meth:`cat_camera_times` — a room that saw a cat an
+        hour ago still reports it. Follow mode assigns on recency, so a sleeping cat
+        keeps her room on a feed between still-scans instead of the feed flickering
+        as she drops in and out of the "present now" window.
         """
-        if hold_s is not None:
-            self._feeds.hold_s = float(hold_s)
-        if persist_s is not None:
-            self._feeds.persist_s = float(persist_s)
+        status = self._cam_status
+        out = {}
+        for cam_name, det in self._detectors.items():
+            if not status.get(cam_name, {}).get("track_cats"):
+                continue
+            last = det.cat_last_seen()
+            if last:
+                out[cam_name] = last
+        return out
+
+    def feed_assignments(self, slots: int = 1, locks=None, confirm: int | None = None,
+                         reuse_cooldown: float | None = None) -> list:
+        """Which camera each live feed should show (Follow mode).
+
+        Assigned by sighting recency and held — see :mod:`d20app.feeds`. ``locks``
+        are slot indices the user has pinned. Returns one
+        ``{"camera", "source", "locked"}`` per slot.
+        """
         with self._feeds_lock:
-            return self._feeds.update(time.monotonic(),
-                                      self.cat_camera_times(), slots)
+            if confirm is not None:
+                self._feeds.swap_confirm_count = int(confirm)
+            if reuse_cooldown is not None:
+                self._feeds.camera_reuse_cooldown_seconds = float(reuse_cooldown)
+            return self._feeds.update(self.cat_last_seen_times(), slots,
+                                      present=set(self.cat_camera_times()),
+                                      locks=locks)
 
     def cat_present(self) -> bool:
         """True if **any cat-tracking** camera has a cat on it right now."""
