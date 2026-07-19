@@ -517,26 +517,16 @@ function applySpeechVisibility() {
 // The workflow line (status bar): says what actually runs when the loop is on,
 // so "what is trying to do what" has a one-glance answer. Re-rendered whenever
 // config or the VLM gate changes; every default it shows is benchmark-settled.
-let lastCfg = null;
-function renderWorkflowLine() {
-  const el = $("workflow-line");
-  if (!el || !lastCfg) return;
-  const c = lastCfg;
-  const scan = Number(c.cat_scan_interval);
-  const stillScan = scan < 0 ? "still-cat scan off"
-    : `still-cat scan ${scan === 0 ? "every frame" : `every ${scan}s`} @ ${c.cat_scan_tiling}/${c.cat_scan_tile_overlap}` +
-      (Number(c.cat_scan_frames) > 1 ? ` ×${c.cat_scan_frames}-frame avg` : "");
-  el.textContent = "Workflow: motion gate → " +
-    `${c.detector_model} (${c.accelerator}) → roll on person / log cats · ` +
-    `track fusion ${c.track_fusion === false ? "OFF" : "on"} · ${stillScan} · ` +
-    `VLM ${VLM_ESCALATION_ENABLED ? "on-demand incl. live cameras" : "on-demand, uploads only"}`;
-}
+// The "Workflow: …" summary line was removed (with `lastCfg`, which only existed to
+// feed it): it read the GLOBAL config while model, accelerator and track_fusion are
+// all per-camera settings, and it printed the *requested* accelerator rather than the
+// effective one — so it could claim "onnx-cuda" while a camera ran TensorRT or had
+// silently fallen back to CPU. The honest, per-camera version of this is already the
+// camera chips' `ran_on` / `fallback` (#90).
 
 async function loadConfig() {
   const { body: cfg } = await api("/api/config");
   if (!cfg) return false;   // couldn't reach the app — signal it so init() can show the retry (H3)
-  lastCfg = cfg;
-  renderWorkflowLine();
   for (const f of FIELDS) {
     if ($(f) && cfg[f] !== undefined && cfg[f] !== null) $(f).value = cfg[f];
   }
@@ -647,7 +637,6 @@ async function saveConfig() {
       ({ ok } = await api("/api/config", postJSON(gathered)));
       // #104: keep the workflow line honest — reflect what was just saved, not the
       // config snapshot from page load (the "still-scan every 5s when off" bug).
-      if (ok && lastCfg) { Object.assign(lastCfg, gathered); renderWorkflowLine(); }
     } while (savePending);
   } finally {
     saveInFlight = false;
@@ -697,6 +686,7 @@ async function refreshStatus() {
   if (body.rolls) parts.push(`${body.rolls} rolls, ${body.treats} treats`);
   if (body.last_error) parts.push(`⚠ ${body.last_error}`);
   detail.textContent = parts.join("  ·  ");
+  detail.title = detail.textContent;   // clamped to 2 lines in CSS — hover for the rest
   renderCamChips(body.cameras);
   updateLiveView(body.running);
   updateEscalationCameraRow(body);
@@ -765,21 +755,24 @@ async function pollFeeds() {
   updateSecondFeed(secondary);
 }
 
-// ---- per-section gear popups (#117) ----------------------------------------
-// One pattern, reused: a ⚙ in a section header opens that section's settings.
-// Anchored (not modal) so a knob can be twisted while watching the feed behind it.
+// ---- per-section header popups (#117) --------------------------------------
+// One pattern, reused by every section-header button: ⚙ opens that section's
+// settings, ❓ opens its explanation. Anchored (not modal) so a knob can be
+// twisted — or the help read — while watching the feed behind it. Keeping the
+// long help behind a button is the point: it stops explanation text padding out
+// the scroll for someone who already knows the app.
 function closeGearPopups(keep) {
   for (const pop of document.querySelectorAll(".gear-popup")) {
     if (pop !== keep) pop.classList.add("hidden");
   }
-  for (const btn of document.querySelectorAll(".gear")) {
+  for (const btn of document.querySelectorAll(".popup-btn")) {
     btn.setAttribute("aria-expanded",
       String(!!keep && btn.dataset.popup === keep.id));
   }
 }
 
 function wireGearPopups() {
-  for (const btn of document.querySelectorAll(".gear")) {
+  for (const btn of document.querySelectorAll(".popup-btn")) {
     btn.setAttribute("aria-expanded", "false");
     btn.onclick = (e) => {
       e.stopPropagation();
@@ -795,7 +788,7 @@ function wireGearPopups() {
   }
   // Dismissible: click anywhere outside, or Escape.
   document.addEventListener("click", (e) => {
-    if (!e.target.closest(".gear-popup") && !e.target.closest(".gear")) {
+    if (!e.target.closest(".gear-popup") && !e.target.closest(".popup-btn")) {
       closeGearPopups(null);
     }
   });
@@ -878,7 +871,15 @@ async function loadCats() {
     label.textContent = n > 1 ? `Cats in ${n} rooms — show me!` : "Cat spotted — show me!";
   } else { btn.classList.remove("detecting"); label.textContent = "Show me the cat!"; }
   const box = $("cat-last");
-  if (!body.last) { box.innerHTML = '<p class="muted">No cats seen yet.</p>'; return; }
+  if (!body.last) {
+    // Don't bail here: the rest of the panel still needs clearing. Returning early
+    // was why "Clear log" appeared to only wipe the card above — the sightings list
+    // kept rendering its stale rows because renderSightings() never ran.
+    box.innerHTML = '<p class="muted">No cats seen yet.</p>';
+    renderSightings([]);
+    if ($("scan-last")) $("scan-last").textContent = "";
+    return;
+  }
   const s = body.last;
   const where = (s.zone || s.region) ? ` — ${esc(s.zone || s.region)}` : "";
   const cam = s.camera ? ` on <strong>${esc(s.camera)}</strong>` : "";
@@ -908,24 +909,39 @@ async function loadCats() {
   }
 }
 
+// How many sightings the log renders. The list is height-capped and scrolls, so
+// this is "how deep the history goes", not "how many fit on screen" — raise it
+// (and the server's /api/cats?limit=) to keep more.
+const SIGHTINGS_SHOWN = 20;
+
 // #93: the cats-only sightings log — every entry tagged with HOW it was found
 // (motion / still-scan / track / find / zoom+yolo…), images open in the lightbox.
 function renderSightings(recent) {
   const box = $("cat-sightings");
   if (!box) return;
   if (!recent.length) { box.innerHTML = '<p class="muted">No sightings yet.</p>'; return; }
-  box.innerHTML = recent.slice(0, 30).map((r) => {
+  // Fixed columns, not an inline run of spans: every value lands in the same place
+  // on every row, so the list scans vertically instead of looking ragged. Top line
+  // is when + where-camera; bottom line is the detail (spot · how · confidence).
+  box.innerHTML = recent.slice(0, SIGHTINGS_SHOWN).map((r) => {
     const spot = r.zone || r.region || "";
     const src = r.source || "yolo";
+    const score = Number(r.score);
     const img = r.image
-      ? `<img class="cat-thumb" src="/snapshots/${r.image}" style="height:42px;cursor:zoom-in" onclick="zoomImg(this.src)"/>`
-      : "";
-    return `<div class="row" style="gap:8px;align-items:center;margin:3px 0">
-      ${img}<span>${fmtTime(r.ts)}</span>
-      <strong>${esc(r.camera || "")}</strong>
-      <span class="muted">${esc(spot)}</span>
-      <span class="cam-chip muted" title="how this sighting was detected">${esc(src)}</span>
-      <span class="muted">${(r.score || 0).toFixed ? (r.score).toFixed(2) : r.score}</span>
+      ? `<img class="sighting-thumb" src="/snapshots/${r.image}" alt="sighting"
+           title="click to enlarge" onclick="zoomImg(this.src)"/>`
+      : `<span class="sighting-thumb sighting-thumb-empty" aria-hidden="true"></span>`;
+    return `<div class="sighting">
+      ${img}
+      <div class="sighting-meta">
+        <div class="sighting-when"><strong>Seen at</strong> ${fmtTime(r.ts)}${
+          r.camera ? ` on <strong>${esc(r.camera)}</strong>` : ""}</div>
+        <div class="sighting-sub">
+          <span title="${esc(spot)}">${esc(spot)}</span>
+          <span title="how this sighting was detected">${esc(src)}</span>
+          <span>${Number.isFinite(score) ? score.toFixed(2) : esc(String(r.score ?? ""))}</span>
+        </div>
+      </div>
     </div>`;
   }).join("");
 }
@@ -1440,7 +1456,6 @@ async function loadVlmStatus() {
   VLM_ESCALATION_ENABLED = !!(body.escalation && body.escalation.enabled);
   const et = $("vlm-escalation-toggle");
   if (et) et.checked = VLM_ESCALATION_ENABLED;
-  renderWorkflowLine();                 // the gate is part of the workflow line
   if (!body.available) {
     const note = $("vlm-unavailable");
     note.textContent = "moondream isn’t installed — the tester is ready, but local Run needs: pip install moondream, a supported GPU (CUDA/Ampere or Apple Silicon), and an API key. Cloud mode needs only the package + key. It’ll work once that’s in place.";
@@ -1954,10 +1969,7 @@ function wire() {
     updateSecondFeed(null);   // #116: move the 2nd feed off a collision with this one
     refreshStatus();
   };
-  $("cat_scan_interval").onchange = () => {
-    if (lastCfg) { lastCfg.cat_scan_interval = Number($("cat_scan_interval").value); renderWorkflowLine(); }
-    saveConfig();
-  };
+  $("cat_scan_interval").onchange = saveConfig;
   $("live-img").onerror = () => { if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); } };
   $("smooth_feed").onchange = async () => {
     await api("/api/live/smooth", postJSON({ on: $("smooth_feed").checked }));

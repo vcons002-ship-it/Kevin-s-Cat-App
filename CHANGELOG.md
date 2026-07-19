@@ -11,6 +11,58 @@ everything through the latest entry is on `main`.
 
 _Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
 
+## [0.54.0] — 2026-07-19
+
+A guided pass over the three sections used most while testing — header/status bar,
+Live detection and Cat cam — to get explanation and configuration out of the
+persistent scroll so the main view is about *watching*.
+
+### Added
+- **Per-section ❓ help popups**, extending the ⚙ pattern from #117: a section's
+  explanation now lives behind a button in its header instead of a wall of text
+  under it. Live detection and Cat cam have one; the trigger machinery is shared
+  (`.popup-btn`), so adding help to another section is a button plus a popup with
+  no new JS.
+
+### Changed
+- **Header** — the tagline is gone and the guide link is a bare **❓** in the
+  top-right corner (no "Guide" wording).
+- **Status bar** — the status detail (last roll · counts · errors) moved to the
+  right of the buttons and is capped at two lines, truncating with an ellipsis and
+  keeping the full text on hover, so a long error can't grow the bar.
+  "Start watching" no longer wraps to two lines, so it matches Stop's height.
+- **Live detection** — camera pickers sit with the heading on the left; ❓ and ⚙
+  group on the right. The toggle row is evenly spread at every width (it only did
+  that once the labels dropped). When the header runs out of room the **pickers**
+  drop to a full-width line of their own and stretch to fill it, while the buttons
+  stay on the heading row — a wrapping flex row otherwise drops its *last* item,
+  which stranded the buttons on a line with a row-wide gap beside them.
+- **Cat cam — Recent sightings rebuilt as a scannable list.** Bigger thumbnails
+  (120×80, up from 42px tall and ragged widths), each entry on two lines —
+  **Seen at** *time* on **camera**, then location · type · confidence in fixed
+  columns sized to their longest possible value and centred, with hairline rules
+  between the values and between entries. Height-capped and scrollable (the rules
+  stop clear of the scrollbar). **Clear log** moved inside the section, so it costs
+  no space until the log is expanded.
+- **The "Workflow: …" summary line was removed** (along with `lastCfg`, which only
+  existed to feed it). It read the GLOBAL config while `detector_model`,
+  `accelerator` and `track_fusion` are all **per-camera** settings, and it printed
+  the *requested* accelerator rather than the effective one — so it could claim
+  `onnx-cuda` while a camera actually ran TensorRT or had silently fallen back to
+  CPU. That is the exact thing `effective_accelerator()` exists to prevent
+  ("fallbacks must be visible, never re-labelled"); the honest per-camera version
+  is already the camera chips' `ran_on` / `fallback` (#90).
+
+### Fixed
+- **"Clear log" now clears the sightings list, not just the card above it.**
+  `clear()` was wiping the log server-side all along, but `loadCats()` returned
+  early when the log came back empty — so `renderSightings()` never ran and the
+  list kept showing stale rows.
+- **The two camera pickers were different widths.** A leftover
+  `#live-camera { max-width: 45% }` — an ID selector, so it outranked the shared
+  sizing — capped only the *first* picker, splitting the row unevenly. Both are
+  now sized together.
+
 ## [0.53.1] — 2026-07-18
 
 ### Fixed

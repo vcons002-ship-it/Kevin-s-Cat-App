@@ -25,12 +25,21 @@ main { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
    watching. Anchored under the header rather than a modal — you're meant to twist a
    knob and immediately watch the feed behind it. */
 .gear-anchor { position: relative; }
-.gear {
+/* The header's buttons (❓ help, ⚙ settings) group together on the RIGHT, while
+   the heading and its camera pickers stay left. */
+.head-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.popup-btn {
   background: none; border: 1px solid var(--line); color: var(--muted);
   border-radius: 8px; padding: 1px 8px; font-size: 15px; line-height: 1.5;
   cursor: pointer; flex: 0 0 auto;
 }
-.gear:hover, .gear[aria-expanded="true"] { color: var(--ink); border-color: var(--accent); }
+.popup-btn:hover, .popup-btn[aria-expanded="true"] {
+  color: var(--ink); border-color: var(--accent);
+}
+/* Help prose inside a popup: readable measure, muted like the old .help block. */
+.gear-popup p { margin: 0 0 9px; font-size: 0.86rem; color: var(--muted); }
+.gear-popup p:last-child { margin-bottom: 0; }
+.gear-popup p strong { color: var(--ink); }
 .gear-popup {
   position: absolute; top: 100%; right: 0; z-index: 60; margin-top: 6px;
   width: min(460px, 92vw); max-height: 70vh; overflow-y: auto;
@@ -60,11 +69,26 @@ main { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
    never split from its label, and the two stay centred on each other), and on a
    narrow window the labels drop away entirely — the tooltips still explain each
    one, so emoji-only stays usable instead of spilling to a second line. */
-.feed-cams { gap: 6px; flex-wrap: nowrap; }
+.feed-cams { gap: 6px; flex-wrap: nowrap; min-width: 0; }
 .feed-cams select { max-width: 46%; }
+/* Wrap priority when the header runs out of room: the ❓/⚙ stay put on the heading
+   row and the CAMERA PICKERS drop, together, to a full-width line of their own.
+   A wrapping flex row otherwise drops its LAST item first — which stranded the
+   buttons alone on a line with a row-wide gap beside them. `order` puts the
+   pickers last in wrap sequence while keeping them visually left of the buttons
+   when everything fits, and flex-basis:100% makes them claim the whole line
+   (stretching to fill it) instead of huddling at one end. */
+@media (max-width: 700px) {
+  .feed-cams { order: 3; flex-basis: 100%; }
+  /* min-width:0 or the selects refuse to shrink past their longest option text,
+     so they'd split the row unevenly instead of halving it. */
+  .feed-cams select { flex: 1 1 0; min-width: 0; max-width: none; }
+}
 .feed-toggles {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
-  padding: 6px 0; margin: 0 0 10px;
+  /* Evenly spread across the row at every width — it used to only do this once
+     the labels dropped, so the labelled state looked bunched to the left. */
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 4px 14px; padding: 6px 0; margin: 0 0 10px;
   border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
 }
 .feed-toggles .checkbox {
@@ -76,7 +100,7 @@ main { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
 }
 .feed-toggles .tgl-emoji { line-height: 1; }
 @media (max-width: 760px) {
-  .feed-toggles { gap: 4px 6px; justify-content: space-between; }
+  .feed-toggles { gap: 4px 6px; }
   .feed-toggles .tgl-text { display: none; }
 }
 /* Second live feed (#113): a smaller companion view under the main one — the
@@ -106,8 +130,14 @@ a:visited { color: var(--link-visited); }
 a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 3px; }
 /* The download "buttons" (a.ghost) keep their button look: white text on the box. */
 a.ghost, a.ghost:visited { color: #fff; }
-header h1 { margin: 0 0 4px; font-size: 1.7rem; }
-.tag { color: var(--muted); margin: 0 0 18px; }
+/* Title row: name on the left, the guide ❓ tucked into the top-right corner. */
+header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin: 0 0 18px;
+}
+header h1 { margin: 0; font-size: 1.7rem; }
+.guide-link { font-size: 1.15rem; line-height: 1.6; text-decoration: none; }
+.guide-link:hover, .guide-link:focus { text-decoration: none; }
 .card {
   background: var(--card);
   border: 1px solid var(--line);
@@ -196,6 +226,17 @@ summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
    label's specificity so the auto width actually wins. */
 label.checkbox input { flex: none; width: auto; }
 .status { display: flex; align-items: center; gap: 10px; }
+/* "Start watching" used to wrap to two lines, making it taller than Stop. */
+.status button { white-space: nowrap; }
+/* Status detail (last roll · counts · errors) sits to the RIGHT of the buttons and
+   is capped at two lines — a long error truncates with an ellipsis instead of
+   growing the bar. The full text is kept in the title attribute, so nothing is
+   lost: hover to read it all. */
+#status-detail {
+  text-align: right; font-size: 0.86rem; max-width: 46%;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
 .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block;
        flex: none; aspect-ratio: 1 / 1; }
 .dot.running { background: var(--go); box-shadow: 0 0 8px var(--go); }
@@ -233,7 +274,7 @@ footer { margin-top: 20px; }
 .cats-card { text-align: center; }
 .cats-card h2 { font-size: 1.5rem; }
 .cats-card .help { text-align: left; }
-.cats-foot { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 4px; }
+/* (.cats-foot removed — "Clear log" moved inside the Recent-sightings section.) */
 
 /* Test detection tool */
 .btn-file { cursor: pointer; display: inline-block; }
@@ -304,7 +345,60 @@ footer { margin-top: 20px; }
 .cam-chip { font-size: 0.8rem; }
 .chip-ok { color: var(--go); }
 .chip-bad { color: var(--stop); }
-#live-camera { max-width: 45%; }
+/* (The old `#live-camera { max-width: 45% }` is gone: an ID selector outranked the
+   .feed-cams sizing and only capped the FIRST picker, so the two split the row
+   unevenly. Both are now sized together by `.feed-cams select`.) */
+
+/* Recent sightings (#117 walkthrough): a scannable table, not a run of inline
+   spans. Every value sits in a fixed column so the eye can go straight down a
+   column, with hairline rules between columns and between rows so entries stop
+   running together. Height-capped and scrollable — the log shouldn't push the
+   rest of the page away when it's expanded. */
+/* ~5 rows visible, the rest by scrolling. This height and SIGHTINGS_SHOWN in
+   app.js are the two knobs for "how much log is on screen".
+   padding-right keeps the row rules clear of the scrollbar — a border running to
+   the very edge reads as if it's underlining the scrollbar too. */
+.sightings {
+  max-height: 480px; overflow-y: auto; margin-top: 6px; padding-right: 12px;
+}
+.sighting {
+  display: flex; align-items: center; gap: 12px;
+  padding: 7px 2px; border-bottom: 1px solid var(--line);
+}
+.sighting:last-child { border-bottom: 0; }
+.sighting-thumb {
+  width: 120px; height: 80px; object-fit: cover; flex: 0 0 auto;
+  border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in;
+}
+.sighting-thumb-empty { background: var(--bg); cursor: default; }
+/* text-align:left explicitly — the Cat-cam card centres its contents, so these
+   would otherwise sit off-axis from each other. */
+.sighting-meta { flex: 1 1 auto; min-width: 0; text-align: left; }
+/* When + where reads as one phrase, so no rule between them. */
+.sighting-when {
+  font-size: 0.9rem; color: var(--ink); padding: 0 8px 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Only the detail values are columned, and each column is only as wide as its
+   longest possible value plus a character of air — so the three sit as a tight
+   group instead of the confidence drifting off to the right. Widths come from the
+   actual vocabularies: location is the thirds grid ("bottom-right", 12), type is
+   motion/find/track/still-scan (10), confidence is always 0.00–1.00 (4). The +16px
+   is the horizontal padding (box-sizing: border-box), so the text keeps its full
+   character budget. A user-named zone can exceed 12 — it ellipsises, and the cell
+   carries a title so the full name is still readable on hover. */
+.sighting-sub {
+  display: grid;
+  grid-template-columns: calc(13ch + 16px) calc(11ch + 16px) calc(5ch + 16px);
+  justify-content: start; align-items: baseline;
+  color: var(--muted); font-size: 0.8rem;
+}
+.sighting-sub > span {
+  padding: 0 8px; min-width: 0; text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sighting-sub > span + span { border-left: 1px solid var(--line); }
+.sightings-foot { display: flex; justify-content: center; margin-top: 10px; }
 
 /* Cat sightings */
 .cat-last { display: flex; gap: 14px; align-items: center; justify-content: center; margin: 10px 0; flex-wrap: wrap; }

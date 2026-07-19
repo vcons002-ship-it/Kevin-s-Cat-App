@@ -14,27 +14,54 @@
   <main>
     <header>
       <h1>🎲🐱 Kevin's Cat App</h1>
-      <p class="tag">Roll a die when a person enters the kitchen — on a good roll, the speaker plays a chime: time for a treat!
-        <a href="/guide" target="_blank" rel="noopener" title="the user & workflow guide: what each button does, the proven detection workflow, and what every toggle changes">❓ Guide</a></p>
+      <a class="guide-link" href="/guide" target="_blank" rel="noopener"
+         aria-label="Guide"
+         title="the user &amp; workflow guide: what each button does, the proven detection workflow, and what every toggle changes">❓</a>
     </header>
 
     <section id="status-bar" class="card status">
       <span id="status-dot" class="dot stopped"></span>
       <span id="status-text">Stopped</span>
-      <span id="status-detail" class="muted"></span>
-      <span class="status-spacer"></span>
       <button id="start-btn" class="go" type="button">Start watching</button>
       <button id="stop-btn" class="stop" type="button" disabled>Stop</button>
-      <span id="workflow-line" class="muted" style="flex-basis:100%;font-size:12px" title="what actually runs when the loop is on — every default here is benchmark-measured (see the Guide)"></span>
+      <span class="status-spacer"></span>
+      <span id="status-detail" class="muted"></span>
     </section>
 
     <!-- ===== Cat cam: the star of the show ===== -->
     <section class="card cats-card" id="cats-card">
       <div class="row log-head gear-anchor">
         <h2>🐱 Cat cam</h2>
-        <button class="gear" type="button" data-popup="catcam-settings"
-                title="Cat-cam settings — the periodic still-cat check, and what the still-scan and “Show me the cat!” passes run"
-                aria-label="Cat cam settings">⚙</button>
+        <div class="head-actions">
+          <button class="popup-btn helpbtn" type="button" data-popup="catcam-help"
+                  title="What this section does" aria-label="Cat cam help">❓</button>
+          <button class="popup-btn gear" type="button" data-popup="catcam-settings"
+                  title="Cat-cam settings — the periodic still-cat check, and what the still-scan and “Show me the cat!” passes run"
+                  aria-label="Cat cam settings">⚙</button>
+        </div>
+        <div id="catcam-help" class="gear-popup hidden" role="dialog" aria-label="Cat cam help">
+          <div class="gear-popup-head">
+            <strong>Cat cam</strong>
+            <button class="gear-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <p>
+            Cats never trigger a treat — only people roll — but every sighting is
+            tracked here: <strong>when</strong>, on <strong>which camera</strong>,
+            and roughly <strong>where</strong> in the frame.
+          </p>
+          <p>
+            The button <strong>flashes when a cat is on camera right now</strong> —
+            moving <em>or</em> still — and tapping it pulls up the live feed of the
+            camera that saw it. When <strong>more than one room has a cat</strong>,
+            the feed rotates between them.
+          </p>
+          <p>
+            A sleeping cat makes no motion, so the app re-checks for a still cat on
+            the schedule set in ⚙ (<em>Always</em> runs the net every frame). Each
+            sighting is tagged with <strong>how</strong> it was found — motion,
+            still-scan, find, or track fusion.
+          </p>
+        </div>
         <div id="catcam-settings" class="gear-popup hidden" role="dialog" aria-label="Cat cam settings">
           <div class="gear-popup-head">
             <strong>Cat-cam settings</strong>
@@ -90,33 +117,72 @@
       </button>
       <div id="find-feedback" class="muted" style="text-align:center;font-size:13px;min-height:1.1em"></div>
       <div id="cat-last" class="cat-last"><p class="muted">No cats seen yet.</p></div>
-      <div class="cats-foot">
-        <button id="cats-clear" class="ghost" type="button">Clear log</button>
-      </div>
       <div id="scan-last" class="muted" style="text-align:center;font-size:12px;min-height:1.1em"></div>
       <details id="cat-sightings-box">
         <summary>🐾 Recent sightings</summary>
-        <div id="cat-sightings"><p class="muted">No sightings yet.</p></div>
+        <div id="cat-sightings" class="sightings"><p class="muted">No sightings yet.</p></div>
+        <div class="sightings-foot">
+          <button id="cats-clear" class="ghost" type="button"
+                  title="delete every recorded sighting — the log below and the “last seen” card above">Clear log</button>
+        </div>
       </details>
-      <p class="help">
-        Cats never trigger a treat — only people roll — but every sighting is
-        tracked here: <strong>when</strong>, on <strong>which camera</strong>, and
-        roughly <strong>where</strong> in the frame. The button <strong>flashes
-        when a cat is on camera right now</strong> — moving <em>or</em> still — and
-        tapping it pulls up the live feed of the camera that saw it. When
-        <strong>more than one room has a cat</strong>, the feed rotates between
-        them. A sleeping cat makes no motion, so the app re-checks for a still cat
-        on the schedule above (<em>Always</em> runs the net every frame).
-      </p>
     </section>
 
     <!-- ===== Live feed ===== -->
     <section class="card">
       <div class="row log-head gear-anchor">
         <h2>Live detection</h2>
-        <button class="gear" type="button" data-popup="live-settings"
-                title="Live-detection settings — how quickly Follow switches rooms"
-                aria-label="Live detection settings">⚙</button>
+        <div class="row feed-cams">
+          <select id="live-camera" title="which camera the main feed shows"></select>
+          <select id="live-camera2" title="which camera the second feed shows — enable ⧉ 2nd to choose one" disabled></select>
+        </div>
+        <div class="head-actions">
+          <button class="popup-btn helpbtn" type="button" data-popup="live-help"
+                  title="What this section does" aria-label="Live detection help">❓</button>
+          <button class="popup-btn gear" type="button" data-popup="live-settings"
+                  title="Live-detection settings — how quickly Follow switches rooms"
+                  aria-label="Live detection settings">⚙</button>
+        </div>
+        <div id="live-help" class="gear-popup hidden" role="dialog" aria-label="Live detection help">
+          <div class="gear-popup-head">
+            <strong>Live detection</strong>
+            <button class="gear-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <p>
+            A real-time view of what the detector sees, with boxes drawn around any
+            person (green) or cat (orange) as it recognises them. It streams only
+            while watching and only to browsers with this open, so it costs little —
+            turn <em>📺 Live</em> off on a slow connection.
+          </p>
+          <p>
+            <strong>🌈 Trail</strong> paints where things moved this episode,
+            coloured by recency — <strong>blue = older → red = newest</strong> —
+            with a route line through the movement and a legend. It tracks
+            <em>all</em> motion (you included), and a big lighting change resets it
+            rather than flooding the screen.
+          </p>
+          <p>
+            <strong>📍 Last</strong> keeps a purple, age-labelled box at the cat's
+            newest confirmed position, so “where is she?” stays answered when
+            nothing is detected right now. It hides while a live cat box is on
+            screen and does not expire on a timer.
+          </p>
+          <p>
+            <strong>🐾 Follow</strong> switches the feed to whichever room has the
+            cat, and <strong>⧉ 2nd</strong> adds a second feed — two cats in two
+            rooms get one each; with a single cat the second shows the room she came
+            from. Switching is deliberately sticky so a cat crossing a doorway can't
+            yank the feed away; tune that with the ⚙.
+          </p>
+          <p>
+            <strong>🎞 Smooth</strong> runs a dedicated capture thread so the video
+            plays at the camera's frame rate instead of stuttering at your scan rate
+            (which is gated by detection speed — heavy on a slow CPU / big model).
+            It costs a little extra CPU and reads the camera continuously; leave it
+            off if you only need the occasional frame. Smoothness is still limited
+            by the camera's actual output rate.
+          </p>
+        </div>
         <div id="live-settings" class="gear-popup hidden" role="dialog" aria-label="Live detection settings">
           <div class="gear-popup-head">
             <strong>Follow-mode tuning</strong>
@@ -130,10 +196,6 @@
           </div>
           <p class="hint">Applies immediately — no restart. Tune while watching:
             jumpy → raise <b>Hold</b>; slow to follow her out of a room → lower it.</p>
-        </div>
-        <div class="row feed-cams">
-          <select id="live-camera" title="which camera the main feed shows"></select>
-          <select id="live-camera2" title="which camera the second feed shows — enable ⧉ 2nd to choose one" disabled></select>
         </div>
       </div>
       <div class="feed-toggles">
@@ -164,23 +226,6 @@
         <img id="live-img2" alt="second live feed" />
       </div>
       <p id="live-note" class="muted">Start watching to see the live feed.</p>
-      <p class="help">
-        A real-time view of what the detector sees, with boxes drawn around any
-        person (green) or cat (orange) as it recognises them. It streams only
-        while watching and only to browsers with this open, so it costs little —
-        turn <em>Show live feed</em> off on a slow connection.
-        <br><strong>🌈 Trail overlay</strong> paints where things moved this
-        episode, coloured by recency — <strong>blue = older → red = newest</strong>
-        — with a route line through the movement and a legend. It tracks
-        <em>all</em> motion (you included), and a big lighting change resets it
-        rather than flooding the screen.
-        <br><strong>Smooth feed</strong> runs a dedicated capture thread so the
-        video plays at the camera's frame rate instead of stuttering at your scan
-        rate (which is gated by detection speed — heavy on a slow CPU / big
-        model). It costs a little extra CPU and reads the camera continuously;
-        leave it off if you only need the occasional frame. Smoothness is still
-        limited by the camera's actual output rate.
-      </p>
     </section>
 
     <!-- ===== Test detection (tune settings against a photo/video) ===== -->
@@ -463,7 +508,7 @@
       <div class="row log-head gear-anchor">
         <h2>Activity log</h2>
         <button id="log-clear" class="ghost" type="button">Clear</button>
-        <button class="gear" type="button" data-popup="log-settings"
+        <button class="popup-btn gear" type="button" data-popup="log-settings"
                 title="Activity-log settings — fusion diagnostics"
                 aria-label="Activity log settings">⚙</button>
         <div id="log-settings" class="gear-popup hidden" role="dialog" aria-label="Activity log settings">

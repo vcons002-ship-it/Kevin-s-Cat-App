@@ -20,10 +20,14 @@ def test_guide_serves_the_markdown_as_html():
         assert needle in page, needle
 
 
-def test_index_links_the_guide_and_shows_the_workflow_line():
+def test_index_links_the_guide_without_the_workflow_line():
     page = _client().get("/").get_data(as_text=True)
     assert 'href="/guide"' in page
-    assert 'id="workflow-line"' in page
+    # The "Workflow: …" summary was removed: it read the GLOBAL config while model,
+    # accelerator and track_fusion are per-camera, and it showed the *requested*
+    # accelerator, so it could claim "onnx-cuda" while a camera ran TensorRT or had
+    # silently fallen back to CPU. `ran_on`/`fallback` per camera is the honest one.
+    assert 'id="workflow-line"' not in page
 
 
 def test_md_converter_basics():
