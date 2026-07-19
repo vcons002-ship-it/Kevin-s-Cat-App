@@ -9,7 +9,27 @@ everything through the latest entry is on `main`.
 
 ## [Unreleased]
 
-_Nothing yet — see [`ROADMAP.md`](ROADMAP.md) for what's planned._
+### Added
+- Two offline diagnostic scripts (no app changes) for investigating a cat that
+  crossed a room without the app reacting, while an offline replay of the same
+  clip said motion should have fired:
+  - `scripts/rtsp_latency_probe.py` — does the synchronous read path get
+    **current** frames, or a growing **backlog**? It reads slowly (like the loop
+    does), then reads flat out and times each read: queued frames come back
+    instantly, a live stream makes each read wait. This decides whether the motion
+    prefilter is diffing frames ~1/camera_fps apart or ~1/scan_fps apart.
+  - `scripts/motion_replay.py` — replays a clip through the app's **real**
+    `MotionPrefilter` and `apply_image_adjustments` (imported, not copied), using
+    the camera's own settings from `config.yaml`, and reports the verdict at both
+    frame spacings side by side.
+
+  Why it matters: the prefilter's verdict is an **area** test on the changed
+  region, and a cat covers ~2× the area in 209 ms that it does in 35 ms. On the
+  reported clip (2304×1296 @ 28.7 fps, custom `0.001/30/18`) the same footage
+  fires **19/53** at 209 ms spacing and **0/313** at 35 ms — peaking at 71% of the
+  area threshold and never clearing it. So an offline test that samples at
+  `scan_fps` is only a valid proxy for the live app if frames are being dropped
+  rather than queued.
 
 ## [0.55.0] — 2026-07-19
 
