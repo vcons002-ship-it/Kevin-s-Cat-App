@@ -143,3 +143,95 @@ def test_history_is_bounded():
     for i, g in enumerate(_walker(400, step=1)):
         mp.update(g, ts_ms=i * 33)
     assert len(mp._history) <= 12
+
+
+# ---- post-motion hold (0.57.0) -------------------------------------------------
+# Motion decides WHEN to look. On its own that means the net only ever sees frames
+# that moved — the motion-blurred, mid-stride ones — and a cat pausing mid-walk runs
+# no inference at all. The hold keeps looking for a moment after movement stops.
+import time as _time
+
+import numpy as np
+
+from d20app.detector import PersonDetector
+
+
+def _hold_detector(hold, moved_flags):
+    """A detector whose motion verdict is scripted; returns it plus a net-run log."""
+    det = PersonDetector(source="unused", motion_hold_seconds=hold,
+                         track_fusion=False)
+    frame = np.full((360, 640, 3), 110, np.uint8)
+
+    class _Cap:
+        def read(self):
+            return True, frame
+
+    det._ensure_cap = lambda: _Cap()
+    seq = iter(moved_flags)
+    det._motion.update = lambda gray, ts_ms=None: next(seq)
+    runs = []
+    det._detect_boxes = lambda img, floor: runs.append(1) or []
+    return det, runs
+
+
+def test_hold_keeps_the_net_running_after_motion_stops():
+    # One motion frame, then four still ones: without the hold only the first would
+    # reach the net. This is the whole point — the frames just after movement stops
+    # are the sharpest and best-posed in the sequence.
+    det, runs = _hold_detector(5.0, [True, False, False, False, False])
+    outcomes = [det.read_and_detect(detect=True) for _ in range(5)]
+
+    assert len(runs) == 5                       # every frame reached the net
+    assert outcomes[0].motion and not outcomes[0].held
+    assert all(not o.motion and o.held for o in outcomes[1:])   # motion stays honest
+
+
+def test_hold_expires_and_the_gate_closes_again():
+    det, runs = _hold_detector(0.05, [True, False, False])
+    det.read_and_detect(detect=True)             # motion: opens the window
+    det.read_and_detect(detect=True)             # inside it: still runs
+    assert len(runs) == 2
+    _time.sleep(0.2)                             # window lapses
+    outcome = det.read_and_detect(detect=True)
+    assert len(runs) == 2 and not outcome.held   # gate shut again — CPU handed back
+
+
+def test_further_motion_refreshes_the_window():
+    # An active cat is watched continuously: the setting only bounds how long a LULL
+    # is tolerated, not how long a cat may be tracked.
+    det, runs = _hold_detector(0.3, [True, False, True, False])
+    det.read_and_detect(detect=True)
+    _time.sleep(0.2)
+    det.read_and_detect(detect=True)             # held, near the end of the window
+    det.read_and_detect(detect=True)             # real motion: re-arms it
+    _time.sleep(0.2)
+    outcome = det.read_and_detect(detect=True)   # 0.4s after the FIRST motion
+    assert outcome.held and len(runs) == 4
+
+
+def test_hold_off_is_motion_frames_only():
+    det, runs = _hold_detector(0.0, [True, False, False])
+    outcomes = [det.read_and_detect(detect=True) for _ in range(3)]
+    assert len(runs) == 1                        # pre-0.57 behaviour, exactly
+    assert not any(o.held for o in outcomes)
+
+
+def test_hold_never_overrides_a_detection_pause():
+    # The hold gates like motion, NOT like a forced scan: a camera paused for the
+    # treat cooldown (or resting under round-robin) must stay off. If this ever
+    # regresses, a hold would quietly undo the pause's whole reason to exist.
+    det, runs = _hold_detector(5.0, [True, False, False])
+    det.read_and_detect(detect=True)             # motion: opens the window
+    assert len(runs) == 1
+    det.read_and_detect(detect=False)            # paused, mid-hold
+    det.read_and_detect(detect=False)
+    assert len(runs) == 1
+
+
+def test_hold_is_hot_reloadable_and_closes_an_open_window():
+    det, runs = _hold_detector(5.0, [True, False, False])
+    det.read_and_detect(detect=True)
+    det.reconfigure({"motion_hold_seconds": 0.0})
+    outcome = det.read_and_detect(detect=True)
+    assert det.motion_hold_seconds == 0.0
+    assert len(runs) == 1 and not outcome.held   # the open window shut immediately

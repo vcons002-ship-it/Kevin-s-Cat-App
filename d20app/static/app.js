@@ -560,6 +560,7 @@ async function loadConfig() {
   if ($("find_confidence")) $("find_confidence").value = cfg.find_confidence ?? 0;
   // Gear-popup settings (#117).
   if ($("fusion_debug")) $("fusion_debug").checked = !!cfg.fusion_debug;
+  if ($("motion_hold_seconds")) $("motion_hold_seconds").value = cfg.motion_hold_seconds ?? 2;
   if ($("swap_confirm_count")) $("swap_confirm_count").value = cfg.swap_confirm_count ?? 0;
   if ($("camera_reuse_cooldown_seconds"))
     $("camera_reuse_cooldown_seconds").value = cfg.camera_reuse_cooldown_seconds ?? 0;
@@ -610,6 +611,7 @@ function gatherConfig() {
     find_confidence: Number($("find_confidence").value),
     // Gear-popup setting (#117), hot: it rides the running detectors' reload.
     fusion_debug: $("fusion_debug").checked,
+    motion_hold_seconds: Number($("motion_hold_seconds").value),
     swap_confirm_count: Number($("swap_confirm_count").value),
     camera_reuse_cooldown_seconds: Number($("camera_reuse_cooldown_seconds").value),
   };
@@ -2027,7 +2029,7 @@ function wire() {
                     "scan_frames", "scan_confidence", "find_scan", "find_model",
                     "find_tiling", "find_tile_overlap", "find_confidence",
                     // gear-popup settings (#117) — same auto-save, so they apply live
-                    "fusion_debug", "swap_confirm_count",
+                    "fusion_debug", "motion_hold_seconds", "swap_confirm_count",
                     "camera_reuse_cooldown_seconds"]) {
     const el = $(id);
     if (el) el.onchange = saveConfig;

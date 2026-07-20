@@ -145,9 +145,25 @@
         </div>
         <div id="live-settings" class="gear-popup hidden" role="dialog" aria-label="Live detection settings">
           <div class="gear-popup-head">
-            <strong>Follow-mode safeguards</strong>
+            <strong>Live detection settings</strong>
             <button class="gear-close" type="button" aria-label="Close">✕</button>
           </div>
+          <h4>Detection thoroughness</h4>
+          <p>
+            Motion decides <em>when</em> to look. On its own that means the detector
+            only ever sees frames that <strong>moved</strong> — the blurriest,
+            hardest ones — and a cat that pauses mid-walk goes unwatched. The hold
+            keeps looking for a moment after movement stops, which is when the
+            sharpest frames arrive.
+          </p>
+          <div class="grid">
+            <label title="after motion fires, keep running the detector for this many seconds. Every further motion frame refreshes it, so an active cat is watched continuously — this only sets how long a LULL is tolerated. Costs CPU on cameras with steady background movement (a curtain, a tree). 0 = only run on frames that moved.">Motion hold (s)
+              <input type="number" id="motion_hold_seconds" step="0.5" min="0" max="30" /></label>
+          </div>
+          <p class="hint">Detection pauses (treat cooldown) and round-robin still
+            win over the hold — it decides thoroughness, never whether a camera is
+            awake.</p>
+          <h4>Follow-mode safeguards</h4>
           <p>
             Feeds normally follow the two most recent sightings and hold. These two
             only matter if <strong>overlapping camera views</strong> make a cat near

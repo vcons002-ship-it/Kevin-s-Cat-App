@@ -7,6 +7,39 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.57.0] — 2026-07-19
+
+### Added
+- **Post-motion hold: the detector keeps looking for a moment after movement
+  stops** (`motion_hold_seconds`, default **2.0 s**, in Live detection ⚙).
+
+  Motion decides *when* to look, and until now it decided that per frame with no
+  memory: the net ran only on frames whose own motion test fired. That has a
+  consequence nobody intended — the frames that fire the motion test are exactly
+  the **motion-blurred, mid-stride** ones, which are the hardest frames an object
+  detector can be handed. The sharp, settled, well-posed frames that arrive a
+  moment after a cat stops were discarded unlooked-at. On a real clip only ~37% of
+  frames during a cat's transit ran any inference at all.
+
+  Now real motion opens a window, every further motion frame refreshes it, and
+  while it is open the net runs on frames that did not themselves move. The
+  duration therefore does not bound how long a cat can be tracked — an active cat
+  refreshes it indefinitely — it only sets **how long a lull is tolerated**.
+
+  It gates like motion, deliberately **not** like a forced scan: a camera paused
+  for the treat cooldown, or resting under round-robin, stays off. The hold decides
+  thoroughness, never whether a camera is awake. `FrameOutcome.motion` still means
+  "this frame actually moved" (the cat trail and roll path both need that honesty);
+  held frames are flagged separately as `held` and are treated as live looks, so a
+  cat found in one is recorded through the normal live path rather than mislabelled
+  a "still-scan".
+
+  Cost lands where there is recurring background movement — a curtain, a tree
+  through a window — since a trip every few seconds keeps the window permanently
+  open on that camera. Set it to 0 for the pre-0.57 motion-frames-only behaviour.
+  Unrelated to **Cat check** (`cat_scan_interval`), which covers a cat that never
+  moves at all; this covers the seconds *after* one does.
+
 ## [0.56.0] — 2026-07-19
 
 ### Fixed

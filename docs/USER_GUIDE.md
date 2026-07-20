@@ -214,6 +214,15 @@ Detection assists (defaults = the proven workflow; each is safe to flip):
   honest `source: track` sighting. Turn off if a camera's compression shimmer
   ever fakes a moving track (none seen in testing; the movement + smooth-chain
   requirements are the guards).
+- **Motion hold** *(global; default 2 s; Live detection ⚙)* — how long the
+  detector keeps running after motion stops, refreshed by every further motion
+  frame. At 0 the net only ever sees frames that *moved* — which are exactly the
+  motion-blurred, mid-stride ones — so a cat that pauses mid-walk goes unwatched
+  and the sharpest frames (just after it settles) are thrown away. Raise it on
+  cameras where cats amble and stop; lower it if a camera with steady background
+  movement (a curtain, a tree outside) keeps the net running for nothing. It
+  gates like motion, so a treat-cooldown pause and round-robin still win over it.
+  Distinct from **Cat check**, which covers a cat that never moves at all.
 - **Scan frames** *(per camera; default 3)* — frames averaged per still-cat
   scan. 1 = off (single frame). Higher = cleaner dim-room scans at slightly
   longer scan time. Never affects the fast treat path.

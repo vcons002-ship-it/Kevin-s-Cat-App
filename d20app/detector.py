@@ -56,6 +56,7 @@ class FrameOutcome:
     motion: bool             # did the cheap motion pre-filter trigger?
     person: bool             # was a person detected above the threshold?
     labels: tuple = ()       # other classes seen (e.g. ("cat",)), best score first
+    held: bool = False       # no motion THIS frame, but within the post-motion hold
 
 
 _cv2_quieted = False
@@ -364,7 +365,8 @@ class PersonDetector:
                  cat_confidence: float = 0.5,
                  live_tiling: str = "off", live_tile_overlap: float = 0.2,
                  locator_classes=None, track_fusion: bool = True,
-                 fusion_debug: bool = False, motion_reference_ms: int = 0) -> None:
+                 fusion_debug: bool = False, motion_reference_ms: int = 0,
+                 motion_hold_seconds: float = 0.0) -> None:
         self.source = source
         self.confidence = confidence
         # The locator ("the cat") path: which classes count, and the confidence they
@@ -458,6 +460,15 @@ class PersonDetector:
         # still feeds outcome.motion (rolls need a real entrance), the trail,
         # and the null-frame bookkeeping — it just stops gating the net.
         self.motion_gate = bool(motion_gate)
+        # Post-motion hold: motion opens the net for this many seconds, refreshed by
+        # every further motion frame. Without it the net only ever sees frames that
+        # moved — which are exactly the motion-blurred, mid-stride ones. A cat that
+        # walks, pauses to sniff, walks again ran no inference during the pauses,
+        # and the sharpest, best-posed frames (just after it settles) were discarded.
+        # This is NOT `force`: it sits where `moved` sits, so a cooldown pause
+        # (detect=False) and round-robin resting still win over it.
+        self.motion_hold_seconds = max(0.0, float(motion_hold_seconds))
+        self._motion_hold_until = 0.0
         self._motion = MotionPrefilter(
             min_area_frac=motion_min_area_frac,
             diff_threshold=motion_diff_threshold,
@@ -596,6 +607,14 @@ class PersonDetector:
         if gate != self.motion_gate:
             self.motion_gate = gate
             changed = True
+
+        if "motion_hold_seconds" in spec:      # global, folded in by the worker
+            hold = max(0.0, float(spec["motion_hold_seconds"]))
+            if hold != self.motion_hold_seconds:
+                self.motion_hold_seconds = hold
+                if hold <= 0.0:
+                    self._motion_hold_until = 0.0   # close an open window at once
+                changed = True
 
         motion_map = {"motion_min_area_frac": ("min_area_frac", float),
                       "motion_diff_threshold": ("diff_threshold", int),
@@ -1448,10 +1467,22 @@ class PersonDetector:
             exclude = self._person_boxes
         self._trail.update(gray, moved, exclude=exclude)
         self._push_ring(cropped)               # temporal-mosaic frame history (#68)
-        # Run the net on real motion, when a forced still-cat scan asks for it,
-        # or on every frame when the motion gate is off (#96).
+        # Post-motion hold: real motion (re)arms the window; while it's open the net
+        # keeps running on frames that didn't themselves move. `moved` stays the
+        # honest "this frame moved" — the trail above and outcome.motion below both
+        # need that — so the hold rides alongside it as `held`.
+        held = False
+        if self.motion_hold_seconds > 0.0:
+            now_hold = time.monotonic()
+            if moved:
+                self._motion_hold_until = now_hold + self.motion_hold_seconds
+            elif now_hold < self._motion_hold_until:
+                held = True
+        # Run the net on real motion, inside the post-motion hold, when a forced
+        # still-cat scan asks for it, or on every frame when the gate is off (#96).
         forced = force or scan          # the net runs regardless of the motion gate
-        if not forced and (not detect or not (moved or not self.motion_gate)):
+        if not forced and (not detect
+                           or not (moved or held or not self.motion_gate)):
             return FrameOutcome(motion=False, person=False)
 
         # The still-cat SCAN may use its own cat threshold (#101): the locator
@@ -1542,7 +1573,7 @@ class PersonDetector:
         )
         # ``motion`` reflects the pre-filter: False on a forced still-cat scan, so
         # the loop knows not to treat a forced look as real movement (it never rolls).
-        return FrameOutcome(motion=moved, person=person, labels=labels)
+        return FrameOutcome(motion=moved, person=person, labels=labels, held=held)
 
     def release(self) -> None:
         # Stop the grab thread (if any) before releasing the capture it reads.

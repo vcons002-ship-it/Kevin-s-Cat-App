@@ -562,6 +562,7 @@ class DetectionLoop:
                 motion_min_blob_px=spec["motion_min_blob_px"],
                 motion_gate=str(spec.get("motion_sensitivity", "")) != "off",
                 motion_reference_ms=cfg.motion_reference_ms,
+                motion_hold_seconds=cfg.motion_hold_seconds,
                 model=spec["model"],
                 accelerator=spec["accelerator"],
                 smooth_feed=spec["smooth_feed"],
@@ -746,7 +747,8 @@ class DetectionLoop:
                                 cat_scan_tile_overlap=cfg.cat_scan_tile_overlap,
                                 cat_scan_frames=cfg.cat_scan_frames,
                                 cat_scan_model=cfg.cat_scan_model,
-                                cat_scan_confidence=cfg.cat_scan_confidence)
+                                cat_scan_confidence=cfg.cat_scan_confidence,
+                                motion_hold_seconds=cfg.motion_hold_seconds)
                             detector.reconfigure(merged)
                             spec = fresh
                             roll_enabled = bool(spec["roll"])
@@ -842,7 +844,11 @@ class DetectionLoop:
                 # breaks the consecutive-motion person streak. Only a genuine periodic
                 # scan lands here (#101/#104/#111): motion-off AND a boost run the LIVE
                 # path below, tagged as their real path, not "still-scan".
-                if scan_due and not outcome.motion:
+                # A held frame (inside the post-motion window) is a live look, not a
+                # still-scan: something just moved here, so it records through the
+                # live path with its real source rather than as "still-scan".
+                moving = outcome.motion or outcome.held
+                if scan_due and not moving:
                     streak = 0
                     cat = _locator_hit(detector, outcome) if track_cats else None
                     with self._scan_lock:                         # H2: guard in-place insert
@@ -877,7 +883,7 @@ class DetectionLoop:
                 # actually detected something counts as active, so it records
                 # through the live path (tagged like any motion-triggered live
                 # detection) rather than as a "still-scan".
-                live_active = outcome.motion or (
+                live_active = moving or (
                     (gate_off or boost) and (outcome.person or outcome.labels))
                 if not live_active:
                     # Idle (no motion, no forced scan, nothing detected): the live
