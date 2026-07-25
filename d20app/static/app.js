@@ -661,7 +661,13 @@ function renderCamChips(cams) {
     else if (c.connected && c.fallback) {
       // #90: a degraded accelerator must be visible, not a buried warning.
       chip.textContent = `● live (${c.ran_on}!)`; chip.className = "cam-chip chip-bad";
-      chip.title = c.fallback;
+      // A degraded camera is exactly where the lag figures matter most — a CPU
+      // fallback is slow enough to stall the read loop and back frames up.
+      chip.title = c.fallback
+        + (typeof c.lag_s === "number" ? `\n${c.lag_s.toFixed(1)}s behind the live edge` : "")
+        + (typeof c.consume_rate === "number"
+          ? `\n${c.consume_rate.toFixed(2)}s of video per second of real time` : "")
+        + (c.work_ms ? `\nread+inference: ${c.work_ms} ms/tick` : "");
     }
     else if (c.connected) {
       // Lag also belongs here, not just on the feeds: most cameras aren't on a
