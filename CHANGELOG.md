@@ -27,6 +27,12 @@ everything through the latest entry is on `main`.
   seconds of video. Re-baselined on reconnect (the queue dies with the socket)
   and reported as unknown, not zero, on sources with no stream position (USB).
 
+  Shown **on each live feed** (top-left, opposite the lock) and on the camera
+  chips in Setup — the feeds because that is where you are when you notice the
+  stutter, the chips because most cameras aren't on a feed at any given moment
+  and one quietly falling behind is exactly what's being hunted. The feed badge
+  renders even at `0.0s`: a hidden readout is indistinguishable from a broken one.
+
   Diagnosis only — no behaviour change. The cause is not yet established: the
   loop reads one frame per tick and never drains the queue, which is
   long-standing, so it does not by itself explain a regression. `motion_hold_seconds: 0`

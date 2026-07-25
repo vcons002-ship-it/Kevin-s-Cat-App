@@ -664,14 +664,13 @@ function renderCamChips(cams) {
       chip.title = c.fallback;
     }
     else if (c.connected) {
-      // Feed/detection lag: RTSP frames queue, so a loop reading slower than the
-      // camera produces acts on ever-older frames. Shown once it's past a blink,
-      // and called out loudly past a second — at that point the app is deciding
-      // about a scene that has already gone.
+      // Lag also belongs here, not just on the feeds: most cameras aren't on a
+      // feed at any moment, and one silently falling behind is exactly what we're
+      // hunting. Same thresholds as the feed badge so the two never disagree.
       const lag = typeof c.lag_s === "number" ? c.lag_s : null;
       const late = lag !== null && lag >= 0.5 ? ` · ⏱ ${lag.toFixed(1)}s behind` : "";
       chip.textContent = (c.ran_on ? `● live · ${c.ran_on}` : "● live") + late;
-      chip.className = "cam-chip " + (lag !== null && lag >= 1 ? "chip-bad" : "chip-ok");
+      chip.className = "cam-chip " + (lag !== null && lag >= 3 ? "chip-bad" : "chip-ok");
       chip.title = lag === null ? "" :
         `frames are ${lag.toFixed(1)}s behind the live edge — detection sees this too` +
         (c.work_ms ? `\nread+inference: ${c.work_ms} ms/tick` : "") +
@@ -700,8 +699,37 @@ async function refreshStatus() {
   detail.textContent = parts.join("  ·  ");
   detail.title = detail.textContent;   // clamped to 2 lines in CSS — hover for the rest
   renderCamChips(body.cameras);
+  renderFeedLag(body.cameras);
   updateLiveView(body.running);
   updateEscalationCameraRow(body);
+}
+
+// Feed lag badge (0.58.0). Frames queue on the camera, so a loop that reads
+// slower than the camera produces acts on ever-older frames — and the feed shows
+// the frame the loop just read, so what you see IS what the detector saw. Shown
+// on the feed itself because that's where you are when you notice the stutter;
+// shown even at 0.0s, because a healthy reading is what makes a bad one legible.
+function renderFeedLag(cams) {
+  const shown = [liveCam, feed2Cam];
+  for (let i = 0; i < 2; i++) {
+    const el = $(`lag-${i}`);
+    if (!el) continue;
+    const cam = (cams || []).find((c) => c.name === shown[i]);
+    const lag = cam && typeof cam.lag_s === "number" ? cam.lag_s : null;
+    if (!shown[i] || !cam || !cam.connected || lag === null) {
+      el.classList.add("hidden");
+      continue;
+    }
+    el.classList.remove("hidden");
+    el.textContent = `⏱ ${lag.toFixed(1)}s`;
+    el.className = "feed-lag" + (lag >= 3 ? " bad" : lag >= 1 ? " warn" : "");
+    el.title =
+      `This feed is ${lag.toFixed(1)}s behind the camera's live edge.\n` +
+      "The detector sees exactly these frames, so this is detection lag too.\n" +
+      (cam.work_ms ? `read + inference: ${cam.work_ms} ms per tick\n` : "") +
+      (cam.read_ms ? `last read blocked: ${cam.read_ms} ms ` +
+                     "(a few ms = a frame was already queued up)" : "");
+  }
 }
 
 // ---- live detection feed ---------------------------------------------------
