@@ -67,8 +67,10 @@ measured, not guessed. Per watched camera, for every frame:
    the room can't defer it (before 0.62.0 any net run reset it, and a person at a
    desk suppressed the scan entirely — in the very room where a cat sleeps
    unnoticed). Every run writes a line to the activity log, found or not, so
-   "did it run on Basement?" is answerable from history. Settings: **3×3 tiling at 0.35 overlap** (the benchmark's clean
-   recall-per-ms winner) and **frame averaging ×3**. The scan can run its own
+   "did it run on Basement?" is answerable from history. Settings: **3×3 tiling at
+   0.35 overlap** (the benchmark's clean recall-per-ms winner). Note the still-scan
+   has its **own** overlap, separate from Find's — set them together if you tune
+   one. The scan can run its own
    **Scan model** (heavier than the live one — it gets one hard static look,
    where live detection gets many frames of a moving cat), and each camera
    card shows *"still scan: Ns ago — cat found / no cat"*. **Run the still scan**
@@ -123,7 +125,8 @@ never a claim). **Check for a still cat** sets how often the heavy scan runs.
 The annotated live view — boxes drawn as things are recognised. The camera
 selector picks which feed. Network cameras always play at their own frame rate,
 while the detector looks every `scan_fps` frames — so the picture stays fluid
-whatever the detection rate. A `⏱` badge in the corner shows how far behind the
+whatever the detection rate.
+
 **📸** saves the camera's current picture — no boxes, lossless PNG — to the app's
 `screenshots/` folder, named with the time and camera so you can match it against
 the camera's own recordings later. PNG rather than JPEG because these get fed back
