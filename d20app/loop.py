@@ -324,6 +324,60 @@ class DetectionLoop:
         det = self._pick(name)
         return det.live_version() if det is not None else 0
 
+    # How recently a cat must have been seen MOVING for the Cat-cam button to call
+    # a room active. Deliberately its own constant rather than the scan interval:
+    # the button says "right now", and borrowing a 30-minute sweep interval would
+    # have it claiming presence from half-hour-old evidence.
+    _BUTTON_MOTION_WINDOW = 30.0
+
+    def record_sweep(self, camera: str, found: bool) -> None:
+        """Note a sweep verdict for a room — a still-scan or a find pass.
+
+        One verdict per room, replaced only by a newer verdict for that SAME room.
+        A global "most recent sweep" would be useless here: seven cameras scan on
+        independent staggered timers, so one room finding nothing three seconds
+        after another found a cat would keep wiping the cat out.
+        """
+        with self._scan_lock:
+            self._scan_last[camera] = {"ts": time.time(), "found": bool(found)}
+
+    def button_state(self) -> dict:
+        """Ambient state for the Cat-cam button: what's happening, in one glyph.
+
+        ``moving``  — rooms where a CAT was seen moving inside the window. Raw
+                      motion doesn't count; a person walking past is not a cat.
+        ``resting`` — rooms whose own latest sweep verdict was a cat. No timeout:
+                      a still cat stays still, and only a newer sweep of that room
+                      (or motion there) is evidence to the contrary.
+
+        Priority: motion beats a sleeping cat, because it's the fresher fact.
+        """
+        now = time.time()
+        moving = []
+        for s in self.cats.recent(limit=80):
+            if s.get("source") not in ("motion", "track"):
+                continue                      # sweeps are handled by `resting`
+            try:
+                age = now - float(s.get("ts") or 0)
+            except (TypeError, ValueError):
+                continue
+            if age > self._BUTTON_MOTION_WINDOW:
+                break                         # recent() is newest-first: done
+            cam = s.get("camera")
+            if cam and cam not in moving:
+                moving.append(cam)
+        with self._scan_lock:
+            resting = [n for n, v in self._scan_last.items() if v.get("found")]
+        if len(moving) >= 2:
+            state = "multi"
+        elif moving:
+            state = "active"
+        elif resting:
+            state = "resting"
+        else:
+            state = "idle"
+        return {"state": state, "moving": moving, "resting": sorted(resting)}
+
     def cat_camera_times(self) -> dict:
         """``{camera: monotonic last-cat-seen}`` for **cat-tracking** cameras with a
         cat on them right now.

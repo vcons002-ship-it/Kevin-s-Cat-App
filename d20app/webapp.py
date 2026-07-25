@@ -1484,7 +1484,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # Time-of-day PRIOR (#68): where the cats usually are around this hour —
             # ranks a Find-My-Cat sweep; a hint from history, never a tracked state.
             "by_hour": loop.cats.by_hour(),
-            "last_scan": loop.last_scan(),     # #102: glanceable still-scan heartbeat
+            "button": loop.button_state(),     # the Cat-cam button's ambient glyph
             "likely": [{"camera": c, "weight": n} for c, n in loop.cats.likely_cameras()],
         })
 
@@ -1588,6 +1588,9 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # and we rejected it" — and those need completely different fixes.
             row["best_locator"] = ({"label": best["label"], "score": best["score"]}
                                    if best else None)
+            # A find is a sweep of that room, so its verdict replaces the room's
+            # previous one — same as a periodic still-scan.
+            loop.record_sweep(name, found)
             stamp = loop.find_shots.stamp()
             # PNG, not JPEG: the scanned frame is evidence, and it has to be the
             # pixels that were actually judged. A borderline detection sits close

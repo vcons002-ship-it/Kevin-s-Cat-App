@@ -113,9 +113,15 @@ you always know what's actually running.
 
 ### 🐱 Cat cam
 
-The star. **"Show me the cat!"** flashes whenever a cat is on camera *right
-now* (moving or still); tapping it jumps to the live feed of the camera that
-saw her, rotating if several rooms have cats. Below it: the latest sighting
+The star. **"Show me the cat!"** shows status in its glyph and never animates on
+its own — 🔍 nothing lately, 🐱 a cat moving in a room, 🐱🐱 in two or more, 😴 a
+cat found sitting still by the last sweep of that room. Motion outranks a sleeping
+cat (it's the fresher fact), and 😴 has no timeout: only a newer sweep of that same
+room, or movement there, changes it. Hover for which rooms.
+
+Clicking runs the heavy all-camera scan: 😸 while it works, then 😻 (the one flash
+in the app) or 😿, held two seconds so you can read the result before it jumps to
+the live feed of the camera that saw her, rotating if several rooms have cats. Below it: the latest sighting
 (with zone names like "the couch" if you've drawn zones), and *"Usually around
 now"* — which cameras historically see cats at this hour (a hint from history,
 never a claim). **Check for a still cat** sets how often the heavy scan runs.

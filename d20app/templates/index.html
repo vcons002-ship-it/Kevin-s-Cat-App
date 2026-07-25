@@ -50,10 +50,17 @@
             and roughly <strong>where</strong> in the frame.
           </p>
           <p>
-            The button <strong>flashes when a cat is on camera right now</strong> —
-            moving <em>or</em> still — and tapping it pulls up the live feed of the
-            camera that saw it. When <strong>more than one room has a cat</strong>,
-            the feed rotates between them.
+            The button's glyph <strong>shows what's happening, without animating</strong>:
+            <strong>🔍</strong> nothing lately · <strong>🐱</strong> a cat moving in a
+            room · <strong>🐱🐱</strong> in two or more · <strong>😴</strong> a cat found
+            sitting still. Motion wins over a sleeping cat — it's the fresher fact.
+            Hover the button for which rooms.
+          </p>
+          <p>
+            <strong>Tapping it searches every camera</strong> and pulls up the live feed
+            of the room that saw her, rotating when more than one room has a cat. That
+            click is the only thing in the app that flashes — a signal that fires all
+            the time stops meaning anything.
           </p>
           <p>
             A sleeping cat makes no motion, so the app re-checks for a still cat on
@@ -117,8 +124,8 @@
         </div>
       </div>
       <button id="show-cat" class="show-cat" type="button">
-        <span class="show-cat-emoji" aria-hidden="true">🐱</span>
-        <span id="show-cat-label">Show me the cat!</span>
+        <span id="show-cat-emoji" class="show-cat-emoji" aria-hidden="true">🔍</span>
+        <span id="show-cat-label">Show me the cat!</span><span class="show-cat-dots"></span>
       </button>
       <div id="find-feedback" class="muted" style="text-align:center;font-size:13px;min-height:1.1em"></div>
       <div id="cat-last" class="cat-last"><p class="muted">No cats seen yet.</p></div>

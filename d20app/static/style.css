@@ -354,18 +354,45 @@ footer { margin-top: 20px; }
 }
 .show-cat:hover { transform: translateY(-2px) scale(1.03); box-shadow: 0 12px 28px rgba(255, 159, 67, 0.55); }
 .show-cat:active { transform: translateY(1px) scale(0.97); }
-.show-cat-emoji { font-size: 1.9rem; line-height: 1; }
+/* A fixed-width slot sized for TWO emoji, so the button never resizes or shifts
+   between ambient states and a single glyph stays optically centred (padding one
+   side would push it off-centre). */
+.show-cat-emoji {
+  font-size: 1.9rem; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.5em; flex: 0 0 auto;
+}
 
-/* Flash + bounce while a cat is actually on camera right now */
-.show-cat.detecting { animation: catflash 0.7s ease-in-out infinite; }
-.show-cat.detecting .show-cat-emoji { animation: catbounce 0.7s ease-in-out infinite; }
+/* Ambient states never animate. The button's job at rest is to SHOW status, and
+   a signal that fires for every detection stops carrying information — it just
+   becomes the button's normal appearance. Motion/colour is reserved for the one
+   thing that is genuinely an event: the result of a click you just made. */
+
+/* One short bounce when the state improves (idle→cat, cat→two cats, →asleep).
+   Upgrades only; downgrades change silently. Removed by JS once it has played. */
+.show-cat-emoji.bump { animation: catbounce 0.9s ease-in-out 1; }
+
+/* Click: scanning. Dots only — no flash, nothing has been found yet. */
+.show-cat.scanning { cursor: progress; }
+.show-cat.scanning .show-cat-dots::after {
+  content: ""; animation: catdots 1.2s steps(4, end) infinite;
+}
+@keyframes catdots {
+  0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; }
+}
+
+/* Click: found. The one flash in the whole UI. */
+.show-cat.found { animation: catflash 0.7s ease-in-out 3; }
+.show-cat.found .show-cat-emoji { animation: catbounce 0.7s ease-in-out 3; }
 @keyframes catflash {
   0%, 100% { background: linear-gradient(135deg, #ffd86b, #ff9f43); box-shadow: 0 0 0 0 rgba(67, 209, 122, 0.7); }
   50%      { background: linear-gradient(135deg, #b6f7a0, #43d17a); box-shadow: 0 0 0 16px rgba(67, 209, 122, 0); }
 }
 @keyframes catbounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px) rotate(-6deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .show-cat.detecting, .show-cat.detecting .show-cat-emoji { animation: none; outline: 3px solid var(--go); }
+  .show-cat.found, .show-cat.found .show-cat-emoji,
+  .show-cat-emoji.bump, .show-cat.scanning .show-cat-dots::after { animation: none; }
+  .show-cat.found { outline: 3px solid var(--go); }
 }
 
 /* Multi-camera manager */

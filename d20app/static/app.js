@@ -956,16 +956,65 @@ function boostCam(name) {
   if (name) api("/api/cats/boost", postJSON({ camera: name }));
 }
 
+// ---- the Cat-cam button's ambient state ------------------------------------
+// The glyph passively SHOWS what's happening; it never animates on its own. The
+// old button flashed the whole time a cat had been seen recently, which made the
+// flash the button's normal appearance and therefore meaningless. Motion and
+// colour are now reserved for the result of a click — the one moment the app
+// genuinely has news.
+const CAT_STATES = {
+  idle:    { glyph: "🔍", rank: 0 },
+  resting: { glyph: "😴", rank: 1 },
+  active:  { glyph: "🐱", rank: 2 },
+  multi:   { glyph: "🐱🐱", rank: 3 },
+};
+let catBtnState = null;      // last ambient state, to spot upgrades
+let catBtnBusy = false;      // a click is running; ambient must not overwrite it
+
+function renderCatButton(info) {
+  if (catBtnBusy) return;                     // a click owns the button right now
+  const btn = $("show-cat"), glyph = $("show-cat-emoji"), label = $("show-cat-label");
+  if (!btn || !glyph) return;
+  const state = (info && CAT_STATES[info.state]) ? info.state : "idle";
+  const rooms = (info && info.state === "resting" ? info.resting : info && info.moving) || [];
+  glyph.textContent = CAT_STATES[state].glyph;
+  label.textContent = "Show me the cat!";     // the label never changes at rest
+  btn.classList.remove("scanning", "found");
+  // Detail belongs in the status line, not the button — "never more than two
+  // glyphs", and a resting cat in two rooms is still one sleepy cat.
+  btn.title = state === "idle"
+    ? "No cat seen recently. Click to search every camera."
+    : state === "resting"
+      ? `Cat resting in ${rooms.length > 1 ? rooms.length + " rooms" : (rooms[0] || "a room")}. Click to search again.`
+      : `Cat moving in ${rooms.length > 1 ? rooms.length + " rooms" : (rooms[0] || "a room")}. Click to show it.`;
+  // One short bounce, upgrades only — a downgrade shouldn't draw the eye.
+  const up = catBtnState !== null
+    && CAT_STATES[state].rank > CAT_STATES[catBtnState].rank;
+  if (up) {
+    glyph.classList.remove("bump");
+    void glyph.offsetWidth;                   // restart the animation
+    glyph.classList.add("bump");
+    setTimeout(() => glyph.classList.remove("bump"), 1000);
+  }
+  catBtnState = state;
+}
+
+// Show a click result, hold it long enough to be read, then move on. Scrolling
+// away the instant a scan finishes leaves you unsure what it actually found.
+function catBtnResult(glyphChar, labelText, flash) {
+  const btn = $("show-cat"), glyph = $("show-cat-emoji"), label = $("show-cat-label");
+  btn.classList.remove("scanning");
+  glyph.textContent = glyphChar;
+  label.textContent = labelText;
+  if (flash) btn.classList.add("found");
+  return new Promise((r) => setTimeout(r, 2000));
+}
+
 async function loadCats() {
   const { body } = await api("/api/cats");
   if (!body) return;
   if (catRotate) catCams = (body.cameras || []).filter(watchableCam);
-  const btn = $("show-cat"), label = $("show-cat-label");
-  const n = (body.cameras || []).length;
-  if (body.present) {
-    btn.classList.add("detecting");
-    label.textContent = n > 1 ? `Cats in ${n} rooms — show me!` : "Cat spotted — show me!";
-  } else { btn.classList.remove("detecting"); label.textContent = "Show me the cat!"; }
+  renderCatButton(body.button);
   const box = $("cat-last");
   if (!body.last) {
     // Don't bail here: the rest of the panel still needs clearing. Returning early
@@ -1043,17 +1092,22 @@ function findFeedback(msg) {
 async function showCat() {
   // #92: active scan first, when enabled — search, don't just jump.
   if ($("find_scan") && $("find_scan").checked) {
-    $("show-cat-label").textContent = "Scanning…";
+    catBtnBusy = true;                    // the click owns the button until it lands
+    $("show-cat").classList.add("scanning");
+    $("show-cat-emoji").textContent = "😸";
+    $("show-cat-label").textContent = "Scanning";
     findFeedback("Scanning watched cameras…");
     const { ok, body } = await api("/api/cats/find", postJSON({}));
-    $("show-cat-label").textContent = "Show me the cat!";
     if (ok && body && body.best) {
       const hit = (body.results || []).find((r) => r.camera === body.best) || {};
       const where = hit.where ? ` (${hit.where})` : "";
       findFeedback(`✅ Found a cat on ${body.best}${where} — score ${(hit.score || 0).toFixed(2)}. Showing it.`);
+      const hits = (body.found || []).length;
+      await catBtnResult("😻", hits > 1 ? "Two cats spotted!" : "Cat spotted!", true);
       const sel = $("live-camera");
       if (watchableCam(body.best)) sel.value = body.best;
-      await loadCats();
+      catBtnBusy = false;                 // ambient may take over again
+      await loadCats();                   // …and re-derive the state, not assume it
       $("live-enabled").checked = true;
       if (liveOn) liveOn = false;
       await refreshStatus();
@@ -1087,6 +1141,9 @@ async function showCat() {
     findFeedback(ok
       ? `No cat on ${scanned} camera${scanned === 1 ? "" : "s"}${how}.${sawTxt}${kept}`
       : `Scan failed: ${(body && body.error) || "unknown error"} — showing the last sighting.`);
+    await catBtnResult("😿", "No cats found", false);
+    catBtnBusy = false;
+    await loadCats();       // a miss is the newest sweep verdict — it clears 😴
     // fall through to the jump-to-last behavior below
   }
   return showCatJump();

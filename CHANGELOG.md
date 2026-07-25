@@ -7,6 +7,38 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.63.0] — 2026-07-25
+
+### Changed
+- **The Cat-cam button stopped flashing at you.** It used to pulse and bounce the
+  whole time a cat had been seen recently, which made the flash its normal
+  appearance — a signal that fires constantly carries no information. The glyph
+  now shows status *passively*; motion and colour are reserved for the result of a
+  click, the one moment the app genuinely has news.
+
+  | Glyph | Means |
+  |---|---|
+  | 🔍 | nothing seen lately, and the last sweep of every room found nothing |
+  | 🐱 | a cat seen **moving** in one room in the last 30 s |
+  | 🐱🐱 | in two or more rooms |
+  | 😴 | a cat found sitting still by the latest sweep of some room |
+
+  Motion outranks a sleeping cat — it's the fresher fact. 😴 has no timeout,
+  because a still cat stays still: only a newer sweep of that **same room**, or
+  movement in it, is evidence to the contrary. Sweep verdicts are tracked per room
+  precisely so one empty room can't wipe out a cat found seconds earlier in
+  another, which a single global "most recent sweep" would do constantly with
+  seven cameras on staggered timers.
+
+  The motion window is its own 30 s constant rather than the scan interval. It
+  used to borrow `cat_scan_interval`, so raising that to 30 minutes would have had
+  the button claiming a cat was there *right now* on half-hour-old evidence.
+
+  Clicking gives 😸 while scanning, then 😻 (with the app's only flash) or 😿,
+  held two seconds so the result is readable before the view scrolls away. The
+  button then re-derives its ambient state rather than assuming one — a miss
+  clears a stale 😴, and motion during the hold wins.
+
 ## [0.62.0] — 2026-07-25
 
 ### Fixed
