@@ -470,10 +470,15 @@ class PersonDetector:
         self.motion_hold_seconds = max(0.0, float(motion_hold_seconds))
         self._motion_hold_until = 0.0
         # Feed/detection lag tracking (see _note_lag).
+        from collections import deque as _deque
         self._lag_t0 = None
         self._lag_pos0 = 0.0
+        self._lag_prev_ms = None
         self._lag_s = None
+        self._clock_ok = True
+        self._clock_breaks = _deque(maxlen=32)   # stream-clock discontinuities
         self._read_ms = 0.0
+        self._read_history = _deque(maxlen=30)   # recent read durations (ms)
         self._motion = MotionPrefilter(
             min_area_frac=motion_min_area_frac,
             diff_threshold=motion_diff_threshold,
@@ -654,7 +659,9 @@ class PersonDetector:
         cap = self._cap
         self._cap = None
         self._lag_t0 = None        # the backlog dies with the socket; re-baseline
+        self._lag_prev_ms = None   # a new stream restarts the clock — not a jump
         self._lag_s = None
+        self._read_history.clear()
         if cap is not None:
             try:
                 cap.release()
@@ -690,34 +697,80 @@ class PersonDetector:
         return self._cap
 
     # -- feed lag -------------------------------------------------------------
+    # Stream-clock sanity. Lag can only grow as fast as wall clock, so a reading
+    # that leaps is the CLOCK moving, not the backlog. RTSP position comes from
+    # RTP timestamps, which can jump, wrap, or reset on a keyframe or a GOP
+    # boundary; some cameras simply report nonsense.
+    _CLOCK_BACK_MS = 200.0        # a step back beyond decode jitter = discontinuity
+    _CLOCK_JUMP_MS = 10_000.0     # a forward leap this big isn't consumed video
+    _CLOCK_SHAKY_RESETS = 3       # this many discontinuities in the window = untrusted
+    _CLOCK_WINDOW_S = 60.0
+
     def _note_lag(self, frame_ms) -> None:
-        """Track how far behind the live edge our reads have fallen.
+        """Track how far behind the live edge our reads have fallen — or say we
+        can't tell.
 
         RTSP frames queue, so a loop that consumes slower than the camera
-        produces reads ever-older frames — and since the live feed publishes the
-        frame the loop just read, feed lag *is* detection lag. Wall-clock time
+        produces reads ever-older frames, and since the live feed publishes the
+        frame the loop just read, feed lag *is* detection lag. Wall clock
         advances in real time; stream time only advances as fast as we consume
-        it, so the gap between the two is the backlog, in seconds of video.
+        it, so the gap between them is the backlog in seconds of video.
 
-        Measured against a rolling baseline rather than the first frame ever, so
-        a lag that recovers reads as recovered instead of being masked by an old
-        worst case. A reconnect resets it (the queue is gone with the socket).
+        That arithmetic is only as good as the stream clock, and on real cameras
+        it is not always good: an earlier version of this reported jumps of +14 s
+        inside one second, which is impossible for a real backlog. So every step
+        is checked for continuity, a discontinuity re-baselines instead of being
+        absorbed as lag, and a clock that keeps doing it is reported as
+        **unknown** rather than as a confident wrong number.
         """
         now = time.monotonic()
         if frame_ms is None:
-            self._lag_s = None
+            self._lag_s, self._clock_ok = None, False
             return
-        if self._lag_t0 is None or frame_ms < self._lag_pos0:
-            self._lag_t0, self._lag_pos0 = now, frame_ms   # first frame, or a reconnect
-            self._lag_s = 0.0
+        prev = self._lag_prev_ms
+        self._lag_prev_ms = frame_ms
+        # Compare against the PREVIOUS frame, not the baseline: jitter relative to
+        # recent frames is exactly what the old check let through.
+        broke = prev is not None and (frame_ms < prev - self._CLOCK_BACK_MS
+                                      or frame_ms - prev > self._CLOCK_JUMP_MS)
+        if self._lag_t0 is None or broke:
+            if broke:
+                self._clock_breaks.append(now)
+            while self._clock_breaks and now - self._clock_breaks[0] > self._CLOCK_WINDOW_S:
+                self._clock_breaks.popleft()
+            self._lag_t0, self._lag_pos0 = now, frame_ms
+            self._clock_ok = len(self._clock_breaks) < self._CLOCK_SHAKY_RESETS
+            self._lag_s = 0.0 if self._clock_ok else None
             return
-        self._lag_s = max(0.0, (now - self._lag_t0) - (frame_ms - self._lag_pos0) / 1000.0)
+        while self._clock_breaks and now - self._clock_breaks[0] > self._CLOCK_WINDOW_S:
+            self._clock_breaks.popleft()
+        self._clock_ok = len(self._clock_breaks) < self._CLOCK_SHAKY_RESETS
+        lag = (now - self._lag_t0) - (frame_ms - self._lag_pos0) / 1000.0
+        self._lag_s = max(0.0, lag) if self._clock_ok else None
 
     def feed_lag(self) -> dict:
-        """``{lag_s, read_ms}`` — how stale the frames we act on are, and the
-        blocking-read tell for whether a backlog exists. ``lag_s`` is None when
-        the camera reports no stream position (USB, some HTTP sources)."""
-        return {"lag_s": self._lag_s, "read_ms": round(self._read_ms, 1)}
+        """``{lag_s, read_ms, queued}`` — how stale our frames are, how long the
+        last read blocked, and whether frames are demonstrably backing up.
+
+        ``lag_s`` is None when it cannot be measured honestly: no stream clock
+        (USB, some HTTP), or a clock that keeps jumping. ``queued`` does not use
+        the stream clock at all — it is the median blocking time of recent reads.
+        A read that returns almost instantly had a frame already waiting, so a
+        sustained near-zero median means a backlog exists no matter what the
+        timestamps claim.
+        """
+        reads = sorted(self._read_history)
+        med = reads[len(reads) // 2] if reads else None
+        return {
+            "lag_s": self._lag_s,
+            "read_ms": round(self._read_ms, 1),
+            "read_median_ms": None if med is None else round(med, 1),
+            # Enough samples to mean something, and well under any real camera's
+            # frame interval (a 30 fps live edge blocks ~33 ms).
+            "queued": bool(len(self._read_history) >= 10 and med is not None
+                           and med < 5.0),
+            "clock_ok": self._clock_ok,
+        }
 
     def _crop(self, frame):
         if not self.roi:
@@ -1461,6 +1514,7 @@ class PersonDetector:
             # scripts/rtsp_latency_probe.py): a frame already waiting returns in
             # ~3 ms, while the live edge blocks ~1/camera_fps (~33 ms).
             self._read_ms = (time.monotonic() - _read_t0) * 1000.0
+            self._read_history.append(self._read_ms)
             if not ok or frame is None:
                 self._read_fails += 1
                 self._release_cap()     # release + force a reconnect next call

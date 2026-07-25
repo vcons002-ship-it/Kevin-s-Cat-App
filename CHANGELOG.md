@@ -7,6 +7,32 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.58.1] — 2026-07-25
+
+### Fixed
+- **The lag readout was wrong, and is now honest about when it can't tell.** On
+  live cameras it reported jumps of +14 s inside a single second — impossible for
+  a real backlog, which can only grow as fast as wall clock. The seconds figure
+  was noise, and the "queue growing forever" diagnosis built on it does not stand.
+
+  Two causes. The continuity guard compared each frame's position against the
+  *baseline* frame rather than the previous one, so timestamp jitter relative to
+  recent frames was absorbed as lag and never recovered. And the underlying
+  assumption was too strong: RTSP stream position comes from RTP timestamps,
+  which jump, wrap, and reset on some cameras.
+
+  Now every step is checked against the previous frame, a discontinuity
+  re-baselines instead of inflating the reading, and a clock that keeps breaking
+  is reported as **unknown** — the badge shows `⏱ —` rather than a confident
+  wrong number.
+
+### Added
+- **A backlog signal that doesn't use the stream clock at all.** `queued` is the
+  median blocking time of recent reads: a read that returns almost instantly had
+  a frame already waiting, so a sustained near-zero median means frames are
+  backing up regardless of what the timestamps claim. It stays usable exactly
+  when the seconds figure isn't, and the badge falls back to it (`⏱ behind`).
+
 ## [0.58.0] — 2026-07-25
 
 ### Added
