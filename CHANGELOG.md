@@ -7,6 +7,28 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.60.1] — 2026-07-25
+
+### Fixed
+- **Find's evidence frame is now lossless (PNG), and its report names the best
+  *cat*, not the loudest object.** Both flaws made 0.60.0's evidence misleading on
+  the first real case it was used for.
+
+  The scanned frame was saved as JPEG. Replaying it through the same settings
+  found a cat at 0.45 that the live scan had missed — which looked like proof of a
+  bug in find, but the replay wasn't scanning the same pixels. A borderline
+  detection sits close enough to its threshold that requantisation alone can move
+  it, and this one was borderline in the extreme: on one frame, 3×3 at 0.20
+  overlap scored 0.45, 3×3 at 0.35 scored **0.00**, 2×2 scored 0.74 and 4×4 scored
+  0.86. A cat near a frame edge gets sliced by tile boundaries, and where the grid
+  lands decides the answer. Evidence has to be byte-identical to be evidence.
+
+  The feedback line reported the highest-scoring detection of *any* class, so it
+  said "Best it saw: keyboard 0.94" while a cat sat undetected — an answer-shaped
+  sentence that answered nothing. Each result now carries `best_locator`: the best
+  cat/dog box **regardless of the threshold**, so "no cat" distinguishes *the net
+  never saw one* from *it saw one and we rejected it*. Those need different fixes.
+
 ## [0.60.0] — 2026-07-25
 
 ### Added

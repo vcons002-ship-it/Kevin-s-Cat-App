@@ -245,3 +245,48 @@ def test_a_find_records_what_it_actually_ran_with(tmp_path, monkeypatch):
     # cat — that distinction is exactly what a silent "not found" hides.
     assert row["everything_seen"] == [{"label": "dog", "score": 0.81}]
     assert row["found"] is False               # a dog isn't the cat, cat-only camera
+
+
+def test_a_find_reports_the_best_cat_even_when_it_misses_the_bar(tmp_path, monkeypatch):
+    # "No cat" must distinguish "the net never saw one" from "it saw one and we
+    # rejected it" — those need completely different fixes, and the first version
+    # of this reported the loudest object of ANY class ("keyboard 0.94") while a
+    # real cat sat undetected, which read like an answer and was not one.
+    frame = np.full((64, 96, 3), 130, np.uint8)
+    c, loop, det = _find_client(tmp_path, monkeypatch, frame)
+    import d20app.webapp as webapp_mod
+    monkeypatch.setattr(webapp_mod, "_run_test_detection", lambda f, s: (
+        b"fake-image",
+        [{"label": "keyboard", "score": 0.94, "box": [0, 0, 9, 9]},
+         {"label": "cat", "score": 0.21, "box": [1, 1, 8, 8]}], 9.0))
+
+    row = c.post("/api/cats/find", json={}).get_json()["results"][0]
+    assert row["found"] is False                        # 0.21 < 0.30
+    assert row["best_locator"] == {"label": "cat", "score": 0.21}   # …but seen
+
+
+def test_a_find_with_no_cat_shaped_box_at_all_says_so(tmp_path, monkeypatch):
+    frame = np.full((64, 96, 3), 130, np.uint8)
+    c, loop, det = _find_client(tmp_path, monkeypatch, frame)
+    import d20app.webapp as webapp_mod
+    monkeypatch.setattr(webapp_mod, "_run_test_detection", lambda f, s: (
+        b"fake-image", [{"label": "keyboard", "score": 0.94, "box": [0, 0, 9, 9]}], 9.0))
+    row = c.post("/api/cats/find", json={}).get_json()["results"][0]
+    assert row["best_locator"] is None
+
+
+def test_the_scanned_frame_is_kept_losslessly(tmp_path, monkeypatch):
+    # It is evidence: it has to be the pixels that were judged. A borderline
+    # detection sits close enough to its threshold that JPEG requantisation alone
+    # can flip it, so a lossy copy replays as a different scan and disagrees with
+    # the run it exists to explain.
+    frame = np.full((64, 96, 3), 130, np.uint8)
+    c, loop, det = _find_client(tmp_path, monkeypatch, frame)
+    import d20app.webapp as webapp_mod
+    monkeypatch.setattr(webapp_mod, "_run_test_detection",
+                        lambda f, s: (b"fake-image", [], 9.0))
+    row = c.post("/api/cats/find", json={}).get_json()["results"][0]
+    assert row["scanned_image"].endswith(".png")
+    import cv2
+    back = cv2.imread(loop.find_shots.path(row["scanned_image"]))
+    assert back is not None and (back == frame).all()   # byte-identical, not "close"

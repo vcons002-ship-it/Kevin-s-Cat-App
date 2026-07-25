@@ -1503,10 +1503,20 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             row["everything_seen"] = [
                 {"label": d["label"], "score": d["score"]} for d in dets[:8]
             ]
+            # The best locator-class box REGARDLESS of the threshold. Without it,
+            # "no cat" can't distinguish "the net never saw one" from "it saw one
+            # and we rejected it" — and those need completely different fixes.
+            row["best_locator"] = ({"label": best["label"], "score": best["score"]}
+                                   if best else None)
             stamp = loop.find_shots.stamp()
-            ok_in, buf_in = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            # PNG, not JPEG: the scanned frame is evidence, and it has to be the
+            # pixels that were actually judged. A borderline detection sits close
+            # enough to its threshold that JPEG requantisation alone can flip it,
+            # so a lossy copy replays as a DIFFERENT scan and quietly disagrees
+            # with the run it is supposed to explain. Costs disk; worth it.
+            ok_in, buf_in = cv2.imencode(".png", frame, [cv2.IMWRITE_PNG_COMPRESSION, 3])
             row["scanned_image"] = loop.find_shots.save(
-                buf_in.tobytes() if ok_in else None, name, "scanned", stamp)
+                buf_in.tobytes() if ok_in else None, name, "scanned", stamp, ext=".png")
             row["result_image"] = loop.find_shots.save(annotated, name, "result", stamp)
             if found:
                 snap = loop.snapshots.save(annotated)

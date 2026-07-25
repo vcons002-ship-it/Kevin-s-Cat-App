@@ -1081,15 +1081,17 @@ async function showCat() {
       ? ` — ${ran.model}, ${ran.tiling}, ${(ran.locator_classes || []).join("/")}`
         + ` ≥ ${Number(ran.cat_confidence).toFixed(2)}`
       : "";
+    // The best CAT (or dog, if the camera counts one) — not the best detection of
+    // any class. Reporting the loudest object in the room said "keyboard 0.94"
+    // while a cat sat undetected, which answered nothing and read like an answer.
     let top = null;
     for (const r of rows) {
-      for (const d of r.everything_seen || []) {
-        if (!top || d.score > top.score) top = { ...d, camera: r.camera };
-      }
+      const b = r.best_locator;
+      if (b && (!top || b.score > top.score)) top = { ...b, camera: r.camera };
     }
     const sawTxt = top
-      ? ` Best it saw: ${top.label} ${top.score.toFixed(2)} on ${top.camera}.`
-      : " It saw nothing at all.";
+      ? ` Closest: ${top.label} ${top.score.toFixed(2)} on ${top.camera} — under the bar.`
+      : " No cat-shaped box on any camera, at any score.";
     const kept = scanned ? ` Frames kept in screenshots/find/.` : "";
     findFeedback(ok
       ? `No cat on ${scanned} camera${scanned === 1 ? "" : "s"}${how}.${sawTxt}${kept}`

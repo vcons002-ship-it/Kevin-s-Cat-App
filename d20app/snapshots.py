@@ -110,8 +110,12 @@ class ScreenshotStore:
         return time.strftime("%Y-%m-%d_%H-%M-%S")
 
     def save(self, jpeg: bytes | None, camera: str = "", suffix: str = "",
-             stamp: str | None = None) -> str | None:
-        """Persist ``jpeg`` and return its filename (or None on no data/error)."""
+             stamp: str | None = None, ext: str = ".jpg") -> str | None:
+        """Persist ``jpeg`` and return its filename (or None on no data/error).
+
+        ``ext`` allows PNG for images that are evidence rather than illustration:
+        a lossy copy of a frame is not the frame that was judged.
+        """
         if not jpeg:
             return None
         base = f"{stamp or self.stamp()}_{self._safe(camera)}"
@@ -121,10 +125,10 @@ class ScreenshotStore:
         # across the existence check AND the write so two requests can't pick the
         # same free name.
         with self._lock:
-            name, n = f"{base}.jpg", 1
+            name, n = f"{base}{ext}", 1
             while os.path.exists(os.path.join(self.directory, name)):
                 n += 1
-                name = f"{base}_{n}.jpg"
+                name = f"{base}_{n}{ext}"
             try:
                 with open(os.path.join(self.directory, name), "wb") as fh:
                     fh.write(jpeg)
