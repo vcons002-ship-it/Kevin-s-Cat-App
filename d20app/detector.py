@@ -471,10 +471,11 @@ class PersonDetector:
         self._motion_hold_until = 0.0
         # Feed/detection lag tracking (see _note_lag).
         from collections import deque as _deque
-        self._lag_t0 = None
-        self._lag_pos0 = 0.0
         self._lag_prev_ms = None
+        self._lag_prev_wall = None
         self._lag_s = None
+        self._consumed_s = 0.0     # seconds of VIDEO obtained
+        self._elapsed_s = 0.0      # seconds of REAL time they took
         self._clock_ok = True
         self._clock_breaks = _deque(maxlen=32)   # stream-clock discontinuities
         self._read_ms = 0.0
@@ -658,9 +659,12 @@ class PersonDetector:
         camera that reconnects periodically (review 2026-07-08, Finding 1)."""
         cap = self._cap
         self._cap = None
-        self._lag_t0 = None        # the backlog dies with the socket; re-baseline
-        self._lag_prev_ms = None   # a new stream restarts the clock — not a jump
+        # The backlog dies with the socket, and a new stream restarts its clock
+        # from scratch — so that discontinuity is expected, not a jump to flag.
+        self._lag_prev_ms = None
+        self._lag_prev_wall = None
         self._lag_s = None
+        self._consumed_s = self._elapsed_s = 0.0
         self._read_history.clear()
         if cap is not None:
             try:
@@ -701,9 +705,10 @@ class PersonDetector:
     # that leaps is the CLOCK moving, not the backlog. RTSP position comes from
     # RTP timestamps, which can jump, wrap, or reset on a keyframe or a GOP
     # boundary; some cameras simply report nonsense.
-    _CLOCK_BACK_MS = 200.0        # a step back beyond decode jitter = discontinuity
-    _CLOCK_JUMP_MS = 10_000.0     # a forward leap this big isn't consumed video
-    _CLOCK_SHAKY_RESETS = 3       # this many discontinuities in the window = untrusted
+    _STEP_SLACK_S = 2.0           # video may run ahead of wall time this far while
+                                  # catching up; beyond it, the clock jumped
+    _CLOCK_SHAKY_RESETS = 8       # discontinuities per window before the seconds
+                                  # figure stops being reported at all
     _CLOCK_WINDOW_S = 60.0
 
     def _note_lag(self, frame_ms) -> None:
@@ -727,26 +732,29 @@ class PersonDetector:
         if frame_ms is None:
             self._lag_s, self._clock_ok = None, False
             return
-        prev = self._lag_prev_ms
-        self._lag_prev_ms = frame_ms
-        # Compare against the PREVIOUS frame, not the baseline: jitter relative to
-        # recent frames is exactly what the old check let through.
-        broke = prev is not None and (frame_ms < prev - self._CLOCK_BACK_MS
-                                      or frame_ms - prev > self._CLOCK_JUMP_MS)
-        if self._lag_t0 is None or broke:
-            if broke:
-                self._clock_breaks.append(now)
-            while self._clock_breaks and now - self._clock_breaks[0] > self._CLOCK_WINDOW_S:
-                self._clock_breaks.popleft()
-            self._lag_t0, self._lag_pos0 = now, frame_ms
-            self._clock_ok = len(self._clock_breaks) < self._CLOCK_SHAKY_RESETS
-            self._lag_s = 0.0 if self._clock_ok else None
+        prev, prev_wall = self._lag_prev_ms, self._lag_prev_wall
+        self._lag_prev_ms, self._lag_prev_wall = frame_ms, now
+        if prev is None or prev_wall is None:
+            self._lag_s = 0.0                      # first frame of a stream
             return
+        wall_dt = now - prev_wall
+        stream_dt = (frame_ms - prev) / 1000.0
+        # Accumulate per STEP, never against a fixed baseline: one bad timestamp
+        # then costs one step instead of poisoning every later reading. A step
+        # that isn't physically plausible (backwards, or a leap far beyond the
+        # wall time that elapsed) is a clock discontinuity, not consumed video —
+        # count it as "kept pace" so it neither invents nor erases lag.
+        if stream_dt < 0 or stream_dt > wall_dt + self._STEP_SLACK_S:
+            self._clock_breaks.append(now)
+            stream_dt = wall_dt
         while self._clock_breaks and now - self._clock_breaks[0] > self._CLOCK_WINDOW_S:
             self._clock_breaks.popleft()
         self._clock_ok = len(self._clock_breaks) < self._CLOCK_SHAKY_RESETS
-        lag = (now - self._lag_t0) - (frame_ms - self._lag_pos0) / 1000.0
-        self._lag_s = max(0.0, lag) if self._clock_ok else None
+        # Wall clock advances in real time; stream time only as fast as we consume
+        # it. The shortfall IS the backlog — and it shrinks again when we catch up.
+        self._lag_s = max(0.0, (self._lag_s or 0.0) + (wall_dt - stream_dt))
+        self._consumed_s += stream_dt
+        self._elapsed_s += wall_dt
 
     def feed_lag(self) -> dict:
         """``{lag_s, read_ms, queued}`` — how stale our frames are, how long the
@@ -761,12 +769,18 @@ class PersonDetector:
         """
         reads = sorted(self._read_history)
         med = reads[len(reads) // 2] if reads else None
+        # Seconds of video obtained per second of real time. 1.0 = keeping up;
+        # 0.4 means the stream is falling behind at 0.6 s every second. This is
+        # the number that says whether lag is GROWING, and it survives a clock
+        # that jumps because it is built from clamped per-step deltas.
+        rate = (self._consumed_s / self._elapsed_s) if self._elapsed_s > 5.0 else None
         return {
-            "lag_s": self._lag_s,
+            "lag_s": None if not self._clock_ok else self._lag_s,
             "read_ms": round(self._read_ms, 1),
             "read_median_ms": None if med is None else round(med, 1),
-            # Enough samples to mean something, and well under any real camera's
-            # frame interval (a 30 fps live edge blocks ~33 ms).
+            "consume_rate": None if rate is None else round(rate, 2),
+            # Enough samples to mean something. A read that returns far faster
+            # than any camera's frame interval had a frame already waiting.
             "queued": bool(len(self._read_history) >= 10 and med is not None
                            and med < 5.0),
             "clock_ok": self._clock_ok,

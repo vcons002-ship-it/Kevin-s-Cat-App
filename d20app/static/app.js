@@ -668,15 +668,21 @@ function renderCamChips(cams) {
       // feed at any moment, and one silently falling behind is exactly what we're
       // hunting. Same thresholds as the feed badge so the two never disagree.
       const lag = typeof c.lag_s === "number" ? c.lag_s : null;
+      const rate = typeof c.consume_rate === "number" ? c.consume_rate : null;
+      const slipping = rate !== null && rate < 0.95;
       const late = lag !== null && lag >= 0.5 ? ` · ⏱ ${lag.toFixed(1)}s behind`
+        : slipping ? ` · ⏱ −${((1 - rate) * 60).toFixed(0)}s/min`
         : lag === null && c.queued ? " · ⏱ behind" : "";
       chip.textContent = (c.ran_on ? `● live · ${c.ran_on}` : "● live") + late;
-      chip.className = "cam-chip " + (lag !== null && lag >= 3 ? "chip-bad" : "chip-ok");
+      chip.className = "cam-chip "
+        + ((lag !== null && lag >= 3) || slipping ? "chip-bad" : "chip-ok");
       chip.title = (lag !== null
         ? `frames are ${lag.toFixed(1)}s behind the live edge — detection sees this too`
         : c.clock_ok === false
-          ? "stream clock keeps jumping — the delay can't be measured in seconds"
+          ? "stream clock keeps jumping — the total delay can't be given in seconds"
           : "") +
+        (rate !== null ? `\n${rate.toFixed(2)}s of video per second of real time `
+          + "(1.00 = keeping up)" : "") +
         (c.queued ? "\nframes are backing up (reads keep returning instantly)" : "") +
         (c.work_ms ? `\nread+inference: ${c.work_ms} ms/tick` : "") +
         (c.read_median_ms !== null && c.read_median_ms !== undefined
@@ -724,27 +730,34 @@ function renderFeedLag(cams) {
     if (!shown[i] || !cam || !cam.connected) { el.classList.add("hidden"); continue; }
     const lag = typeof cam.lag_s === "number" ? cam.lag_s : null;
     el.classList.remove("hidden");
+    const rate = typeof cam.consume_rate === "number" ? cam.consume_rate : null;
     const detail =
+      (rate !== null
+        ? `getting ${rate.toFixed(2)}s of video per second of real time ` +
+          `(1.00 = keeping up)\n` : "") +
       (cam.work_ms ? `read + inference: ${cam.work_ms} ms per tick\n` : "") +
       (cam.read_median_ms !== null && cam.read_median_ms !== undefined
         ? `reads block for ${cam.read_median_ms} ms on average ` +
           "(a few ms = frames are already waiting)" : "");
+    // Falling behind in real time is worth flagging even when the total can't be
+    // measured — showing nothing is what let a genuine minutes-long lag pass as
+    // healthy. Anything under ~0.95 is losing ground steadily.
+    const slipping = rate !== null && rate < 0.95;
     if (lag === null) {
-      // Say "can't tell" rather than print a number we don't believe. An earlier
-      // build reported +14s inside one second — impossible for a real backlog —
-      // because it trusted a stream clock that jumps.
-      el.textContent = cam.queued ? "⏱ behind" : "⏱ —";
-      el.className = "feed-lag" + (cam.queued ? " warn" : "");
+      el.textContent = slipping ? `⏱ −${((1 - rate) * 60).toFixed(0)}s/min`
+        : cam.queued ? "⏱ behind" : "⏱ —";
+      el.className = "feed-lag" + (slipping || cam.queued ? " warn" : "");
       el.title = (cam.clock_ok === false
-        ? "This camera's stream clock keeps jumping, so the delay can't be measured in seconds.\n"
-        : "This source reports no stream clock, so the delay can't be measured.\n") +
-        (cam.queued
-          ? "Frames ARE backing up though — reads keep returning instantly.\n"
-          : "No sign of frames backing up.\n") + detail;
+        ? "This camera's stream clock keeps jumping, so the total delay can't be given in seconds.\n"
+        : "This source reports no stream clock, so the total delay can't be given.\n") +
+        (slipping ? "It is falling further behind in real time — see the rate below.\n"
+          : cam.queued ? "Frames ARE backing up — reads keep returning instantly.\n"
+          : "No sign of it falling behind.\n") + detail;
       continue;
     }
     el.textContent = `⏱ ${lag.toFixed(1)}s`;
-    el.className = "feed-lag" + (lag >= 3 ? " bad" : lag >= 1 ? " warn" : "");
+    el.className = "feed-lag" + (lag >= 3 || (slipping && lag >= 1) ? " bad"
+      : lag >= 1 || slipping ? " warn" : "");
     el.title =
       `This feed is ${lag.toFixed(1)}s behind the camera's live edge.\n` +
       "The detector sees exactly these frames, so this is detection lag too.\n" +

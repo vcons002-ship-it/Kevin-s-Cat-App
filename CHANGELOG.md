@@ -7,6 +7,32 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.58.2] — 2026-07-25
+
+### Fixed
+- **The lag readout failed the other way: a camera minutes behind showed as
+  healthy.** Verified against the timestamp burned into the video — the picture
+  read 38:09 while the clock read 39:42, and the badge showed nothing. The
+  previous build had learned to distrust a jumping stream clock, but distrust
+  alone made it silent, and silence is indistinguishable from fine.
+
+  The measurement is now an accumulator over **per-step deltas** instead of a
+  fixed baseline: each frame contributes the wall time it took minus the video
+  time it carried. One implausible timestamp costs one step rather than poisoning
+  every reading afterwards, and — unlike both earlier versions — the figure can
+  come *down* when a stream catches up, which is what makes a recovery visible.
+
+  A forward leap is treated as "kept pace" rather than as consumed video, so a
+  clock that jumps can no longer erase a real backlog. That was the dangerous
+  direction: it is how a genuinely broken feed reported as healthy.
+
+### Added
+- **`consume_rate` — seconds of video obtained per second of real time.** 1.00 is
+  keeping up; 0.40 means losing 0.6 s every second. Built from the same clamped
+  deltas, so it survives a clock too erratic for an absolute figure, and it is
+  what actually answers "is this getting worse". Shown as `⏱ −Ns/min` whenever a
+  camera is losing ground, on both the feed badge and the Setup chip.
+
 ## [0.58.1] — 2026-07-25
 
 ### Fixed
