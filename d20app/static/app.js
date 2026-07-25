@@ -1070,9 +1070,29 @@ async function showCat() {
         .scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
-    const scanned = ok && body ? (body.results || []).length : 0;
+    const rows = ok && body ? (body.results || []) : [];
+    const scanned = rows.length;
+    // "No cat found" on its own is unfalsifiable — it looks identical whether the
+    // scan looked properly or ran weaker settings than you thought. Say what it
+    // ran with, the best thing it DID see (a strong "dog" here is the usual
+    // culprit on a cat-only camera), and where the frames were kept.
+    const ran = (rows.find((r) => r.ran) || {}).ran;
+    const how = ran
+      ? ` — ${ran.model}, ${ran.tiling}, ${(ran.locator_classes || []).join("/")}`
+        + ` ≥ ${Number(ran.cat_confidence).toFixed(2)}`
+      : "";
+    let top = null;
+    for (const r of rows) {
+      for (const d of r.everything_seen || []) {
+        if (!top || d.score > top.score) top = { ...d, camera: r.camera };
+      }
+    }
+    const sawTxt = top
+      ? ` Best it saw: ${top.label} ${top.score.toFixed(2)} on ${top.camera}.`
+      : " It saw nothing at all.";
+    const kept = scanned ? ` Frames kept in screenshots/find/.` : "";
     findFeedback(ok
-      ? `No cat found on ${scanned} watched camera${scanned === 1 ? "" : "s"} — showing the last sighting instead.`
+      ? `No cat on ${scanned} camera${scanned === 1 ? "" : "s"}${how}.${sawTxt}${kept}`
       : `Scan failed: ${(body && body.error) || "unknown error"} — showing the last sighting.`);
     // fall through to the jump-to-last behavior below
   }

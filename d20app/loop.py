@@ -23,7 +23,7 @@ from .caster import Caster, SoundServer
 from .cats import CatTracker, zone_for
 from .detector import PersonDetector, continuous_read_wanted, mask_credentials
 from .feeds import FeedRouter
-from .snapshots import ScreenshotStore, SnapshotStore
+from .snapshots import SCREENSHOTS_DIR, ScreenshotStore, SnapshotStore
 
 log = logging.getLogger("d20app.loop")
 
@@ -160,6 +160,9 @@ class DetectionLoop:
         self.activity = ActivityLog()
         self.snapshots = SnapshotStore()
         self.screenshots = ScreenshotStore()   # manual, kept (never pruned)
+        # What a "find my cat" actually looked at, and what it made of it. Kept
+        # apart from hand-taken screenshots so neither buries the other.
+        self.find_shots = ScreenshotStore(os.path.join(SCREENSHOTS_DIR, "find"))
         self.cats = CatTracker()        # cat sightings, for the "show cat" feature
         self._sound_server: SoundServer | None = None
         self._caster: Caster | None = None

@@ -7,6 +7,33 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.60.0] — 2026-07-25
+
+### Added
+- **"Find my cat" now keeps its evidence.** Every find saves two images per camera
+  to `screenshots/find/`: the **exact frame it scanned** and **what the scan made
+  of that frame**, whether or not it found anything. Both share one timestamp so
+  they pair up.
+
+  A find that reports nothing was previously unfalsifiable. The only way to check
+  it was to take a screenshot afterwards and re-run it by hand — which introduces
+  the very doubt you're trying to remove, since a cat moves between the click and
+  the screenshot. Now the frame that was actually judged is on disk.
+
+  Live case that prompted this: find reported no cat, while the same scene at the
+  same settings (26x, 3×3, 0.3) found two cats at 0.78 and 0.33 in the Test tool.
+  Cause still unknown — this is the instrument to catch it next time, not a fix.
+
+- **Finds report what they ran with.** Each result carries the model, tiling,
+  overlap, threshold and locator classes actually used, plus `everything_seen` —
+  the top detections *including labels the camera doesn't count as the cat*. On a
+  cat-only camera a confident `dog` is the most common reason a real cat isn't
+  reported, and a bare "no cat found" hides exactly that.
+
+  The GUI line now reads e.g. *"No cat on 7 cameras — yolo26x, 3×3, cat ≥ 0.30.
+  Best it saw: dog 0.81 on Office. Frames kept in screenshots/find/."* instead of
+  *"No cat found on 7 watched cameras."*
+
 ## [0.59.1] — 2026-07-25
 
 ### Fixed

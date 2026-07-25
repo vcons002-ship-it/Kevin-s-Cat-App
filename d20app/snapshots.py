@@ -102,12 +102,21 @@ class ScreenshotStore:
         keep = [c if (c.isalnum() or c in "-_") else "-" for c in (camera or "camera")]
         return "".join(keep).strip("-") or "camera"
 
-    def save(self, jpeg: bytes | None, camera: str = "") -> str | None:
+    @staticmethod
+    def stamp() -> str:
+        """A filename timestamp. Pass the SAME one to related saves so a set of
+        images taken from one action sorts together instead of straddling a
+        second boundary."""
+        return time.strftime("%Y-%m-%d_%H-%M-%S")
+
+    def save(self, jpeg: bytes | None, camera: str = "", suffix: str = "",
+             stamp: str | None = None) -> str | None:
         """Persist ``jpeg`` and return its filename (or None on no data/error)."""
         if not jpeg:
             return None
-        stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        base = f"{stamp}_{self._safe(camera)}"
+        base = f"{stamp or self.stamp()}_{self._safe(camera)}"
+        if suffix:
+            base = f"{base}_{self._safe(suffix)}"
         # Two shots in the same second must not overwrite each other; hold the lock
         # across the existence check AND the write so two requests can't pick the
         # same free name.

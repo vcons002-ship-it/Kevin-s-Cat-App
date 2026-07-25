@@ -161,3 +161,87 @@ def test_a_double_tap_cannot_save_two_copies():
     assert "btn.disabled = true" in fn and "btn.disabled = false" in fn
     # And a failure has to say so rather than looking like it worked.
     assert "body.error" in fn
+
+
+# ---- find-scan evidence -------------------------------------------------------
+# A find that reports "no cat" is otherwise unfalsifiable: the only way to check it
+# was to take a screenshot afterwards and hope it caught the same moment — which,
+# with a cat, it doesn't. So every find keeps the frame it scanned AND what the
+# scan made of that frame.
+import d20app.config as config_mod
+from d20app.snapshots import ScreenshotStore as _Store
+
+
+def test_a_pair_of_saves_can_share_one_timestamp(tmp_path):
+    # The two images from one camera must sort together, not straddle a second.
+    store = _Store(directory=str(tmp_path))
+    stamp = store.stamp()
+    a = store.save(b"in", "Office", "scanned", stamp)
+    b = store.save(b"out", "Office", "result", stamp)
+    assert a.startswith(stamp) and b.startswith(stamp)
+    assert a.endswith("_Office_scanned.jpg") and b.endswith("_Office_result.jpg")
+
+
+def _find_client(tmp_path, monkeypatch, frame):
+    cfgfile = str(tmp_path / "config.yaml")
+    real_load, real_update = config_mod.load, config_mod.update
+    monkeypatch.setattr(config_mod, "load", lambda path=cfgfile: real_load(path))
+    monkeypatch.setattr(config_mod, "update",
+                        lambda values, path=cfgfile: real_update(values, path))
+    app = create_app()
+    c = app.test_client()
+    c.post("/api/cameras/saved", json={"name": "Office", "url": "rtsp://a/s"})
+    c.post("/api/cameras/active", json={"names": ["Office"]})
+    c.post("/api/config", json={"find_scan": True, "find_tiling": "3x3",
+                                "find_tile_overlap": 0.2, "find_confidence": 0.3})
+    loop = app.config["loop"]
+    det = PersonDetector(source="rtsp://a/s")
+    det._publish_frame(frame)
+    loop.is_running = lambda: True
+    loop._detectors = {"Office": det}
+    loop.get_detector = lambda n: det if n == "Office" else None
+    loop.find_shots = _Store(directory=str(tmp_path / "find"))
+    return c, loop, det
+
+
+def test_a_find_keeps_the_frame_it_scanned_and_what_it_saw(tmp_path, monkeypatch):
+    frame = np.full((64, 96, 3), 130, np.uint8)
+    c, loop, det = _find_client(tmp_path, monkeypatch, frame)
+    # Stub the net: this test is about the evidence, not the model.
+    import d20app.webapp as webapp_mod
+    monkeypatch.setattr(webapp_mod, "_run_test_detection",
+                        lambda f, s: (b"\xff\xd8annotated", [], 12.3))
+
+    body = c.post("/api/cats/find", json={}).get_json()
+    row = body["results"][0]
+    assert row["found"] is False               # nothing detected…
+    assert row["scanned_image"] and row["result_image"]   # …but both kept anyway
+    for f in (row["scanned_image"], row["result_image"]):
+        assert os.path.exists(loop.find_shots.path(f))
+    # Reachable over the same static route as hand-taken screenshots.
+    assert body["images_dir"] == "screenshots/find"
+
+
+def test_a_find_records_what_it_actually_ran_with(tmp_path, monkeypatch):
+    # "No cat found" and "no cat found with 26x, 3x3, 0.3, cat-only" are very
+    # different statements, and only the second one can be checked.
+    frame = np.full((64, 96, 3), 130, np.uint8)
+    c, loop, det = _find_client(tmp_path, monkeypatch, frame)
+    import d20app.webapp as webapp_mod
+    seen = {}
+
+    def fake(f, s):
+        seen.update(s)
+        return b"\xff\xd8x", [{"label": "dog", "score": 0.81, "box": [1, 2, 3, 4]}], 9.0
+
+    monkeypatch.setattr(webapp_mod, "_run_test_detection", fake)
+    row = c.post("/api/cats/find", json={}).get_json()["results"][0]
+
+    assert row["ran"]["tiling"] == "3x3" and row["ran"]["tile_overlap"] == 0.2
+    assert row["ran"]["cat_confidence"] == 0.3
+    assert row["ran"]["locator_classes"] == list(det.locator_classes)
+    assert seen["tiling"] == "3x3"             # and those were really passed down
+    # Everything the scan saw, including labels the camera doesn't count as the
+    # cat — that distinction is exactly what a silent "not found" hides.
+    assert row["everything_seen"] == [{"label": "dog", "score": 0.81}]
+    assert row["found"] is False               # a dog isn't the cat, cat-only camera

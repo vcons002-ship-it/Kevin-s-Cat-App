@@ -1440,7 +1440,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         # per-(model, accelerator) nets on each camera's LATEST frame — never the
         # worker's net, so there's no race with the live loop. Finds are recorded
         # (source "find") and the best camera is boosted so the feed shows the box.
-        import cv2  # noqa: F401 — via detect_image
+        import cv2      # for encoding the scanned frame, and via detect_image
 
         loop = app.config["loop"]
         cfg = config_mod.load()
@@ -1488,6 +1488,26 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                          >= (cfg.find_confidence or det.cat_confidence))
             row = {"camera": name, "found": found, "ms": ms,
                    "score": round(best["score"], 3) if best else 0.0}
+            # Keep BOTH images from every find, found or not: the exact frame that
+            # was scanned, and what the scan made of it. A find that reports
+            # nothing is otherwise unfalsifiable — you can only re-take a
+            # screenshot afterwards and hope it's the same moment, which it isn't.
+            # Also record what it actually ran with, so "no cat found" is a
+            # checkable statement rather than one you have to take on trust.
+            row["ran"] = {
+                "model": settings["model"], "tiling": settings["tiling"],
+                "tile_overlap": settings["tile_overlap"],
+                "cat_confidence": settings["cat_confidence"],
+                "locator_classes": settings["locator_classes"],
+            }
+            row["everything_seen"] = [
+                {"label": d["label"], "score": d["score"]} for d in dets[:8]
+            ]
+            stamp = loop.find_shots.stamp()
+            ok_in, buf_in = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            row["scanned_image"] = loop.find_shots.save(
+                buf_in.tobytes() if ok_in else None, name, "scanned", stamp)
+            row["result_image"] = loop.find_shots.save(annotated, name, "result", stamp)
             if found:
                 snap = loop.snapshots.save(annotated)
                 h, w = frame.shape[:2]
@@ -1506,8 +1526,17 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         best_cam = max(hits, key=lambda r: r["score"], default=None)
         if best_cam:
             loop.boost_detection(best_cam["camera"], 10.0)
+        # One log line naming where the evidence went, so a find that reports
+        # nothing can be re-examined later instead of argued about.
+        saved = [r["scanned_image"] for r in results if r.get("scanned_image")]
+        if saved:
+            loop.activity.add(
+                "info",
+                f"🔎 Find-scan kept {len(saved) * 2} images "
+                f"(screenshots/find/) — the frames scanned and what each scan saw.")
         return jsonify({"results": results,
                         "found": [r["camera"] for r in hits],
+                        "images_dir": "screenshots/find",
                         "best": best_cam["camera"] if best_cam else None})
 
     @app.get("/api/feeds")
