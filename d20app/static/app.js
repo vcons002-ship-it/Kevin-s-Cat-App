@@ -664,8 +664,18 @@ function renderCamChips(cams) {
       chip.title = c.fallback;
     }
     else if (c.connected) {
-      chip.textContent = c.ran_on ? `● live · ${c.ran_on}` : "● live";
-      chip.className = "cam-chip chip-ok"; chip.title = "";
+      // Feed/detection lag: RTSP frames queue, so a loop reading slower than the
+      // camera produces acts on ever-older frames. Shown once it's past a blink,
+      // and called out loudly past a second — at that point the app is deciding
+      // about a scene that has already gone.
+      const lag = typeof c.lag_s === "number" ? c.lag_s : null;
+      const late = lag !== null && lag >= 0.5 ? ` · ⏱ ${lag.toFixed(1)}s behind` : "";
+      chip.textContent = (c.ran_on ? `● live · ${c.ran_on}` : "● live") + late;
+      chip.className = "cam-chip " + (lag !== null && lag >= 1 ? "chip-bad" : "chip-ok");
+      chip.title = lag === null ? "" :
+        `frames are ${lag.toFixed(1)}s behind the live edge — detection sees this too` +
+        (c.work_ms ? `\nread+inference: ${c.work_ms} ms/tick` : "") +
+        (c.read_ms ? `\nlast read blocked: ${c.read_ms} ms (low = a frame was already queued)` : "");
     }
     else { chip.textContent = "… connecting"; chip.className = "cam-chip muted"; }
   }

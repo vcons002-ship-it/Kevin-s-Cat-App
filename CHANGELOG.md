@@ -7,6 +7,31 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.58.0] — 2026-07-25
+
+### Added
+- **Per-camera lag readout, to diagnose feeds falling minutes behind.** Live
+  cameras that had never drifted more than a few hundred ms over hours started
+  falling minutes behind within minutes, and staying there long after the room
+  emptied. The camera chip now shows `⏱ N.Ns behind` past half a second and turns
+  red past one, with read and inference timings in its tooltip.
+
+  This matters beyond the picture: the live feed publishes the frame the loop
+  just read, so **feed lag is detection lag**. A feed minutes behind means the
+  app is deciding about a scene that has already gone — sightings stamped with
+  the current time, Follow mode switching to where a cat *was*.
+
+  Lag is measured as the gap between wall clock and stream time
+  (`CAP_PROP_POS_MSEC`): wall clock advances in real time, stream time only
+  advances as fast as frames are consumed, so the difference is the backlog in
+  seconds of video. Re-baselined on reconnect (the queue dies with the socket)
+  and reported as unknown, not zero, on sources with no stream position (USB).
+
+  Diagnosis only — no behaviour change. The cause is not yet established: the
+  loop reads one frame per tick and never drains the queue, which is
+  long-standing, so it does not by itself explain a regression. `motion_hold_seconds: 0`
+  isolates 0.57 from 0.56 for an A/B on live cameras.
+
 ## [0.57.0] — 2026-07-19
 
 ### Added

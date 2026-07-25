@@ -149,7 +149,7 @@ def test_history_is_bounded():
 # Motion decides WHEN to look. On its own that means the net only ever sees frames
 # that moved — the motion-blurred, mid-stride ones — and a cat pausing mid-walk runs
 # no inference at all. The hold keeps looking for a moment after movement stops.
-import time as _time
+import time as _time  # noqa: F401 — used by the hold tests
 
 import numpy as np
 
@@ -235,3 +235,42 @@ def test_hold_is_hot_reloadable_and_closes_an_open_window():
     outcome = det.read_and_detect(detect=True)
     assert det.motion_hold_seconds == 0.0
     assert len(runs) == 1 and not outcome.held   # the open window shut immediately
+
+
+# ---- feed lag readout (0.58.0) -------------------------------------------------
+# RTSP frames queue: a loop consuming slower than the camera produces reads
+# ever-older frames, and since the feed publishes what the loop just read, feed
+# lag IS detection lag. Wall clock advances in real time; stream time only
+# advances as fast as we consume it — the gap between them is the backlog.
+def test_lag_is_zero_when_reads_keep_up_with_the_stream():
+    det = PersonDetector(source="unused")
+    det._note_lag(10_000.0)                  # baseline, mid-stream
+    det._lag_t0 -= 5.0                       # 5 s of wall clock…
+    det._note_lag(15_000.0)                  # …and 5 s of video consumed: keeping up
+    assert det.feed_lag()["lag_s"] < 0.1
+
+
+def test_lag_grows_when_stream_time_falls_behind_wall_clock():
+    det = PersonDetector(source="unused")
+    det._note_lag(0.0)                       # baseline
+    det._lag_t0 -= 10.0                      # 10 s of wall clock elapsed…
+    det._note_lag(2000.0)                    # …but only 2 s of video consumed
+    assert abs(det.feed_lag()["lag_s"] - 8.0) < 0.2
+
+
+def test_a_reconnect_rebaselines_instead_of_reporting_a_stale_worst_case():
+    det = PersonDetector(source="unused")
+    det._note_lag(50_000.0)
+    det._lag_t0 -= 30.0
+    det._note_lag(51_000.0)
+    assert det.feed_lag()["lag_s"] > 25          # badly behind
+    det._release_cap()                            # the queue dies with the socket
+    det._note_lag(0.0)                            # a fresh stream restarts at 0
+    assert det.feed_lag()["lag_s"] == 0.0
+
+
+def test_lag_is_none_without_stream_timestamps():
+    # USB and some HTTP sources report no position: say so rather than invent it.
+    det = PersonDetector(source="unused")
+    det._note_lag(None)
+    assert det.feed_lag()["lag_s"] is None

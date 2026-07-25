@@ -469,6 +469,11 @@ class PersonDetector:
         # (detect=False) and round-robin resting still win over it.
         self.motion_hold_seconds = max(0.0, float(motion_hold_seconds))
         self._motion_hold_until = 0.0
+        # Feed/detection lag tracking (see _note_lag).
+        self._lag_t0 = None
+        self._lag_pos0 = 0.0
+        self._lag_s = None
+        self._read_ms = 0.0
         self._motion = MotionPrefilter(
             min_area_frac=motion_min_area_frac,
             diff_threshold=motion_diff_threshold,
@@ -648,6 +653,8 @@ class PersonDetector:
         camera that reconnects periodically (review 2026-07-08, Finding 1)."""
         cap = self._cap
         self._cap = None
+        self._lag_t0 = None        # the backlog dies with the socket; re-baseline
+        self._lag_s = None
         if cap is not None:
             try:
                 cap.release()
@@ -681,6 +688,36 @@ class PersonDetector:
                 )
             self._cap = cap
         return self._cap
+
+    # -- feed lag -------------------------------------------------------------
+    def _note_lag(self, frame_ms) -> None:
+        """Track how far behind the live edge our reads have fallen.
+
+        RTSP frames queue, so a loop that consumes slower than the camera
+        produces reads ever-older frames — and since the live feed publishes the
+        frame the loop just read, feed lag *is* detection lag. Wall-clock time
+        advances in real time; stream time only advances as fast as we consume
+        it, so the gap between the two is the backlog, in seconds of video.
+
+        Measured against a rolling baseline rather than the first frame ever, so
+        a lag that recovers reads as recovered instead of being masked by an old
+        worst case. A reconnect resets it (the queue is gone with the socket).
+        """
+        now = time.monotonic()
+        if frame_ms is None:
+            self._lag_s = None
+            return
+        if self._lag_t0 is None or frame_ms < self._lag_pos0:
+            self._lag_t0, self._lag_pos0 = now, frame_ms   # first frame, or a reconnect
+            self._lag_s = 0.0
+            return
+        self._lag_s = max(0.0, (now - self._lag_t0) - (frame_ms - self._lag_pos0) / 1000.0)
+
+    def feed_lag(self) -> dict:
+        """``{lag_s, read_ms}`` — how stale the frames we act on are, and the
+        blocking-read tell for whether a backlog exists. ``lag_s`` is None when
+        the camera reports no stream position (USB, some HTTP sources)."""
+        return {"lag_s": self._lag_s, "read_ms": round(self._read_ms, 1)}
 
     def _crop(self, frame):
         if not self.roi:
@@ -1408,13 +1445,22 @@ class PersonDetector:
             # Surface a persistent failure even while a stale frame is still held
             # (the camera died after a good frame) — mirrors the sync path's
             # "give up after a run of empty reads" so the loop can report it.
+            # The grab thread drains the camera continuously and doesn't sample the
+            # stream clock, so there is no backlog figure to report here — say
+            # unknown rather than leave the last synchronous reading standing.
+            self._lag_s = None
             if frame is None or (err and age >= self._GRAB_STALE_SECONDS):
                 if err:
                     raise CameraError(err)
                 return FrameOutcome(motion=False, person=False)   # warming up
         else:
             cap = self._ensure_cap()    # raises CameraError if it can't open
+            _read_t0 = time.monotonic()
             ok, frame = cap.read()
+            # How long the read blocked is the queue tell (measured by
+            # scripts/rtsp_latency_probe.py): a frame already waiting returns in
+            # ~3 ms, while the live edge blocks ~1/camera_fps (~33 ms).
+            self._read_ms = (time.monotonic() - _read_t0) * 1000.0
             if not ok or frame is None:
                 self._read_fails += 1
                 self._release_cap()     # release + force a reconnect next call
@@ -1434,6 +1480,7 @@ class PersonDetector:
                 frame_ms = float(raw) if raw and raw > 0 else None
             except Exception:      # noqa: BLE001 — unsupported property
                 frame_ms = None
+            self._note_lag(frame_ms)
             if scan and self.cat_scan_frames > 1:
                 # Still-cat scans average a short burst of frames — noise drops
                 # ~√N on a still scene, and the burst aborts to the single frame

@@ -494,6 +494,9 @@ class DetectionLoop:
                     row["ran_on"] = eff
                     if why:
                         row["fallback"] = why
+            lag = getattr(det, "feed_lag", None)          # stub-tolerant
+            if lag is not None:
+                row.update(lag())
             scan = self._scan_last.get(row["name"])
             if scan:
                 row["scan_ago_s"] = round(time.time() - scan["ts"], 1)
@@ -798,8 +801,15 @@ class DetectionLoop:
                 # a click instead of by motion.
                 force_run = scan_due or boost
                 try:
+                    _tick_t0 = time.monotonic()
                     outcome = detector.read_and_detect(detect=not paused,
                                                        force=force_run, scan=scan_due)
+                    # Read+inference cost for this tick. The loop then waits a full
+                    # `interval` on top, so the real consume rate is
+                    # 1/(work + interval) — if that falls under the camera's frame
+                    # rate the backlog (and so the lag above) grows without bound.
+                    self._cam_set(name, work_ms=round(
+                        (time.monotonic() - _tick_t0) * 1000.0, 1))
                 except FileNotFoundError as exc:
                     # Missing MODEL files are global & unrecoverable — stop everything.
                     with self._status_lock:
