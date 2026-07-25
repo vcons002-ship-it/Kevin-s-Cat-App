@@ -13,6 +13,7 @@ Serves the config page plus JSON endpoints:
   POST /api/stop       -> stop the detection loop
   GET  /api/status     -> live loop status (running, last roll, counts)
   GET  /api/stream     -> live MJPEG feed (?camera=<name> selects which camera)
+  GET  /api/diagnostics/detectors -> live detector settings vs the saved config
   POST /api/live/screenshot -> save the current picture of a camera, to keep
   POST /api/cameras/active -> set which saved cameras are watched at once
   GET  /api/cats       -> cat sightings (last seen, today's count, recent)
@@ -127,7 +128,7 @@ def _decode_test_upload(data: bytes, filename: str, n_frames=None) -> list:
             pass
 
 
-def _run_test_detection(frame, settings: dict):
+def _run_test_detection(frame, settings: dict, report: dict | None = None):
     """Run :meth:`PersonDetector.detect_image` with override settings.
 
     Reuses one detector per (model, accelerator) so the net isn't reloaded on every
@@ -165,6 +166,25 @@ def _run_test_detection(frame, settings: dict):
         det.cat_scan_imgsz = int(_f("imgsz", 0))
         det._locator_tried = False        # re-resolve the larger-input net on setting change
         det._locator_runner = None
+        if report is not None:
+            # Read BACK off the detector, so this is what ran rather than what was
+            # asked for. A setting the caller passed but nothing applied, or one a
+            # cached detector kept from an earlier call, shows up here as a
+            # difference — which is the only way to tell them apart from outside.
+            eff, why = det.effective_accelerator()
+            report.update({
+                "model": det.model, "accelerator": accel,
+                "ran_on": eff or accel, "fallback": why,
+                "tiling": det.cat_scan_tiling, "tile_overlap": det.cat_scan_tile_overlap,
+                "grid": det._tiling_grid(), "imgsz": det.cat_scan_imgsz,
+                "scan_model": det.cat_scan_model,
+                "cat_confidence": det.cat_confidence, "label_floor": det.label_floor,
+                "person_confidence": det.confidence,
+                "locator_classes": list(det.locator_classes),
+                "roi": det.roi, "frame_size": [frame.shape[1], frame.shape[0]],
+                "gamma": det.gamma, "brightness": det.brightness,
+                "contrast": det.contrast, "saturation": det.saturation,
+            })
         t0 = time.perf_counter()
         annotated, dets = det.detect_image(frame)
         return annotated, dets, round((time.perf_counter() - t0) * 1000.0, 1)
@@ -1069,6 +1089,67 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             return jsonify({"error": "not found"}), 404
         return send_from_directory(directory, name)
 
+    @app.get("/api/diagnostics/detectors")
+    def api_diagnostics_detectors():
+        """What each LIVE detector is actually holding, beside what you configured.
+
+        Find builds its settings from the running detector's in-memory attributes
+        (``det.model``, ``det.cat_confidence``, ``det.locator_classes`` …), not from
+        the config file. So a hot-reload that didn't apply, or a ``reconfigure``
+        that misses a field, makes find scan with settings you never set — while
+        still reporting the values it was handed. This shows the difference without
+        needing a cat to walk past.
+
+        ``drift`` lists fields where the live detector disagrees with the saved
+        camera spec. Anything in there is a bug.
+        """
+        loop = app.config["loop"]
+        cfg = config_mod.load()
+        specs = {s["name"]: s for s in config_mod.camera_targets(cfg)}
+        # (live attribute, saved spec key) — the fields find actually reads.
+        pairs = [("model", "model"), ("accelerator", "accelerator"),
+                 ("confidence", "person_confidence"),
+                 ("cat_confidence", "cat_confidence"),
+                 ("label_floor", "label_floor"), ("roi", "roi"),
+                 ("gamma", "gamma"), ("brightness", "brightness"),
+                 ("contrast", "contrast"), ("saturation", "saturation"),
+                 ("motion_hold_seconds", None)]
+        out = []
+        for name, det in (loop._detectors or {}).items():
+            spec = specs.get(name) or {}
+            live, saved, drift = {}, {}, []
+            for attr, key in pairs:
+                lv = getattr(det, attr, None)
+                live[attr] = lv
+                if key is None or key not in spec:
+                    continue
+                sv = spec[key]
+                saved[attr] = sv
+                if isinstance(lv, float) or isinstance(sv, float):
+                    same = lv is not None and abs(float(lv) - float(sv)) < 1e-6
+                else:
+                    same = lv == sv
+                if not same:
+                    drift.append({"field": attr, "live": lv, "saved": sv})
+            lc_live = list(getattr(det, "locator_classes", ()) or ())
+            lc_saved = list(spec.get("locator_classes") or [])
+            live["locator_classes"] = lc_live
+            if lc_saved and lc_live != lc_saved:
+                drift.append({"field": "locator_classes",
+                              "live": lc_live, "saved": lc_saved})
+            eff, why = det.effective_accelerator()
+            out.append({"camera": name, "live": live, "saved": saved,
+                        "ran_on": eff, "fallback": why,
+                        "smooth": bool(getattr(det, "smooth_feed", False)),
+                        "drift": drift})
+        return jsonify({
+            "detectors": out,
+            "find": {"model": cfg.find_model or "(each camera's own)",
+                     "tiling": cfg.find_tiling, "tile_overlap": cfg.find_tile_overlap,
+                     "confidence": cfg.find_confidence or "(each camera's own)"},
+            "any_drift": any(d["drift"] for d in out),
+        })
+
     # -- manual screenshots from the live feed ------------------------------
     @app.get("/screenshots/<path:name>")
     def screenshot_file(name):
@@ -1481,7 +1562,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 "tiling": cfg.find_tiling or "3x3",
                 "tile_overlap": cfg.find_tile_overlap,
             }
-            annotated, dets, ms = _run_test_detection(frame, settings)
+            ran = {}
+            annotated, dets, ms = _run_test_detection(frame, settings, report=ran)
             best = max((d for d in dets if d["label"] in det.locator_classes),
                        key=lambda d: d["score"], default=None)
             found = bool(best and best["score"]
@@ -1494,12 +1576,8 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # screenshot afterwards and hope it's the same moment, which it isn't.
             # Also record what it actually ran with, so "no cat found" is a
             # checkable statement rather than one you have to take on trust.
-            row["ran"] = {
-                "model": settings["model"], "tiling": settings["tiling"],
-                "tile_overlap": settings["tile_overlap"],
-                "cat_confidence": settings["cat_confidence"],
-                "locator_classes": settings["locator_classes"],
-            }
+            row["asked"] = dict(settings)     # what find requested…
+            row["ran"] = ran                  # …and what the detector actually used
             row["everything_seen"] = [
                 {"label": d["label"], "score": d["score"]} for d in dets[:8]
             ]

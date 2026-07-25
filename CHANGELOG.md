@@ -7,6 +7,28 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.61.0] — 2026-07-25
+
+### Added
+- **`GET /api/diagnostics/detectors` — what the live detectors are actually
+  holding, beside what you configured.** Find builds its settings from the running
+  detector's in-memory attributes, not from `config.yaml`. So a hot-reload that
+  didn't apply, or a `reconfigure()` that misses a field, makes find scan with
+  settings you never set — while still *reporting* the ones it was handed, which
+  is indistinguishable from outside.
+
+  `drift` lists every field where a live detector disagrees with its saved spec.
+  Anything in there is a bug. Needs no cat, no waiting, and no clicking.
+
+### Changed
+- **A find now reports what RAN, not what it asked for.** `row["ran"]` is read
+  back off the detector after configuration — including the resolved tile grid,
+  the effective accelerator and any fallback — while `row["asked"]` keeps what
+  find requested. A setting that was passed but never applied, or one a cached
+  detector kept from an earlier call, now shows as a difference between the two.
+  Previously both were the same dict, so the report could only ever confirm
+  intent.
+
 ## [0.60.1] — 2026-07-25
 
 ### Fixed

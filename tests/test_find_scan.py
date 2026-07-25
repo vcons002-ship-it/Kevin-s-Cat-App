@@ -64,7 +64,7 @@ def test_find_sweeps_records_and_boosts(monkeypatch, tmp_path):
     loop = _loop(tmp_path)
     ran = []
 
-    def fake_run(frame, settings):
+    def fake_run(frame, settings, report=None):
         ran.append(settings["model"])
         # the cat is in the Kitchen (second call), not the Room
         if len(ran) == 2:
@@ -86,7 +86,7 @@ def test_find_respects_camera_subset(monkeypatch, tmp_path):
     _cfg(monkeypatch, tmp_path, find_scan=True, find_cameras=["Room"])
     loop = _loop(tmp_path)
     monkeypatch.setattr(webapp, "_run_test_detection",
-                        lambda frame, settings: (b"\xff\xd8j\xff\xd9", [], 5.0))
+                        lambda frame, settings, report=None: (b"\xff\xd8j\xff\xd9", [], 5.0))
     body = create_app(loop).test_client().post("/api/cats/find",
                                                json={}).get_json()
     assert [r["camera"] for r in body["results"]] == ["Room"]

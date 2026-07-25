@@ -210,7 +210,7 @@ def test_a_find_keeps_the_frame_it_scanned_and_what_it_saw(tmp_path, monkeypatch
     # Stub the net: this test is about the evidence, not the model.
     import d20app.webapp as webapp_mod
     monkeypatch.setattr(webapp_mod, "_run_test_detection",
-                        lambda f, s: (b"\xff\xd8annotated", [], 12.3))
+                        lambda f, s, report=None: (b"\xff\xd8annotated", [], 12.3))
 
     body = c.post("/api/cats/find", json={}).get_json()
     row = body["results"][0]
@@ -230,8 +230,13 @@ def test_a_find_records_what_it_actually_ran_with(tmp_path, monkeypatch):
     import d20app.webapp as webapp_mod
     seen = {}
 
-    def fake(f, s):
+    def fake(f, s, report=None):
         seen.update(s)
+        if report is not None:
+            report.update({"tiling": s["tiling"], "model": s["model"],
+                           "tile_overlap": s["tile_overlap"],
+                           "cat_confidence": s["cat_confidence"],
+                           "locator_classes": s["locator_classes"]})
         return b"\xff\xd8x", [{"label": "dog", "score": 0.81, "box": [1, 2, 3, 4]}], 9.0
 
     monkeypatch.setattr(webapp_mod, "_run_test_detection", fake)
@@ -255,7 +260,7 @@ def test_a_find_reports_the_best_cat_even_when_it_misses_the_bar(tmp_path, monke
     frame = np.full((64, 96, 3), 130, np.uint8)
     c, loop, det = _find_client(tmp_path, monkeypatch, frame)
     import d20app.webapp as webapp_mod
-    monkeypatch.setattr(webapp_mod, "_run_test_detection", lambda f, s: (
+    monkeypatch.setattr(webapp_mod, "_run_test_detection", lambda f, s, report=None: (
         b"fake-image",
         [{"label": "keyboard", "score": 0.94, "box": [0, 0, 9, 9]},
          {"label": "cat", "score": 0.21, "box": [1, 1, 8, 8]}], 9.0))
@@ -269,7 +274,7 @@ def test_a_find_with_no_cat_shaped_box_at_all_says_so(tmp_path, monkeypatch):
     frame = np.full((64, 96, 3), 130, np.uint8)
     c, loop, det = _find_client(tmp_path, monkeypatch, frame)
     import d20app.webapp as webapp_mod
-    monkeypatch.setattr(webapp_mod, "_run_test_detection", lambda f, s: (
+    monkeypatch.setattr(webapp_mod, "_run_test_detection", lambda f, s, report=None: (
         b"fake-image", [{"label": "keyboard", "score": 0.94, "box": [0, 0, 9, 9]}], 9.0))
     row = c.post("/api/cats/find", json={}).get_json()["results"][0]
     assert row["best_locator"] is None
@@ -284,7 +289,7 @@ def test_the_scanned_frame_is_kept_losslessly(tmp_path, monkeypatch):
     c, loop, det = _find_client(tmp_path, monkeypatch, frame)
     import d20app.webapp as webapp_mod
     monkeypatch.setattr(webapp_mod, "_run_test_detection",
-                        lambda f, s: (b"fake-image", [], 9.0))
+                        lambda f, s, report=None: (b"fake-image", [], 9.0))
     row = c.post("/api/cats/find", json={}).get_json()["results"][0]
     assert row["scanned_image"].endswith(".png")
     import cv2
