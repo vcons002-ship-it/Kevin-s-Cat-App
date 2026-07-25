@@ -1,9 +1,13 @@
-"""0.58.0: the feed-lag badge — a diagnostic for feeds falling minutes behind.
+"""The lag readout: how far behind the live edge a camera's frames are.
 
-No JS runtime in the suite, so these are structural guards over the served markup
-and script. The point they protect is placement: the first version put the number
-only on the camera cards down in Setup, which is not where you are when you notice
-a feed stuttering. It has to be on the feed itself.
+Shown on the camera chips in Setup, where all cameras are visible at once — the
+per-feed badge was tried and removed, since the chips already answer it and cover
+cameras that aren't on a feed.
+
+The measurement itself is the substance here. It was wrong twice on real
+hardware: first reporting jumps of +14 s inside one second (impossible — lag can
+only grow as fast as wall clock), then reporting a camera 93 s behind as healthy.
+Both directions are covered below.
 """
 
 import pathlib
@@ -16,85 +20,19 @@ APP_JS = (_BASE / "static" / "app.js").read_text(encoding="utf-8")
 STYLE = (_BASE / "static" / "style.css").read_text(encoding="utf-8")
 
 
-def test_both_feeds_carry_a_lag_badge():
-    assert 'id="lag-0"' in INDEX and 'id="lag-1"' in INDEX
+def test_the_per_feed_badge_is_gone():
+    assert 'id="lag-0"' not in INDEX and 'id="lag-1"' not in INDEX
+    assert "renderFeedLag" not in APP_JS
+    assert "feed-lag" not in STYLE          # and its styling went with it
 
 
-def test_each_badge_sits_inside_its_own_feed_stage():
-    # Absolute positioning is relative to the stage; outside it the badge would
-    # land somewhere arbitrary on the page.
-    stage = INDEX.index('id="live-stage"')
-    assert stage < INDEX.index('id="lag-0"') < INDEX.index('id="live-img"')
-    stage2 = INDEX.index('class="feed2-stage"')
-    assert stage2 < INDEX.index('id="lag-1"') < INDEX.index('id="live-img2"')
-
-
-def test_the_badge_does_not_collide_with_the_feed_lock():
-    # The lock pins to the top-right of the same stage; the badge must not sit on it.
-    lag = STYLE[STYLE.index(".feed-lag {"):]
-    lag = lag[:lag.index("}")]
-    assert "left: 8px" in lag and "right" not in lag
-    lock = STYLE[STYLE.index(".feed-lock {"):]
-    assert "right: 8px" in lock[:lock.index("}")]
-
-
-def test_the_badge_is_driven_by_the_status_poll():
-    assert "renderFeedLag(body.cameras)" in APP_JS
-    assert "function renderFeedLag" in APP_JS
-
-
-def test_the_badge_reads_the_camera_each_feed_is_actually_showing():
-    # Not the pickers' values: with Follow on, the router moves feeds and the
-    # pickers trail it — reading them would label the lag with the wrong room.
-    fn = APP_JS[APP_JS.index("function renderFeedLag"):]
-    fn = fn[:fn.index("\n}")]
-    assert "[liveCam, feed2Cam]" in fn
-    assert "live-camera" not in fn
-
-
-def _render_fn():
-    fn = APP_JS[APP_JS.index("function renderFeedLag"):]
-    return fn[:fn.index("\n}\n")]
-
-
-def test_a_healthy_feed_still_shows_its_number():
-    # A hidden badge is indistinguishable from a broken one, so 0.0s must render.
-    fn = _render_fn()
-    assert "toFixed(1)" in fn
-    # The badge hides only when there is no feed or no camera — never because the
-    # value is small, and never because it couldn't be measured.
-    hide = fn[fn.index("if (!shown[i]"):fn.index("const lag =")]
-    assert "lag" not in hide and ">" not in hide
-
-
-def test_an_unmeasurable_lag_says_so_instead_of_printing_a_number():
-    # The first build trusted the stream clock and reported +14s inside one second
-    # — impossible for a real backlog. A number we don't believe is worse than
-    # none, so an unusable clock must render as unknown, not as zero.
-    fn = _render_fn()
-    unknown = fn[fn.index("if (lag === null)"):fn.index("continue;\n    }")]
-    # The untrusted absolute is never printed…
-    assert "lag.toFixed" not in unknown
-    # …but the rate is, because it's built from clamped per-step deltas and does
-    # not depend on the absolute clock. Showing nothing at all is what let a real
-    # minutes-long lag read as healthy on live cameras.
-    assert "⏱ —" in unknown and "queued" in unknown and "s/min" in unknown
-
-
-def test_the_backlog_signal_does_not_depend_on_the_stream_clock():
-    # `queued` is the median blocking time of recent reads: a read that returns
-    # instantly had a frame already waiting. It must stay usable precisely when
-    # the seconds figure isn't.
-    src = pathlib.Path(d20app.__file__).parent.joinpath("detector.py").read_text(encoding="utf-8")
-    fn = src[src.index("def feed_lag"):]
-    fn = fn[:fn.index("\n    def ")]
-    assert "_read_history" in fn and "_lag_s" in fn
-    assert "queued" in fn and "clock_ok" in fn
-
-
-def test_card_chip_and_feed_badge_agree_on_when_it_is_bad():
-    # Two readouts of one number that disagreed would be worse than one.
-    assert APP_JS.count("lag >= 3") == 2
+def test_the_camera_chip_still_reports_lag():
+    chip = APP_JS[APP_JS.index("function renderCamChips"):]
+    chip = chip[:chip.index("\n}\n")]
+    assert "lag_s" in chip and "consume_rate" in chip
+    # Both an absolute figure and the "losing ground" rate, so a camera whose
+    # clock is too erratic for seconds still can't pass as healthy.
+    assert "s behind" in chip and "s/min" in chip
 
 
 # ---- the measurement itself ----------------------------------------------------

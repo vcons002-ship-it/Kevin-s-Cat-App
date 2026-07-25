@@ -45,8 +45,8 @@ cat_confidence: 0.5       # 0..1; min confidence for a cat (locator) detection �
 locator_classes: ["cat"]  # COCO classes that count as "the cat" for the locator. A no-dog household can use ["cat", "dog"] (the model often mislabels a cat as a dog).
 confirm_frames: 4         # require a person in this many frames in a row (cuts false positives, incl. a moving cat's brief high-confidence frame)
 detect_size: 300          # legacy MobileNet-SSD input size — ignored since 0.25.0 (YOLO size is fixed by its export). Kept so old configs still load.
-scan_fps: 10.0            # frames/sec read from the camera; lower = less CPU (good for the main feed)
-smooth_live_feed: false   # run a dedicated capture thread so the live GUI feed plays at camera rate (decoupled from inference); a little extra CPU/bandwidth
+scan_fps: 10.0            # how often the DETECTOR looks, in frames/sec — not how often the app talks to the camera (it reads every frame regardless; see smooth_live_feed). Lower = less inference. Never set it ABOVE the camera's frame rate: there are no new frames to see, so the detector would re-examine ones it has already judged (the app warns if you do).
+smooth_live_feed: false   # IGNORED since 0.59.0. A network camera is now always read continuously, because an RTSP stream is a QUEUE: reading it slower than it arrives means acting on ever-older frames (measured at 46s of lag per MINUTE), not on fewer frames. Every frame must be decoded to stay current, so showing them costs almost nothing extra. To cut CPU, lower the camera's own stream frame rate. Kept so old configs still load.
 roi: null                 # [x, y, w, h] region of interest — set this visually in the GUI
 
 # --- Locator resolution (the still-cat scan only; the fast treat path is untouched).

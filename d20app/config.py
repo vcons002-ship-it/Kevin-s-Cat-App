@@ -57,8 +57,8 @@ class Config:
     person_confidence: float = 0.5   # min DNN confidence to count as a person (0.5: clean person/cat split on stills, keeps hard poses ≥0.71)
     confirm_frames: int = 4          # require a person in this many frames in a row (4 guards against a moving cat's transient high-confidence spike)
     detect_size: int = 300           # legacy MobileNet-SSD net input size — ignored since 0.25.0 (YOLO uses its exported size). Kept so old configs still load.
-    scan_fps: float = 10.0           # frames/sec to read from the camera (lower = less CPU)
-    smooth_live_feed: bool = False   # dedicated capture thread so the live feed runs at camera rate (decoupled from inference); costs a little extra CPU/bandwidth
+    scan_fps: float = 10.0           # how often the DETECTOR looks (frames/sec). NOT how often the camera is read — every frame is read regardless, since that is the only way to stay at the live edge. Never set above the camera's own frame rate: there would be no new frame to look at.
+    smooth_live_feed: bool = False   # IGNORED since 0.59.0 (kept so old configs load). Network cameras are always read continuously — an RTSP stream is a queue, so reading it slower than it arrives means acting on ever-older frames, not fewer of them. See detector.continuous_read_wanted().
     roi: list | None = None          # optional [x, y, w, h] crop of the frame (set in the GUI)
     label_floor: float = 0.55        # min confidence to NAME a non-person mover in the log/snapshot (higher = fewer stray "pottedplant"/"sofa" labels; no effect on treats)
     cat_confidence: float = 0.5      # min confidence for a locator-class detection (the cat) to count — independent of person_confidence and of label_floor. Gates the track_cats/Show-cat path only; the treat/roll path is untouched.
@@ -172,7 +172,11 @@ _CAMERA_FROM_CFG = {
     "model": "detector_model", "accelerator": "accelerator",
     "person_confidence": "person_confidence", "confirm_frames": "confirm_frames",
     "scan_fps": "scan_fps", "label_floor": "label_floor",
-    "smooth_feed": "smooth_live_feed", "roi": "roi",
+    # NOT smooth_feed (0.59.0). The continuous-read thread is no longer optional
+    # on a network camera — it is the only way to stay at the live edge of a
+    # stream that queues — so it is decided by the source type, not stored per
+    # camera. A leftover key in an old config is ignored.
+    "roi": "roi",
     "gamma": "gamma", "brightness": "brightness",
     "contrast": "contrast", "saturation": "saturation",
     "cat_confidence": "cat_confidence", "locator_classes": "locator_classes",

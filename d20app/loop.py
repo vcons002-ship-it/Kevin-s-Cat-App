@@ -21,9 +21,9 @@ from . import dice
 from .activitylog import ActivityLog
 from .caster import Caster, SoundServer
 from .cats import CatTracker, zone_for
-from .detector import PersonDetector, mask_credentials
+from .detector import PersonDetector, continuous_read_wanted, mask_credentials
 from .feeds import FeedRouter
-from .snapshots import SnapshotStore
+from .snapshots import ScreenshotStore, SnapshotStore
 
 log = logging.getLogger("d20app.loop")
 
@@ -159,6 +159,7 @@ class DetectionLoop:
         self.status = Status()
         self.activity = ActivityLog()
         self.snapshots = SnapshotStore()
+        self.screenshots = ScreenshotStore()   # manual, kept (never pruned)
         self.cats = CatTracker()        # cat sightings, for the "show cat" feature
         self._sound_server: SoundServer | None = None
         self._caster: Caster | None = None
@@ -568,7 +569,9 @@ class DetectionLoop:
                 motion_hold_seconds=cfg.motion_hold_seconds,
                 model=spec["model"],
                 accelerator=spec["accelerator"],
-                smooth_feed=spec["smooth_feed"],
+                # Not a preference (0.59.0): a network stream queues, so the only
+                # way to act on current frames is to read it continuously.
+                smooth_feed=continuous_read_wanted(spec["source"]),
                 gamma=spec["gamma"],
                 brightness=spec["brightness"],
                 contrast=spec["contrast"],
@@ -730,6 +733,7 @@ class DetectionLoop:
         # never pauses, so it stays watching for cats during another camera's cooldown.
         can_pause = roll_enabled and not track_cats
         last_reload = time.monotonic()
+        fps_warned = False              # the scan_fps-vs-camera check runs once
         try:
             while not self._stop.is_set():
                 # Hot-reload saved settings (#100): re-read config on a slow
@@ -837,6 +841,24 @@ class DetectionLoop:
                     self.activity.add("info", f"📷 {cam_label} connected ({w}×{h}).")
                     connected = True
                     self._cam_set(name, connected=True)
+
+                # scan_fps ABOVE the camera's rate is the one genuinely wrong
+                # setting: the detector asks for frames faster than they exist, so
+                # it re-examines ones it has already seen. (Below is normal and
+                # intended — watch at 25, detect at 5.) Measured, not read from
+                # CAP_PROP_FPS, which cameras misreport. Warned once per camera.
+                if not fps_warned:
+                    probe = getattr(detector, "camera_fps", None)   # stub-tolerant
+                    native = probe() if probe is not None else None
+                    if native is not None:
+                        fps_warned = True
+                        want = float(spec["scan_fps"])
+                        if want > native * 1.15:      # margin: measurement wobbles
+                            self.activity.add(
+                                "info",
+                                f"⚠ {cam_label}: scan rate {want:g}/s is higher than the "
+                                f"camera's {native:.0f}/s — the detector will see repeat "
+                                f"frames. Lower scan fps to {native:.0f} or below.")
 
                 if force_run or outcome.motion:
                     last_scan = now      # the net ran; defer the next forced scan

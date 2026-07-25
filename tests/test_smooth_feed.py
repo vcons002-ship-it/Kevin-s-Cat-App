@@ -5,6 +5,7 @@ thread must become the sole camera reader when smooth is on, the loop must
 reconcile toggles on its own thread, and nothing must regress in normal mode.
 """
 
+import pathlib
 import threading
 import time
 
@@ -185,15 +186,102 @@ def test_live_version_endpoint_path_via_loop(monkeypatch):
     assert app.config["loop"].live_version() == 0
 
 
-def test_smooth_toggle_endpoint_persists_and_is_safe_when_stopped(tmp_path, monkeypatch):
-    import d20app.config as config_mod
-    cfgfile = str(tmp_path / "config.yaml")
-    real_update, real_load = config_mod.update, config_mod.load
-    monkeypatch.setattr(config_mod, "update",
-                        lambda values, path=cfgfile: real_update(values, path))
-    monkeypatch.setattr(config_mod, "load", lambda path=cfgfile: real_load(path))
-
+def test_the_smooth_toggle_endpoint_is_gone(tmp_path, monkeypatch):
+    # 0.59.0: continuous reading is no longer a user preference. A network stream
+    # queues, so reading it slower than it arrives means acting on ever-older
+    # frames — turning it "off" didn't save meaningful CPU, it just made the
+    # detector work minutes in the past. The decision is now the source type.
     c = create_app().test_client()
-    r = c.post("/api/live/smooth", json={"on": True})
-    assert r.get_json()["smooth_live_feed"] is True
-    assert real_load(cfgfile).smooth_live_feed is True      # persisted
+    assert c.post("/api/live/smooth", json={"on": True}).status_code == 404
+
+
+def test_a_network_camera_reads_continuously_and_usb_does_not():
+    from d20app.detector import continuous_read_wanted
+
+    assert continuous_read_wanted("rtsp://192.0.2.1/stream1") is True
+    assert continuous_read_wanted("http://192.0.2.1/video.mjpg") is True
+    assert continuous_read_wanted("usb:0") is False      # local capture doesn't queue
+    assert continuous_read_wanted("usb:2") is False
+
+
+def test_a_saved_camera_no_longer_carries_a_smooth_setting():
+    import d20app.config as config_mod
+
+    spec = config_mod.coerce_camera({"name": "K", "url": "rtsp://a"}, config_mod.Config())
+    assert "smooth_feed" not in spec
+    # …and a leftover key from an older config is ignored, not honoured.
+    stale = config_mod.coerce_camera(
+        {"name": "K", "url": "rtsp://a", "smooth_feed": False}, config_mod.Config())
+    assert "smooth_feed" not in stale
+
+
+# ---- the two things that ride on continuous reading ---------------------------
+def test_the_feed_shows_what_the_net_sees(monkeypatch):
+    # The grab thread used to publish the RAW frame while the net got the adjusted
+    # one, so a camera relying on gamma to see a dark room looked untouched in the
+    # GUI. Now that every network camera reads continuously, that would have hit
+    # everyone — the published frame must carry the adjustments.
+    det, cap = _detector_with_fake_cap(monkeypatch, smooth_feed=True, brightness=40)
+    det._smooth_desired = True
+    det.read_and_detect(detect=False)                  # loop thread starts the grabber
+    try:
+        deadline = time.time() + 2
+        while det.latest_frame() is None and time.time() < deadline:
+            time.sleep(0.01)
+        published = det.latest_frame()
+        assert published is not None
+        # FakeCap hands out flat frames; brightness must have moved the value up.
+        raw_value = int(cap.reads % 256)
+        assert int(published.mean()) > raw_value or int(published.mean()) >= 40
+    finally:
+        det.release()
+
+
+def test_detection_never_analyses_the_same_frame_twice(monkeypatch):
+    # With scan_fps at or above the camera's rate the newest frame hasn't changed
+    # yet. Diffing a frame against itself gives zero motion, so the gate would
+    # never fire and detection would silently stop. Skipping is the honest answer.
+    det, _cap = _detector_with_fake_cap(monkeypatch, smooth_feed=True)
+    det.smooth_feed = True                     # pretend the grabber is running
+    det._grab_thread = threading.current_thread()
+    frame = np.full((48, 64, 3), 90, np.uint8)
+    det._publish_frame(frame)
+
+    runs = []
+    det._detect_boxes = lambda img, floor: runs.append(1) or []
+    det._motion.update = lambda gray, ts_ms=None: True    # would always detect
+
+    first = det.read_and_detect(detect=True)
+    second = det.read_and_detect(detect=True)             # same frame, no new version
+    assert len(runs) == 1                                  # the repeat was skipped
+    assert second.motion is False and second.person is False
+
+    det._publish_frame(np.full((48, 64, 3), 200, np.uint8))   # a genuinely new frame
+    det.read_and_detect(detect=True)
+    assert len(runs) == 2
+    assert first is not None
+
+
+def test_the_measured_camera_rate_needs_real_samples(monkeypatch):
+    # The scan_fps warning must never fire off one lucky frame — and CAP_PROP_FPS
+    # is not trusted here because cameras misreport it.
+    det, _cap = _detector_with_fake_cap(monkeypatch, smooth_feed=True)
+    assert det.camera_fps() is None            # nothing measured yet
+    det._grab_t0 = time.monotonic() - 2.0
+    det._grab_frames = 5
+    assert det.camera_fps() is None            # too few samples to claim a rate
+    det._grab_frames = 50
+    assert det.camera_fps() is not None
+
+
+def test_lag_is_measured_on_the_thread_that_actually_reads(monkeypatch):
+    # The lag badge exists to show a feed falling behind. Once every network camera
+    # moved to the grab thread, measuring in the synchronous path would have
+    # reported "unknown" on precisely the cameras it was built to watch.
+    det, _cap = _detector_with_fake_cap(monkeypatch, smooth_feed=True)
+    src = pathlib.Path(det_mod.__file__).read_text(encoding="utf-8")
+    grab = src[src.index("def _grab_loop"):src.index("def camera_fps")]
+    assert "_note_lag" in grab and "_read_history" in grab
+    # …and the smooth branch of read_and_detect no longer blanks the figure.
+    read = src[src.index("if self.smooth_feed:"):src.index("cropped = self._crop")]
+    assert "self._lag_s = None" not in read

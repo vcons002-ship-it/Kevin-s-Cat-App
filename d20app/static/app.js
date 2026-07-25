@@ -536,7 +536,6 @@ async function loadConfig() {
   $("round_robin").checked = !!cfg.round_robin;
   $("round_robin_size").value = cfg.round_robin_size;
   $("round_robin_interval").value = cfg.round_robin_interval;
-  $("smooth_feed").checked = !!cfg.smooth_live_feed;
   if ($("cat_scan_interval") && cfg.cat_scan_interval !== undefined && cfg.cat_scan_interval !== null)
     $("cat_scan_interval").value = String(cfg.cat_scan_interval);
   $("use_speech").checked = !!cfg.use_speech;
@@ -717,58 +716,8 @@ async function refreshStatus() {
   detail.textContent = parts.join("  ·  ");
   detail.title = detail.textContent;   // clamped to 2 lines in CSS — hover for the rest
   renderCamChips(body.cameras);
-  renderFeedLag(body.cameras);
   updateLiveView(body.running);
   updateEscalationCameraRow(body);
-}
-
-// Feed lag badge (0.58.0). Frames queue on the camera, so a loop that reads
-// slower than the camera produces acts on ever-older frames — and the feed shows
-// the frame the loop just read, so what you see IS what the detector saw. Shown
-// on the feed itself because that's where you are when you notice the stutter;
-// shown even at 0.0s, because a healthy reading is what makes a bad one legible.
-function renderFeedLag(cams) {
-  const shown = [liveCam, feed2Cam];
-  for (let i = 0; i < 2; i++) {
-    const el = $(`lag-${i}`);
-    if (!el) continue;
-    const cam = (cams || []).find((c) => c.name === shown[i]);
-    if (!shown[i] || !cam || !cam.connected) { el.classList.add("hidden"); continue; }
-    const lag = typeof cam.lag_s === "number" ? cam.lag_s : null;
-    el.classList.remove("hidden");
-    const rate = typeof cam.consume_rate === "number" ? cam.consume_rate : null;
-    const detail =
-      (rate !== null
-        ? `getting ${rate.toFixed(2)}s of video per second of real time ` +
-          `(1.00 = keeping up)\n` : "") +
-      (cam.work_ms ? `read + inference: ${cam.work_ms} ms per tick\n` : "") +
-      (cam.read_median_ms !== null && cam.read_median_ms !== undefined
-        ? `reads block for ${cam.read_median_ms} ms on average ` +
-          "(a few ms = frames are already waiting)" : "");
-    // Falling behind in real time is worth flagging even when the total can't be
-    // measured — showing nothing is what let a genuine minutes-long lag pass as
-    // healthy. Anything under ~0.95 is losing ground steadily.
-    const slipping = rate !== null && rate < 0.95;
-    if (lag === null) {
-      el.textContent = slipping ? `⏱ −${((1 - rate) * 60).toFixed(0)}s/min`
-        : cam.queued ? "⏱ behind" : "⏱ —";
-      el.className = "feed-lag" + (slipping || cam.queued ? " warn" : "");
-      el.title = (cam.clock_ok === false
-        ? "This camera's stream clock keeps jumping, so the total delay can't be given in seconds.\n"
-        : "This source reports no stream clock, so the total delay can't be given.\n") +
-        (slipping ? "It is falling further behind in real time — see the rate below.\n"
-          : cam.queued ? "Frames ARE backing up — reads keep returning instantly.\n"
-          : "No sign of it falling behind.\n") + detail;
-      continue;
-    }
-    el.textContent = `⏱ ${lag.toFixed(1)}s`;
-    el.className = "feed-lag" + (lag >= 3 || (slipping && lag >= 1) ? " bad"
-      : lag >= 1 || slipping ? " warn" : "");
-    el.title =
-      `This feed is ${lag.toFixed(1)}s behind the camera's live edge.\n` +
-      "The detector sees exactly these frames, so this is detection lag too.\n" +
-      detail;
-  }
 }
 
 // ---- live detection feed ---------------------------------------------------
@@ -797,6 +746,9 @@ function updateLiveView(running) {
       ? "Live feed off — tick “Show live feed” to view."
       : "Start watching to see the live feed.";
   }
+  // Also here, not only in pollFeeds: with Follow off and no second feed that
+  // poll returns early, so the button would never appear on the main feed.
+  renderFeedShots();
 }
 
 // ---- Follow mode + second feed (#113) --------------------------------------
@@ -828,6 +780,44 @@ function toggleFeedLock(i) {
   pollFeeds();
 }
 
+// Screenshot: keep the picture that's on screen right now. Unlike the lock this
+// works whether or not Follow is on — it's about this camera, not about routing.
+function renderFeedShots() {
+  for (let i = 0; i < 2; i++) {
+    const btn = $("shot-" + i);
+    if (!btn) continue;
+    const cam = i === 0 ? liveCam : feed2Cam;
+    btn.classList.toggle("hidden", !(isRunning && cam));
+  }
+}
+
+function feedShotNote(i, text, bad) {
+  const stage = $("shot-" + i) && $("shot-" + i).parentElement;
+  if (!stage) return;
+  let note = stage.querySelector(".feed-shot-note");
+  if (!note) {
+    note = document.createElement("span");
+    note.className = "feed-shot-note";
+    stage.appendChild(note);
+  }
+  note.textContent = text;
+  note.classList.toggle("bad", !!bad);
+  note.classList.remove("hidden");
+  clearTimeout(note._timer);
+  note._timer = setTimeout(() => note.classList.add("hidden"), bad ? 6000 : 3500);
+}
+
+async function takeFeedShot(i) {
+  const btn = $("shot-" + i);
+  const cam = i === 0 ? liveCam : feed2Cam;
+  if (!btn || !cam) return;
+  btn.disabled = true;                       // a double-tap shouldn't save twice
+  const { ok, body } = await api("/api/live/screenshot", postJSON({ camera: cam }));
+  btn.disabled = false;
+  if (ok && body && body.file) feedShotNote(i, `📸 ${body.file}`);
+  else feedShotNote(i, (body && body.error) || "Couldn't save the screenshot.", true);
+}
+
 // Follow drives both pickers, so they're read-only while it's on (they still show
 // where each feed is). The second picker is only steerable when there IS a second
 // feed and Follow isn't already choosing for it.
@@ -839,6 +829,7 @@ function syncFeedControls() {
 
 async function pollFeeds() {
   renderFeedLocks();
+  renderFeedShots();
   if (!isRunning || (!followOn && !feed2On)) { updateSecondFeed(null); return; }
   if (!followOn) { updateSecondFeed(null); return; }   // manual: the picker decides
   const slots = feed2On ? 2 : 1;
@@ -1970,6 +1961,8 @@ function wire() {
   for (const i of [0, 1]) {
     const btn = $("lock-" + i);
     if (btn) btn.onclick = () => toggleFeedLock(i);
+    const shot = $("shot-" + i);
+    if (shot) shot.onclick = () => takeFeedShot(i);
   }
   $("speaker-refresh").onclick = () => loadSpeakers(true);
   $("speaker-select").onchange = updateSpeakerWarning;
@@ -2082,8 +2075,6 @@ function wire() {
   };
   $("cat_scan_interval").onchange = saveConfig;
   $("live-img").onerror = () => { if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); } };
-  $("smooth_feed").onchange = async () => {
-    await api("/api/live/smooth", postJSON({ on: $("smooth_feed").checked }));
     if (liveOn) { liveOn = false; refreshStatus(); }
   };
 

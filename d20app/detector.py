@@ -87,6 +87,27 @@ def parse_local_index(source):
     return None
 
 
+def continuous_read_wanted(source) -> bool:
+    """Whether this source needs a dedicated thread reading it continuously.
+
+    True for network streams. RTSP over TCP is a **queue, not a window**: a read
+    returns the NEXT frame in line, never the newest, and nothing is ever dropped.
+    So a loop reading 5 fps from a 25 fps camera advances 40 ms of video per
+    200 ms of real time and falls behind by 0.16 s every tick — permanently,
+    because a queue has no way back. Measured at 46 s of lag per minute on real
+    cameras, and detection acts on exactly those stale frames.
+
+    Reading continuously is the only way to stay at the live edge, and since every
+    frame has to be decoded to get there anyway, publishing them to the live feed
+    costs almost nothing on top. That is why this isn't a user preference.
+
+    False for a local ``usb:N`` device, which doesn't queue this way — there the
+    thread would be pure cost. The lever for saving CPU is the camera's own
+    stream frame rate, not skipping frames the app has already paid to receive.
+    """
+    return parse_local_index(source) is None
+
+
 def _open_capture(source):
     """Open ``source`` with the right OpenCV backend.
 
@@ -441,16 +462,35 @@ class PersonDetector:
         self._live_published_at = 0.0   # monotonic time of the last frame publish
         self._live_version = 0
         self._live_lock = threading.Lock()
-        # Smooth feed: when on, a dedicated thread reads the camera continuously so
-        # the live feed runs at camera rate, decoupled from (slow) inference. Off
-        # by default — the loop reads frames itself, one per analysed iteration.
+        # The grab thread reads the camera continuously, so the live feed runs at
+        # camera rate while inference samples the newest frame at scan_fps.
+        #
+        # It is NOT a comfort feature (0.59.0). An RTSP stream over TCP is a queue,
+        # not a window: read() returns the NEXT frame in line, never the newest, and
+        # nothing is ever dropped. So a loop reading 5 fps from a 25 fps camera
+        # advances 40 ms of video per 200 ms of real time and falls behind by 0.16 s
+        # every tick — permanently, since a queue has no way back. Measured at
+        # 46 s of lag per minute on real cameras, and detection sees exactly those
+        # stale frames. Reading continuously is the only way to stay current, and
+        # since every frame must be decoded anyway, showing them costs almost
+        # nothing extra. Hence: always on for network sources.
+        #
+        # A local ``usb:N`` device is exempt — it doesn't queue like this, so the
+        # thread would be pure cost.
+        #
+        # The CHOICE lives in the loop (``continuous_read_wanted``), not here: this
+        # class is the mechanism, and deciding policy in the constructor would
+        # change behaviour for every caller that just wants a detector.
         # ``smooth_feed`` is the *actual* state (the grabber is started lazily by
-        # the loop thread); ``_smooth_desired`` is the requested state (set here or
-        # later from the web thread). They differ until the loop reconciles them,
-        # so the grabber is started/stopped by one thread only — never racing the
-        # camera read.
+        # the loop thread); ``_smooth_desired`` is the requested state. They differ
+        # until the loop reconciles them, so the grabber is started/stopped by one
+        # thread only — never racing the camera read.
         self.smooth_feed = False
         self._smooth_desired = bool(smooth_feed)
+        self._frame_seq = 0             # bumps ONLY on a new frame (see _publish_frame)
+        self._analysed_seq = -1         # never hand the net the same frame twice
+        self._grab_frames = 0           # measured camera rate (see camera_fps)
+        self._grab_t0 = 0.0
         self._grab_thread = None
         self._grab_stop = threading.Event()
         self._grab_error = ""
@@ -1369,24 +1409,48 @@ class PersonDetector:
             frame = self._live_frame
         return None if frame is None else frame.copy()
 
+    def plain_jpeg(self, quality: int = 92) -> bytes | None:
+        """JPEG of the newest frame with **no** boxes or overlays drawn on it.
+
+        What the camera is showing, for saving a moment to look at later — so it
+        stays comparable with the camera's own recordings. Encoded at a higher
+        quality than the live stream, which optimises for bandwidth on frames
+        nobody keeps. Image adjustments (gamma/contrast) ARE applied, since those
+        are part of the picture the app works from.
+        """
+        import cv2
+
+        frame = self.latest_frame()
+        if frame is None:
+            return None
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
+        return buf.tobytes() if ok else None
+
     def _publish_frame(self, frame) -> None:
         """Store the latest raw frame for the live feed and bump the version."""
         with self._live_lock:
             self._live_frame = frame
             self.frame_size = (frame.shape[1], frame.shape[0])
             self._live_version += 1
+            # _live_version also bumps when BOXES change (so the stream re-renders),
+            # which makes it useless for "is this a new frame?" — running detection
+            # would invalidate its own key. This counts frames and nothing else.
+            self._frame_seq += 1
             self._live_published_at = time.monotonic()
 
     # -- smooth feed: a dedicated capture thread ----------------------------
     def _grab_loop(self) -> None:
         """Continuously read the camera so the feed runs at camera rate.
 
-        Active only in smooth mode, where it is the **sole** reader of the
-        capture (``read_and_detect`` then samples the published buffer instead of
-        reading the camera itself). Handles its own reconnect with the same
+        The **sole** reader of the capture whenever it runs (``read_and_detect``
+        then samples the published buffer instead of reading the camera itself),
+        which is on every network source since 0.59.0 — see
+        :func:`continuous_read_wanted`. Handles its own reconnect with the same
         empty-read tolerance as the synchronous path, surfacing a persistent
         failure via ``_grab_error`` so the loop can report it.
         """
+        import cv2                     # imported per-entry-point, as elsewhere here
+
         while not self._grab_stop.is_set():
             try:
                 cap = self._ensure_cap()
@@ -1395,7 +1459,10 @@ class PersonDetector:
                     self._grab_error = str(exc)
                 self._grab_stop.wait(1.0)
                 continue
+            _read_t0 = time.monotonic()
             ok, frame = cap.read()
+            self._read_ms = (time.monotonic() - _read_t0) * 1000.0
+            self._read_history.append(self._read_ms)
             if self._grab_stop.is_set():
                 break                       # stop requested during the blocking read
             if not ok or frame is None:
@@ -1413,10 +1480,43 @@ class PersonDetector:
             if self._grab_error:
                 with self._live_lock:
                     self._grab_error = ""
-            self._publish_frame(frame)
+            now = time.monotonic()
+            if not self._grab_t0:
+                self._grab_t0 = now
+            else:
+                self._grab_frames += 1
+            # Lag is measured HERE because this thread is the reader (0.59.0). If
+            # the host can't decode as fast as the camera sends, this loop falls
+            # behind and the figure climbs — which is precisely the failure the
+            # continuous read is meant to prevent, so it must stay visible.
+            try:
+                raw_pos = cap.get(cv2.CAP_PROP_POS_MSEC)
+                self._note_lag(float(raw_pos) if raw_pos and raw_pos > 0 else None)
+            except Exception:      # noqa: BLE001 — unsupported property
+                self._note_lag(None)
+            # Publish the ADJUSTED frame: the feed must show what the net sees.
+            # (Before 0.59.0 the grab thread published raw, so a camera relying on
+            # gamma/contrast to see a dark room looked untouched in the GUI while
+            # the net got the corrected pixels.) read_and_detect must therefore not
+            # adjust a second time — see the smooth branch there.
+            self._publish_frame(self._adjust(frame))
+
+    def camera_fps(self) -> float | None:
+        """The camera's MEASURED frame rate, or None until there's enough to say.
+
+        Measured rather than taken from ``CAP_PROP_FPS``, which cameras routinely
+        misreport. Used to warn when ``scan_fps`` is set above it — the one
+        genuinely wrong configuration, since the detector would then re-examine
+        frames it has already seen.
+        """
+        if not self._grab_t0 or self._grab_frames < 30:
+            return None
+        span = time.monotonic() - self._grab_t0
+        return (self._grab_frames / span) if span > 0 else None
 
     def _start_grab(self) -> None:
         """Spawn the grab thread (loop thread only). Resets its retry/error state."""
+        self._grab_frames, self._grab_t0 = 0, 0.0
         self._grab_stop.clear()
         self._grab_fails = 0
         with self._live_lock:
@@ -1507,19 +1607,24 @@ class PersonDetector:
             # The grab thread is the sole reader; sample its latest frame.
             with self._live_lock:
                 frame = self._live_frame
+                seq = self._frame_seq
                 err = self._grab_error
                 age = time.monotonic() - self._live_published_at
             # Surface a persistent failure even while a stale frame is still held
             # (the camera died after a good frame) — mirrors the sync path's
             # "give up after a run of empty reads" so the loop can report it.
-            # The grab thread drains the camera continuously and doesn't sample the
-            # stream clock, so there is no backlog figure to report here — say
-            # unknown rather than leave the last synchronous reading standing.
-            self._lag_s = None
             if frame is None or (err and age >= self._GRAB_STALE_SECONDS):
                 if err:
                     raise CameraError(err)
                 return FrameOutcome(motion=False, person=False)   # warming up
+            # Never analyse the same frame twice (0.59.0). When scan_fps is at or
+            # above the camera's rate the newest frame hasn't changed yet, and
+            # diffing a frame against itself yields zero motion — so the gate would
+            # never fire and detection would silently stop. Skipping is honest: no
+            # new frame means nothing new to say.
+            if seq == self._analysed_seq:
+                return FrameOutcome(motion=False, person=False)
+            self._analysed_seq = seq
         else:
             cap = self._ensure_cap()    # raises CameraError if it can't open
             _read_t0 = time.monotonic()
@@ -1556,15 +1661,15 @@ class PersonDetector:
                 # latency-sensitive; the motion/treat path never does this.
                 frame = self._read_still_average(cap, frame)
 
-        # Image adjustments are applied to the frame the net analyses; in the
-        # synchronous path the live feed shows the adjusted frame too (publish after
-        # adjusting). In smooth mode the grab thread publishes the raw frame, so the
-        # feed there stays unadjusted while the net still sees the adjusted pixels.
-        frame = self._adjust(frame)
+        # Image adjustments are applied before publishing on BOTH paths, so the
+        # picture always shows what the net sees. The grab thread does its own; the
+        # synchronous path does it here.
         if not self.smooth_feed:
+            frame = self._adjust(frame)
             # Publish every read frame for the live feed, even when the net is
             # skipped (no motion / cooldown pause), so the feed stays warm.
             self._publish_frame(frame)
+        # In smooth mode the grab thread already adjusted and published it.
 
         cropped = self._crop(frame)
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)

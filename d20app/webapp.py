@@ -13,7 +13,7 @@ Serves the config page plus JSON endpoints:
   POST /api/stop       -> stop the detection loop
   GET  /api/status     -> live loop status (running, last roll, counts)
   GET  /api/stream     -> live MJPEG feed (?camera=<name> selects which camera)
-  POST /api/live/smooth-> toggle the smooth (decoupled-capture) live feed
+  POST /api/live/screenshot -> save the current picture of a camera, to keep
   POST /api/cameras/active -> set which saved cameras are watched at once
   GET  /api/cats       -> cat sightings (last seen, today's count, recent)
 """
@@ -1069,6 +1069,39 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             return jsonify({"error": "not found"}), 404
         return send_from_directory(directory, name)
 
+    # -- manual screenshots from the live feed ------------------------------
+    @app.get("/screenshots/<path:name>")
+    def screenshot_file(name):
+        directory = app.config["loop"].screenshots.directory
+        if not os.path.exists(os.path.join(directory, name)):
+            return jsonify({"error": "not found"}), 404
+        return send_from_directory(directory, name)
+
+    @app.post("/api/live/screenshot")
+    def api_live_screenshot():
+        """Save the camera's current picture, unannotated, to keep.
+
+        Deliberately no boxes: this is for comparing a moment against the
+        camera's own recordings later, and drawn overlays get in the way of that.
+        Unlike detection snapshots these are never pruned — the user asked for
+        this one, so the app doesn't get to decide it has expired.
+        """
+        loop = app.config["loop"]
+        camera = ((request.get_json(silent=True) or {}).get("camera") or "").strip()
+        if not loop.is_running():
+            return jsonify({"error": "Start watching before taking a screenshot."}), 409
+        det = loop.get_detector(camera) if camera else None
+        if det is None:
+            return jsonify({"error": f"Unknown camera {camera!r}."}), 409
+        jpeg = det.plain_jpeg()
+        if jpeg is None:
+            return jsonify({"error": "No frame from that camera yet."}), 409
+        name = loop.screenshots.save(jpeg, camera)
+        if not name:
+            return jsonify({"error": "Couldn't write the screenshot to disk."}), 500
+        loop.activity.add("info", f"📸 Screenshot saved from {camera}: {name}")
+        return jsonify({"ok": True, "file": name, "url": f"/screenshots/{name}"})
+
     # -- live preview frame (for the region-of-interest picker) -------------
     @app.get("/api/preview")
     def api_preview():
@@ -1111,7 +1144,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             # One JPEG per part; the browser renders this directly in an <img>.
             # Encode only when the frame/box version changes, so we never re-send
             # an unchanged frame and the feed runs at whatever rate frames arrive
-            # — the loop's scan rate normally, or camera rate with the smooth feed.
+            # — camera rate on a network camera, the loop's scan rate on USB.
             # The 0.03 s poll is the only ceiling (~30 fps); cheap when idle.
             #
             # A client disconnect is only raised (GeneratorExit) at a `yield`, so we
@@ -1168,20 +1201,12 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         raw = det.latest_frame()
         if raw is None:
             return jsonify({"error": "No frame from that camera yet."}), 409
-        frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+        frame = det._crop(raw)
         jpeg = det.trail_jpeg(frame)
         if jpeg is None:
             return jsonify({"error": "No trail yet — nothing has moved this episode."}), 404
         return Response(jpeg, mimetype="image/jpeg")
 
-    @app.post("/api/live/smooth")
-    def api_live_smooth():
-        # Persist the choice and, if watching, apply it live (the loop reconciles
-        # it on its next frame). Off → on costs a little extra CPU/bandwidth.
-        on = bool((request.get_json(silent=True) or {}).get("on"))
-        config_mod.update({"smooth_live_feed": on})
-        app.config["loop"].set_smooth(on)
-        return jsonify({"ok": True, "smooth_live_feed": on})
 
     # -- discovery ----------------------------------------------------------
     @app.get("/api/speakers")
@@ -1396,7 +1421,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         raw = det.latest_frame()
         if raw is None:
             return jsonify({"error": "No frame from that camera yet."}), 409
-        frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+        frame = det._crop(raw)
         boxes = [s["box"] for s in loop.cats.recent() if s.get("camera") == name]
         img = heatmap_mod.render_heatmap(frame, boxes)
         if img is None:
@@ -1443,7 +1468,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
                 results.append({"camera": name, "found": False, "score": 0.0,
                                 "note": "no frame yet"})
                 continue
-            frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+            frame = det._crop(raw)
             # Find has its own full settings (#101): model/tiling/overlap/
             # confidence, each with "each camera's own" (empty/0) as the default.
             settings = {
@@ -1968,9 +1993,9 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
             raw = det.latest_frame()
             if raw is None:
                 return jsonify({"error": "No frame from that camera yet."}), 409
-            # The sync path publishes the frame already adjusted; the smooth-mode
-            # grab thread publishes raw — adjust only then (no double-adjust).
-            frame = det._crop(det._adjust(raw) if det.smooth_feed else raw)
+            # Published frames are always already adjusted (0.59.0), on both the
+            # grab-thread and synchronous paths — so never adjust here again.
+            frame = det._crop(raw)
             # The trail endpoint first — where the last movement ENDED is the
             # strongest "look here" hint (#67) — then motion blobs + last sighting.
             endpoint = det.trail_endpoint()

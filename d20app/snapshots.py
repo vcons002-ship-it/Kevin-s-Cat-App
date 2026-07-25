@@ -68,3 +68,60 @@ class SnapshotStore:
                     pass
         except OSError:
             pass
+
+
+SCREENSHOTS_DIR = os.environ.get(
+    "D20_SCREENSHOTS_DIR", os.path.join(_REPO_ROOT, "screenshots")
+)
+
+
+class ScreenshotStore:
+    """Screenshots the user asked for, by hand, from the live feed.
+
+    Deliberately NOT a :class:`SnapshotStore`: those are automatic detection
+    evidence and are pruned to a rolling window, which is right for something the
+    app produced on its own. These were asked for on purpose, so nothing here is
+    ever deleted — the app should not throw away what someone chose to keep.
+
+    Filenames are ``YYYY-MM-DD_HH-MM-SS_Camera.jpg``: sortable, and readable
+    against a clock, so a shot can be lined up with the same moment in the
+    camera's own recordings without opening anything.
+    """
+
+    def __init__(self, directory: str = SCREENSHOTS_DIR) -> None:
+        self.directory = directory
+        self._lock = threading.Lock()
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _safe(camera: str) -> str:
+        """A camera name reduced to something safe in a filename, never empty."""
+        keep = [c if (c.isalnum() or c in "-_") else "-" for c in (camera or "camera")]
+        return "".join(keep).strip("-") or "camera"
+
+    def save(self, jpeg: bytes | None, camera: str = "") -> str | None:
+        """Persist ``jpeg`` and return its filename (or None on no data/error)."""
+        if not jpeg:
+            return None
+        stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        base = f"{stamp}_{self._safe(camera)}"
+        # Two shots in the same second must not overwrite each other; hold the lock
+        # across the existence check AND the write so two requests can't pick the
+        # same free name.
+        with self._lock:
+            name, n = f"{base}.jpg", 1
+            while os.path.exists(os.path.join(self.directory, name)):
+                n += 1
+                name = f"{base}_{n}.jpg"
+            try:
+                with open(os.path.join(self.directory, name), "wb") as fh:
+                    fh.write(jpeg)
+            except OSError:
+                return None
+        return name
+
+    def path(self, name: str) -> str:
+        return os.path.join(self.directory, name)

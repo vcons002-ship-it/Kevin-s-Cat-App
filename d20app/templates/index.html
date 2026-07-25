@@ -235,25 +235,24 @@
         <label class="checkbox" title="show a second feed. With two cats in two rooms you get one cat each; with a single cat (and Follow on) the second feed shows the room she just came from.">
           <input type="checkbox" id="second-feed" /> <span class="tgl-emoji">⧉</span><span class="tgl-text">2nd</span>
         </label>
-        <label class="checkbox" title="smoother live feed: grab frames on their own thread so the picture keeps moving between detections. Costs a little more CPU.">
-          <input type="checkbox" id="smooth_feed" /> <span class="tgl-emoji">🎞</span><span class="tgl-text">Smooth</span>
-        </label>
-        <label class="checkbox" title="stream the live feed to this browser. Off = no streaming (saves bandwidth/CPU); detection keeps running either way.">
+                <label class="checkbox" title="stream the live feed to this browser. Off = no streaming (saves bandwidth/CPU); detection keeps running either way.">
           <input type="checkbox" id="live-enabled" checked /> <span class="tgl-emoji">📺</span><span class="tgl-text">Live</span>
         </label>
       </div>
       <div id="live-stage" class="roi-stage">
+        <button id="shot-0" class="feed-shot hidden" type="button"
+                title="save this camera's current picture to the app's screenshots folder — no boxes drawn, so it lines up with the camera's own recordings">📸</button>
         <button id="lock-0" class="feed-lock hidden" type="button" aria-pressed="false"
                 title="pin this feed to its camera so Follow can't move it — the locked room is also taken out of the running for the other feed">🔓</button>
-        <span id="lag-0" class="feed-lag hidden"></span>
         <img id="live-img" class="hidden" alt="live detection feed" />
       </div>
       <div id="feed2-wrap" class="feed2 hidden">
         <p id="feed2-label" class="muted feed2-label"></p>
         <div class="feed2-stage">
+          <button id="shot-1" class="feed-shot hidden" type="button"
+                  title="save this camera's current picture to the app's screenshots folder — no boxes drawn, so it lines up with the camera's own recordings">📸</button>
           <button id="lock-1" class="feed-lock hidden" type="button" aria-pressed="false"
                   title="pin this feed to its camera so Follow can't move it — the locked room is also taken out of the running for the other feed">🔓</button>
-          <span id="lag-1" class="feed-lag hidden"></span>
           <img id="live-img2" alt="second live feed" />
         </div>
       </div>

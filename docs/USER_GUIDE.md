@@ -117,8 +117,14 @@ never a claim). **Check for a still cat** sets how often the heavy scan runs.
 ### Live detection
 
 The annotated live view — boxes drawn as things are recognised. The camera
-selector picks which feed; **smooth live feed** (below in settings) trades a
-little CPU for an unstuttered view.
+selector picks which feed. Network cameras always play at their own frame rate,
+while the detector looks every `scan_fps` frames — so the picture stays fluid
+whatever the detection rate. A `⏱` badge in the corner shows how far behind the
+**📸** saves the camera's current picture — no boxes — to the app's
+`screenshots/` folder, named with the time and camera so you can match it against
+the camera's own recordings later. Those are kept indefinitely; the automatic
+detection snapshots in the activity log are not. Each camera's chip in **Setup**
+shows how far behind the live edge it is, if it ever falls behind.
 
 ### 🔬 Test detection
 
@@ -259,8 +265,14 @@ Performance & plumbing:
 - **Round-robin** *(default off)* — with many cameras, only N detect at a time,
   rotating; resting cameras cost nothing but react slower. **👁 always-watch**
   exempts a camera (e.g. the treat cam).
-- **Smooth live feed** *(default off)* — a dedicated capture thread so the live
-  view doesn't stutter with detection; slightly more CPU.
+- ~~**Smooth live feed**~~ — *removed in 0.59.0; it is now always on for network
+  cameras and there is no toggle.* It was never really a comfort setting: an RTSP
+  stream is a **queue**, so reading it slower than the camera sends doesn't give
+  you fewer frames, it gives you ever-older ones — measured at 46 seconds of lag
+  per minute, with detection acting on those same stale frames. Staying at the
+  live edge means reading every frame, and every frame read has to be decoded, so
+  displaying them costs almost nothing on top. To cut CPU, lower the **camera's**
+  stream frame rate instead. (USB cameras are unaffected — they don't queue.)
 - **Pause during cooldown** *(default on)* — after a treat, skip the net until
   the next roll window (nothing it sees could trigger anyway).
 - **Keep speaker connection warm** *(default off)* — loops a silent clip so the

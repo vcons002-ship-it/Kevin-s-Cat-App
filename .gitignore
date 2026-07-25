@@ -30,6 +30,8 @@ snapshot.jpg
 
 # Detection snapshots written at runtime
 snapshots/
+# Screenshots taken by hand from the live feed (kept, never pruned)
+screenshots/
 
 # This machine's model provenance (#109): entries for files generated/adopted
 # here. Deliberately NOT committed, so a `git reset --hard` refreshes the repo

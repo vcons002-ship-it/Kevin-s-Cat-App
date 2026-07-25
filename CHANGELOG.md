@@ -7,6 +7,70 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.59.0] — 2026-07-25
+
+### Fixed
+- **Feeds — and detection — running minutes in the past.** Some cameras drifted
+  ~46 s further behind every minute, from the moment they connected, with no
+  motion and no inference involved. The picture read 38:09 while the clock read
+  39:42. Found by deleting and re-adding a camera, which reproduced it on demand.
+
+  An RTSP stream over TCP is a **queue, not a window**. `read()` returns the
+  *next* frame in line, never the newest, and because the transport is reliable
+  nothing is ever dropped. So reading 5 fps from a 25 fps camera advances 40 ms of
+  video per 200 ms of real time and falls behind by 0.16 s every tick —
+  permanently, since a queue offers no way back. The live feed publishes the frame
+  the loop just read, so this was **detection** lag too: sightings stamped with
+  the current time from a scene long gone.
+
+  The "smooth live feed" option had been quietly preventing this on the cameras
+  where it was on, by reading continuously. It was described as a minor CPU
+  luxury, and cameras added while it was off inherited a setting that silently
+  broke them.
+
+### Changed
+- **Continuous reading is no longer optional** (and the 🎞 toggle is gone).
+  Network cameras are always read at their own frame rate; the detector samples
+  the newest frame every `scan_fps`. This is not a cost trade: staying current
+  requires receiving every frame, and receiving requires decoding, so *showing*
+  them is nearly free. Turning it "off" never saved meaningful CPU — it just made
+  the detector work on stale frames. USB sources are exempt (they don't queue).
+  The lever for cutting CPU is the **camera's** stream frame rate.
+- **`scan_fps` now means only "how often the detector looks."** It never
+  controlled how often the camera was read; that reading was simply too slow to
+  keep up. The docs said otherwise.
+
+### Added
+- **📸 Screenshot button on each live feed**, beside the lock. Saves the camera's
+  current picture to `screenshots/`, named `YYYY-MM-DD_HH-MM-SS_Camera.jpg` — so a
+  moment you just watched can be pulled off the NAS and lined up against the
+  camera's own recordings without opening the vendor's app and hunting an SD card.
+
+  **No boxes drawn**, deliberately: an annotated frame doesn't compare against raw
+  footage. And unlike detection snapshots — which the app produces on its own and
+  prunes to a rolling 60 — these are never deleted. The app doesn't get to decide
+  a picture someone asked for has expired.
+
+### Removed
+- The per-feed lag badge added in 0.58.0. The camera chips in Setup already carry
+  the same reading and show every camera at once, including the ones not on a
+  feed; two readouts of one number was one too many.
+
+### Fixed (consequences of always reading continuously)
+- **The live feed now shows what the net sees.** The capture thread published the
+  *raw* frame while the net got the adjusted one, so a camera relying on
+  gamma/contrast to see a dark room looked untouched in the GUI. Adjustments are
+  applied before publishing, on both paths.
+- **Detection can no longer analyse the same frame twice.** With `scan_fps` at or
+  above the camera's rate the newest frame hasn't changed yet, and diffing a frame
+  against itself yields zero motion — the gate would never fire and detection
+  would silently stop. Repeats are skipped. (The obvious dedup key, `_live_version`,
+  was unusable: it also bumps when boxes change, so running detection invalidated
+  its own key.)
+- **A warning when `scan_fps` exceeds the camera's measured frame rate** — the one
+  genuinely wrong setting, since there are no new frames to look at. Measured
+  rather than read from `CAP_PROP_FPS`, which cameras misreport.
+
 ## [0.58.2] — 2026-07-25
 
 ### Fixed
