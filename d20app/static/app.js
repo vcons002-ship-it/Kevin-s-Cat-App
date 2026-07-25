@@ -547,10 +547,10 @@ async function loadConfig() {
   savedSound = cfg.sound_file || "";
   // Global still-scan + find settings (#101/#102): populate dropdowns + seed values.
   const modelWithOwn = (val) => optsHTML([["", "each camera's own"]].concat(MODEL_OPTS), val || "");
+  if ($("cat_scan_trigger")) $("cat_scan_trigger").value = cfg.cat_scan_trigger || "timer";
   if ($("cat_scan_model")) $("cat_scan_model").innerHTML = modelWithOwn(cfg.cat_scan_model);
   if ($("scan_tiling")) $("scan_tiling").innerHTML = optsHTML(TILING_OPTS, cfg.cat_scan_tiling || "3x3");
   if ($("scan_tile_overlap")) $("scan_tile_overlap").value = cfg.cat_scan_tile_overlap ?? 0.35;
-  if ($("scan_frames")) $("scan_frames").value = cfg.cat_scan_frames ?? 3;
   if ($("scan_confidence")) $("scan_confidence").value = cfg.cat_scan_confidence ?? 0;
   if ($("find_scan")) $("find_scan").checked = !!cfg.find_scan;
   if ($("find_model")) $("find_model").innerHTML = modelWithOwn(cfg.find_model);
@@ -598,10 +598,10 @@ function gatherConfig() {
     dont_interrupt_playback: $("dont_interrupt_playback").checked,
     keep_speakers_warm: $("keep_speakers_warm").checked,
     // Global still-scan + find settings (#101/#102).
+    cat_scan_trigger: $("cat_scan_trigger").value,
     cat_scan_model: $("cat_scan_model").value,
     cat_scan_tiling: $("scan_tiling").value,
     cat_scan_tile_overlap: Number($("scan_tile_overlap").value),
-    cat_scan_frames: Number($("scan_frames").value),
     cat_scan_confidence: Number($("scan_confidence").value),
     find_scan: $("find_scan").checked,
     find_model: $("find_model").value,
@@ -973,8 +973,7 @@ async function loadCats() {
     // kept rendering its stale rows because renderSightings() never ran.
     box.innerHTML = '<p class="muted">No cats seen yet.</p>';
     renderSightings([]);
-    if ($("scan-last")) $("scan-last").textContent = "";
-    return;
+      return;
   }
   const s = body.last;
   const where = (s.zone || s.region) ? ` — ${esc(s.zone || s.region)}` : "";
@@ -995,14 +994,6 @@ async function loadCats() {
         <span class="muted">(score ${s.score})</span></div>
       <div class="muted">${today}</div>${likelyLine}</div>`;
   renderSightings(body.recent || []);
-  // #102: a single glanceable still-scan heartbeat under "Check for still cat".
-  const sl = $("scan-last");
-  if (sl) {
-    const ls = body.last_scan;
-    sl.textContent = ls
-      ? `Still scan: ${ls.ago_s < 90 ? Math.round(ls.ago_s) + "s" : Math.round(ls.ago_s / 60) + "m"} ago on ${ls.camera} — ${ls.found ? "cat found" : "no cat"}`
-      : "";
-  }
 }
 
 // How many sightings the log renders. The list is height-capped and scrolls, so
@@ -2114,7 +2105,7 @@ function wire() {
   $("show-cat").onclick = showCat;
   // Global still-scan + find settings (#101/#102) auto-save on change.
   for (const id of ["cat_scan_model", "scan_tiling", "scan_tile_overlap",
-                    "scan_frames", "scan_confidence", "find_scan", "find_model",
+                    "cat_scan_trigger", "scan_confidence", "find_scan", "find_model",
                     "find_tiling", "find_tile_overlap", "find_confidence",
                     // gear-popup settings (#117) — same auto-save, so they apply live
                     "fusion_debug", "motion_hold_seconds", "swap_confirm_count",

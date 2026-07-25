@@ -67,6 +67,13 @@
             <strong>Cat-cam settings</strong>
             <button class="gear-close" type="button" aria-label="Close">✕</button>
           </div>
+          <label class="inline" title="WHEN the still-cat scan runs. “On a timer” = every interval, whatever else is happening in the room. “Only when no cat was found” = every interval, but skipped while a cat has already been detected there within the same window — don't go hunting for one you've just found.">
+            Run the still scan:
+            <select id="cat_scan_trigger">
+              <option value="timer">On a timer</option>
+              <option value="quiet">Only when no cat was found</option>
+            </select>
+          </label>
           <label class="inline" title="A sleeping cat doesn't move, so it never trips the motion filter. Periodically run the net anyway to catch a still cat. More often = a still cat shows up sooner, but uses more CPU.">
             Check for a still cat:
             <select id="cat_scan_interval">
@@ -88,9 +95,7 @@
               <select id="scan_tiling"></select></label>
             <label title="how much neighbouring tiles overlap (benchmark: 0.35 for 3×3, 0.20 for 2×2)">Tile overlap
               <input type="number" id="scan_tile_overlap" step="0.05" min="0" max="0.5" /></label>
-            <label title="average this many back-to-back frames before the net — cuts sensor noise on a still scene (helps dim rooms). 1 = off">Scan frames
-              <input type="number" id="scan_frames" min="1" max="8" /></label>
-            <label title="cat confidence for the scan; 0 = use each camera's own cat confidence">Scan confidence
+                        <label title="cat confidence for the scan; 0 = use each camera's own cat confidence">Scan confidence
               <input type="number" id="scan_confidence" step="0.05" min="0" max="1" /></label>
           </div>
           <h4>Find my cat <span class="muted">— what “Show me the cat!” runs when it actively scans</span></h4>
@@ -117,8 +122,7 @@
       </button>
       <div id="find-feedback" class="muted" style="text-align:center;font-size:13px;min-height:1.1em"></div>
       <div id="cat-last" class="cat-last"><p class="muted">No cats seen yet.</p></div>
-      <div id="scan-last" class="muted" style="text-align:center;font-size:12px;min-height:1.1em"></div>
-      <details id="cat-sightings-box">
+            <details id="cat-sightings-box">
         <summary>🐾 Recent sightings</summary>
         <div id="cat-sightings" class="sightings"><p class="muted">No sightings yet.</p></div>
         <div class="sightings-foot">

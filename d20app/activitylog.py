@@ -23,8 +23,12 @@ _REPO_ROOT = os.path.dirname(_PKG_DIR)
 LOG_PATH = os.environ.get("D20_ACTIVITY_LOG", os.path.join(_REPO_ROOT, "activity.log"))
 
 # Entry kinds the GUI colour-codes by. Anything else is treated as "info".
-KINDS = ("info", "roll", "treat", "error", "motion")
-MAX_ENTRIES = 1000
+KINDS = ("info", "roll", "treat", "error", "motion", "scan")
+# Still-scans log every run (one line per camera per interval) so "did it run on
+# Basement?" is answerable from history rather than by watching. Seven cameras on
+# a 30 s interval is ~840 lines an hour, which would evict a day of real events
+# from a 1000-entry log within the hour.
+MAX_ENTRIES = 5000
 
 
 class ActivityLog:

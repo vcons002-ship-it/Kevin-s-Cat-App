@@ -79,6 +79,7 @@ class Config:
     # --- Still-cat scan settings (#101/#102): GLOBAL, not per-camera — one
     # coherent "check for still cat" group. The scan gets ONE hard static look, so
     # it wants its own heavy model/tiling regardless of a camera's live settings.
+    cat_scan_trigger: str = "timer"       # WHEN the still-cat scan runs. "timer" = every cat_scan_interval seconds, full stop. "quiet" = every cat_scan_interval seconds, but only while no cat has been detected on that camera within the same window — don't go looking for a cat we just found. Before 0.62.0 the cadence was reset by ANY net run, including motion, so a busy room (a person at a desk) suppressed the still-scan entirely — which is exactly the room where a sleeping cat goes unseen.
     cat_scan_model: str = ""             # "" = each camera's own live model; else a specific heavy model for the scan (#94)
     cat_scan_confidence: float = 0.0     # cat threshold for the scan; 0 = use each camera's cat_confidence
 
@@ -107,7 +108,7 @@ class Config:
     cat_scan_tiling: str = "3x3"     # "off" | "2x2" | "3x3" | "4x4" — split the frame into an overlapping grid, detect per tile, merge. Default 3x3 per the full benchmark (#70): 26x@3x3 = 91%/0% FP; 4x4 adds ~1 cat at 1.7x the latency (and high-overlap 4x4 buys recall with false positives).
     cat_scan_tile_overlap: float = 0.35  # fraction each tile overlaps its neighbour so a cat on a seam still lands whole in one tile. Benchmark-settled (#70): 3x3 is best at 0.35 (2x2 prefers 0.20).
     cat_scan_imgsz: int = 0          # LEGACY, no effect since 0.40.0 (#79): the >640 "locator input" hypothesis was benchmarked and rejected — 960/1280 measured WORSE than 640 (#70); tiling is the resolution lever. Kept so old configs still load; any value falls back to native + tiling.
-    cat_scan_frames: int = 3         # still-cat scan only: average this many back-to-back frames before the net (sensor noise drops ~sqrt(N) on a still scene — helps dim/noisy frames; any motion mid-burst falls back to the single frame). 1 = off; capped at 8. The fast treat path never averages.
+    cat_scan_frames: int = 3         # INERT since 0.59.0 and no longer shown in the GUI (0.62.0). The averaging it controls lives in the synchronous read branch, and network cameras all read through the grab thread now, so it never runs. Kept so old configs load; restoring it means collecting a burst of published frames instead. Was: average N back-to-back frames before the net (noise drops ~sqrt(N) on a still scene).
     track_fusion: bool = True        # temporal score fusion: a string of WEAK cat detections (below cat_confidence) that chain smoothly and actually MOVE across the frame is confirmed as one sighting (source "track") — the recall-raising mirror of confirm_frames. Pure YOLO evidence; the movement requirement is the decoy guard (a cushion never travels). Off = judge every frame alone (pre-0.37.0 behaviour).
     # --- Follow mode: feeds are assigned by sighting recency and HELD until a cat
     # turns up outside the pair. Both knobs below are safeguards for overlapping

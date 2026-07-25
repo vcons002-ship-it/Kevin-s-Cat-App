@@ -63,14 +63,18 @@ measured, not guessed. Per watched camera, for every frame:
    *cat* trail.
 5. **Still-cat scan** *(default: every 30 s per cat-tracking camera)* — a
    sleeping cat makes no motion, so the net is forced periodically with the
-   heavy settings: **3×3 tiling at 0.35 overlap** (the benchmark's clean
+   heavy settings. The clock runs from the last **still-scan**, so activity in
+   the room can't defer it (before 0.62.0 any net run reset it, and a person at a
+   desk suppressed the scan entirely — in the very room where a cat sleeps
+   unnoticed). Every run writes a line to the activity log, found or not, so
+   "did it run on Basement?" is answerable from history. Settings: **3×3 tiling at 0.35 overlap** (the benchmark's clean
    recall-per-ms winner) and **frame averaging ×3**. The scan can run its own
    **Scan model** (heavier than the live one — it gets one hard static look,
    where live detection gets many frames of a moving cat), and each camera
-   card shows *"still scan: Ns ago — cat found / no cat"* so you can see it
-   firing. Averaging: a short burst of frames is
-   averaged first — sensor noise drops, a dim sleeping cat gets cleaner pixels;
-   any movement mid-burst falls back to a single sharp frame).
+   card shows *"still scan: Ns ago — cat found / no cat"*. **Run the still scan**
+   chooses *on a timer* (every interval, whatever else is happening) or *only when
+   no cat was found* (skipped while one has already been detected there in the same
+   window). Frame averaging is currently inert — see the CHANGELOG for 0.62.0.
 
 Nothing else runs on its own. The VLM, the escalation ladder, the temporal
 check — all **on-demand buttons**, and live-camera use of them sits behind an

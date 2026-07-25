@@ -64,8 +64,11 @@ def test_cat_cam_controls_were_relocated_into_the_popup():
     # A relocation, not a rebuild: every control keeps its id and now sits inside
     # the gear popup instead of the inline collapsibles.
     t = _tree()
+    # (scan_frames was removed in 0.62.0 — the frame averaging it controls stopped
+    #  running when network cameras moved to the continuous-read path in 0.59.0, so
+    #  the control was advertising a setting that did nothing.)
     moved = ["cat_scan_interval", "cat_scan_model", "scan_tiling",
-             "scan_tile_overlap", "scan_frames", "scan_confidence",
+             "scan_tile_overlap", "scan_confidence",
              "find_scan", "find_model", "find_tiling", "find_tile_overlap",
              "find_confidence"]
     for cid in moved:

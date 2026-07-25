@@ -133,11 +133,28 @@ def _locator_hit(detector, outcome):
     return best
 
 
-def _cat_scan_due(cfg, track_cats: bool, last_scan: float, now: float) -> bool:
+def _cat_scan_due(cfg, track_cats: bool, last_scan: float, now: float,
+                  last_cat: float = 0.0) -> bool:
     """Whether a cat-tracking camera should force a still-cat scan this iteration.
 
     ``cat_scan_interval``: ``<0`` off (motion only), ``0`` always-on (every frame),
-    ``>0`` every N seconds since the net last ran.
+    ``>0`` every N seconds — measured from the last **still-scan**, not from the
+    last time the net ran at all.
+
+    That distinction is the whole point (0.62.0). The cadence used to be reset by
+    any net run, motion included, so a person moving in a room pushed the next
+    still-scan back on every single frame and it never fired there. The room with
+    someone in it is exactly where a cat sleeps unnoticed, and a live pass finding
+    nothing proves nothing about a still-scan: the live net is untiled, the scan is
+    tiled and may run a heavier model. A weak look is not a look.
+
+    ``cat_scan_trigger``:
+
+    * ``"timer"``   — every N seconds, unconditionally.
+    * ``"quiet"``   — every N seconds, but only while no cat has been detected on
+      this camera within the same window. No point hunting for a cat we just found;
+      it also means an occupied room keeps getting checked, which "timer" does too
+      but for a different reason.
     """
     if not track_cats:
         return False
@@ -146,7 +163,14 @@ def _cat_scan_due(cfg, track_cats: bool, last_scan: float, now: float) -> bool:
         return False
     if iv == 0:
         return True
-    return (now - last_scan) >= iv
+    if (now - last_scan) < iv:
+        return False
+    if str(getattr(cfg, "cat_scan_trigger", "timer")) == "quiet":
+        # last_cat is monotonic; 0.0 means "never seen", which must not read as
+        # "seen at time zero, i.e. ages ago" — it should scan.
+        if last_cat and (now - last_cat) < iv:
+            return False
+    return True
 
 
 class DetectionLoop:
@@ -801,7 +825,8 @@ class DetectionLoop:
                 # A "Show cat" boost forces it continuously for a short window so the
                 # live feed keeps boxing the cat while the user looks (any camera).
                 boost = now < self._cat_boost.get(name, 0.0)
-                scan_due = _cat_scan_due(cfg, track_cats, last_scan, now)
+                scan_due = _cat_scan_due(cfg, track_cats, last_scan, now,
+                                         detector.cat_last_seen())
                 # Two different things (#111): `force` = run the net even with no
                 # motion; `scan` = run the heavier still-cat pass. A boost only
                 # wants the former — it's the camera's own LIVE pass, triggered by
@@ -863,8 +888,11 @@ class DetectionLoop:
                                 f"camera's {native:.0f}/s — the detector will see repeat "
                                 f"frames. Lower scan fps to {native:.0f} or below.")
 
-                if force_run or outcome.motion:
-                    last_scan = now      # the net ran; defer the next forced scan
+                if scan_due:
+                    # Only a still-scan defers the next still-scan (0.62.0). Motion
+                    # used to reset this, which suppressed the scan entirely in any
+                    # room with someone in it.
+                    last_scan = now
 
                 # Temporal fusion (0.37.0): a string of weak YOLO hits that chained
                 # and MOVED was confirmed as one cat — record it like any sighting.
@@ -887,8 +915,18 @@ class DetectionLoop:
                     streak = 0
                     cat = _locator_hit(detector, outcome) if track_cats else None
                     with self._scan_lock:                         # H2: guard in-place insert
-                        self._scan_last[name] = {"ts": time.time(),   # glanceable (#94)
+                        self._scan_last[name] = {"ts": time.time(),
                                                  "found": cat is not None}
+                    # Every run gets a line (0.62.0), found or not. "Did the still
+                    # scan run on Basement?" is then answerable from history rather
+                    # than by watching a live counter — which is what the old
+                    # single-line readout asked of you, and it could only ever show
+                    # whichever camera scanned most recently.
+                    self.activity.add(
+                        "scan",
+                        f"🔍 Still scan on {cam_label} — "
+                        + (f"{_shown_label(cat[0])} {cat[1]:.2f}" if cat
+                           else "no cat"))
                     if cat is not None:
                         if not cat_seen_still:
                             label, score, box = cat

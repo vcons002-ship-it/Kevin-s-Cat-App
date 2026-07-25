@@ -7,6 +7,51 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.62.0] — 2026-07-25
+
+### Fixed
+- **The periodic still-cat scan never ran in a room with someone in it.** The
+  cadence was reset by *any* net run, motion included:
+
+  ```python
+  if force_run or outcome.motion:
+      last_scan = now      # "the net ran; defer the next forced scan"
+  ```
+
+  So a person at a desk pushed the next scan back on every frame, and
+  `(now - last_scan) >= interval` was never satisfied. Not "ran and found
+  nothing" — never ran. Reported live: an obviously visible sleeping cat that
+  Find located and live detection caught when waved at, but that the still-scan
+  never once reported.
+
+  The premise was wrong. "The net ran" is not "we looked": the live pass is
+  untiled, while the still-scan is tiled and may run a heavier model. A weak look
+  finding nothing says nothing about what a strong look would find — and the busy
+  room is precisely where a cat sleeps unnoticed. The cadence is now measured from
+  the last **still-scan**, so "every 30 seconds" means every 30 seconds.
+
+### Added
+- **Still-scan trigger mode** (Cat cam ⚙ → *Run the still scan*): `timer` (every
+  interval, unconditionally — the default) or `quiet` (every interval, but skipped
+  while a cat has already been detected on that camera inside the same window —
+  no point hunting for one you just found).
+- **Every still-scan writes an activity-log line**, found or not: *"🔍 Still scan
+  on Basement — no cat"*. "Did the scan run on Basement?" is now answerable from
+  history instead of by watching. New `scan` entry kind, and the log holds 5000
+  entries rather than 1000 so seven cameras on a 30 s interval can't evict a day
+  of real events within the hour.
+
+### Removed
+- **The single-line still-scan readout** under the Cat-cam card. It showed only
+  the most recent scan across *all* cameras, so with seven staggered timers it
+  looked like a rotation and its age never approached the interval. The per-camera
+  chips already carry this, and the log now carries the history.
+- **The Scan-frames control.** The frame averaging it configures stopped running
+  in 0.59.0, when network cameras moved to the continuous-read path — the
+  averaging lives in the synchronous read branch. The setting was advertising
+  something that did nothing. `cat_scan_frames` stays in the config so old files
+  load; restoring the feature means collecting a burst of published frames.
+
 ## [0.61.0] — 2026-07-25
 
 ### Changed
