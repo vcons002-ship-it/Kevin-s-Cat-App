@@ -7,6 +7,23 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.59.1] — 2026-07-25
+
+### Fixed
+- **The GUI never finished loading (0.59.0 was broken).** Removing the smooth-feed
+  toggle deleted a handler's opening lines but left its body and closing `};`
+  behind. That's a `SyntaxError`, so the browser discarded the whole script before
+  it issued a single request — the server log showed the page and its two static
+  files, then nothing.
+
+### Added
+- **A syntax guard for the served JavaScript.** All 509 tests passed on the broken
+  build, because none of them look at the JS. There's no JS engine available here,
+  so this is a bracket/quote balance check rather than a real parse — enough to
+  catch a truncated or over-deleted block, which is what edits actually break. It
+  handles regex literals and template strings, and it was verified to flag the
+  exact commit that shipped broken while passing the version before it.
+
 ## [0.59.0] — 2026-07-25
 
 ### Fixed

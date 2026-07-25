@@ -2075,8 +2075,6 @@ function wire() {
   };
   $("cat_scan_interval").onchange = saveConfig;
   $("live-img").onerror = () => { if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); } };
-    if (liveOn) { liveOn = false; refreshStatus(); }
-  };
 
   // #102 save-behavior audit: every setting on the page auto-saves on change,
   // so the whole GUI behaves one way (change → saved) instead of the top block
