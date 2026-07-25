@@ -9,6 +9,14 @@ everything through the latest entry is on `main`.
 
 ## [0.61.0] — 2026-07-25
 
+### Changed
+- **Hand-taken screenshots are lossless PNG too.** They were JPEG at quality 92,
+  which is visually lossless but not bit-exact — and their whole purpose is being
+  re-run through the Test tool and compared against what the live scan reported.
+  That comparison only holds if the pixels are the ones that were judged, and a
+  near-threshold detection is exactly where the difference could bite. Same reason
+  the find-scan evidence went PNG in 0.60.1; this closes the other half.
+
 ### Added
 - **`GET /api/diagnostics/detectors` — what the live detectors are actually
   holding, beside what you configured.** Find builds its settings from the running

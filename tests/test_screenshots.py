@@ -63,19 +63,27 @@ def test_screenshots_are_never_pruned_unlike_detection_snapshots(tmp_path):
 
 def test_the_saved_picture_has_no_boxes_drawn_on_it():
     # The whole point: an annotated frame can't be compared against the camera's
-    # own footage. plain_jpeg must not go near the box drawing.
+    # own footage. plain_image must not go near the box drawing.
     src = pathlib.Path(d20app.__file__).parent.joinpath("detector.py").read_text(
         encoding="utf-8")
-    fn = src[src.index("def plain_jpeg"):]
+    fn = src[src.index("def plain_image"):]
     fn = fn[:fn.index("\n    def ")]
     assert "_draw_boxes" not in fn and "_last_boxes" not in fn
     assert "latest_frame" in fn                  # the published frame, as shown
 
     det = PersonDetector(source="unused")
-    assert det.plain_jpeg() is None              # nothing published yet
-    det._publish_frame(np.full((32, 48, 3), 120, np.uint8))
-    jpeg = det.plain_jpeg()
-    assert jpeg and jpeg[:2] == b"\xff\xd8"      # a real JPEG
+    assert det.plain_image() is None             # nothing published yet
+    frame = np.full((32, 48, 3), 120, np.uint8)
+    det._publish_frame(frame)
+    png = det.plain_image()
+    assert png and png[:8] == b"\x89PNG\r\n\x1a\n"        # a real PNG
+
+    # Lossless, because these get re-run through the detector and compared with
+    # what the live scan reported — a comparison that only holds if the pixels
+    # are the ones that were judged.
+    import cv2
+    back = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+    assert (back == frame).all()
 
 
 def _client_with_detector(det, running=True):
@@ -93,7 +101,7 @@ def test_endpoint_saves_the_frame_and_reports_where(tmp_path):
     loop.screenshots = ScreenshotStore(directory=str(tmp_path))
 
     body = c.post("/api/live/screenshot", json={"camera": "Kitchen"}).get_json()
-    assert body["ok"] and body["file"].endswith("_Kitchen.jpg")
+    assert body["ok"] and body["file"].endswith("_Kitchen.png")
     assert body["url"] == "/screenshots/" + body["file"]
     assert os.path.exists(os.path.join(str(tmp_path), body["file"]))
     # …and it's fetchable at the URL it just handed back.

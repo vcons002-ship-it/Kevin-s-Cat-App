@@ -1174,10 +1174,12 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
         det = loop.get_detector(camera) if camera else None
         if det is None:
             return jsonify({"error": f"Unknown camera {camera!r}."}), 409
-        jpeg = det.plain_jpeg()
-        if jpeg is None:
+        # PNG: these get re-run through the Test tool and compared against what
+        # the live scan reported, so they have to be the pixels that were judged.
+        img = det.plain_image(".png")
+        if img is None:
             return jsonify({"error": "No frame from that camera yet."}), 409
-        name = loop.screenshots.save(jpeg, camera)
+        name = loop.screenshots.save(img, camera, ext=".png")
         if not name:
             return jsonify({"error": "Couldn't write the screenshot to disk."}), 500
         loop.activity.add("info", f"📸 Screenshot saved from {camera}: {name}")

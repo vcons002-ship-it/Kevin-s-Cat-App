@@ -120,9 +120,12 @@ The annotated live view — boxes drawn as things are recognised. The camera
 selector picks which feed. Network cameras always play at their own frame rate,
 while the detector looks every `scan_fps` frames — so the picture stays fluid
 whatever the detection rate. A `⏱` badge in the corner shows how far behind the
-**📸** saves the camera's current picture — no boxes — to the app's
+**📸** saves the camera's current picture — no boxes, lossless PNG — to the app's
 `screenshots/` folder, named with the time and camera so you can match it against
-the camera's own recordings later. Those are kept indefinitely; the automatic
+the camera's own recordings later. PNG rather than JPEG because these get fed back
+into the **Test detection** tool and compared against what the live scan reported:
+that comparison only means anything if the pixels are the ones the detector
+actually judged. Those are kept indefinitely; the automatic
 detection snapshots in the activity log are not. Each camera's chip in **Setup**
 shows how far behind the live edge it is, if it ever falls behind.
 

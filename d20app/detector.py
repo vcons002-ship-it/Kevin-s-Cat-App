@@ -1409,21 +1409,31 @@ class PersonDetector:
             frame = self._live_frame
         return None if frame is None else frame.copy()
 
-    def plain_jpeg(self, quality: int = 92) -> bytes | None:
-        """JPEG of the newest frame with **no** boxes or overlays drawn on it.
+    def plain_image(self, ext: str = ".png") -> bytes | None:
+        """The newest frame with **no** boxes or overlays drawn on it.
 
         What the camera is showing, for saving a moment to look at later — so it
-        stays comparable with the camera's own recordings. Encoded at a higher
-        quality than the live stream, which optimises for bandwidth on frames
-        nobody keeps. Image adjustments (gamma/contrast) ARE applied, since those
-        are part of the picture the app works from.
+        stays comparable with the camera's own recordings.
+
+        Defaults to PNG because these get fed back into the detector: a screenshot
+        is routinely re-run through the Test tool and compared against what the
+        live scan reported, and that comparison is only sound if the pixels are
+        the ones that were actually judged. JPEG is visually lossless at high
+        quality but not bit-exact, and a detection near its threshold is exactly
+        where the difference could matter — leaving a doubt that can't be argued
+        away afterwards. Disk is cheaper than that doubt.
+
+        Image adjustments (gamma/contrast) ARE applied, since those are part of
+        the picture the app works from.
         """
         import cv2
 
         frame = self.latest_frame()
         if frame is None:
             return None
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
+        params = ([cv2.IMWRITE_PNG_COMPRESSION, 3] if ext == ".png"
+                  else [cv2.IMWRITE_JPEG_QUALITY, 95])
+        ok, buf = cv2.imencode(ext, frame, params)
         return buf.tobytes() if ok else None
 
     def _publish_frame(self, frame) -> None:
