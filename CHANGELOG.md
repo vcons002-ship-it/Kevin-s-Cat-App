@@ -10,6 +10,12 @@ everything through the latest entry is on `main`.
 ## [0.63.0] — 2026-07-25
 
 ### Changed
+- **Recent sightings are a centred block.** The rows stretched the full width of
+  the card, so the three detail columns hugged the left edge with a wide empty
+  gutter beside them. Each row is now capped and centred, which keeps every row's
+  left edge aligned — the list still scans vertically — while the block sits in
+  the middle of the card. `scrollbar-gutter: stable both-edges` keeps the
+  scrollbar from shoving it a few pixels off-axis.
 - **The Cat-cam button stopped flashing at you.** It used to pulse and bounce the
   whole time a cat had been seen recently, which made the flash its normal
   appearance — a signal that fires constantly carries no information. The glyph

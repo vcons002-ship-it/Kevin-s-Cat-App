@@ -424,10 +424,20 @@ footer { margin-top: 20px; }
    padding-right keeps the row rules clear of the scrollbar — a border running to
    the very edge reads as if it's underlining the scrollbar too. */
 .sightings {
-  max-height: 480px; overflow-y: auto; margin-top: 6px; padding-right: 12px;
+  max-height: 480px; overflow-y: auto; margin-top: 6px;
+  /* Equal gutters on both sides, so the scrollbar doesn't shove the centred rows
+     a few pixels off-axis — the whole point here is that it looks deliberate. */
+  scrollbar-gutter: stable both-edges;
 }
+/* The rows are a CENTRED BLOCK, not full-width. Stretching each row across the
+   card left the three detail columns hugging the left with a wide empty gutter to
+   their right — the wasted space. Capping the row instead means every row keeps
+   the same left edge (so the list still scans vertically) while the block as a
+   whole sits centred in the card. `width: 100%` keeps it shrinking on a narrow
+   window instead of overflowing. */
 .sighting {
   display: flex; align-items: center; gap: 12px;
+  width: 100%; max-width: 400px; margin-inline: auto;
   padding: 7px 2px; border-bottom: 1px solid var(--line);
 }
 .sighting:last-child { border-bottom: 0; }

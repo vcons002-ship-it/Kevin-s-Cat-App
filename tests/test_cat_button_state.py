@@ -187,3 +187,20 @@ def test_the_landing_state_is_re_derived_not_assumed():
     show = APP_JS[APP_JS.index("async function showCat()"):]
     show = show[:show.index("async function showCatJump")]
     assert show.count("await loadCats();") == 2
+
+
+def test_the_sightings_list_is_a_centred_block():
+    # Rows used to stretch across the whole card, which left the three detail
+    # columns hugging the left edge with a wide empty gutter beside them. Capping
+    # the row keeps every row's left edge aligned (so the list still scans
+    # vertically) while the block as a whole sits centred.
+    css = STYLE[STYLE.index(".sighting {"):]
+    css = css[:css.index("}")]
+    assert "max-width" in css and "margin-inline: auto" in css
+    assert "width: 100%" in css        # …and still shrinks on a narrow window
+
+    box = STYLE[STYLE.index(".sightings {"):]
+    box = box[:box.index("}")]
+    # A scrollbar on one side would push the centred block off-axis.
+    assert "scrollbar-gutter: stable both-edges" in box
+    assert "padding-right" not in box
