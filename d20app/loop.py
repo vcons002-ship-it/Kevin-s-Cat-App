@@ -27,8 +27,17 @@ from .snapshots import SCREENSHOTS_DIR, ScreenshotStore, SnapshotStore
 
 log = logging.getLogger("d20app.loop")
 
-# Don't log every frame of a wandering cat — at most one motion note this often.
+# The "something moved" activity note — a mover the net couldn't name. Its own
+# throttle, kept well away from cat sightings: this used to share a gate with them,
+# so a curtain moving could consume the budget and a cat detected a second later
+# never reached the sightings log at all.
 _MOTION_LOG_INTERVAL = 10.0
+
+# After a MOVING cat is recorded in a room, hold that room for this long. Per
+# camera and nothing else: a cat tearing around the kitchen has no bearing on
+# whether the office should log. Still-scans and finds ignore this entirely —
+# they always log, because their repetition is the signal.
+_CAT_SIGHTING_INTERVAL = 60.0
 
 # How long "Show cat" forces continuous detection on the camera it jumps to, so the
 # live feed keeps drawing a box around the cat (even a still one) while the user looks.
@@ -471,7 +480,8 @@ class DetectionLoop:
             return True
         return self._is_pinned(name, time.monotonic())
 
-    def _record_fused(self, name: str, cam_label: str, spec: dict, detector) -> dict | None:
+    def _record_fused(self, name: str, cam_label: str, spec: dict, detector,
+                      gate=None) -> dict | None:
         """Claim and record a temporal-fusion confirmation (0.37.0), or None.
 
         The fused hit is pure YOLO evidence accumulated across frames — a moving
@@ -481,6 +491,11 @@ class DetectionLoop:
         take = getattr(detector, "take_fused_hit", None)   # absent on test stubs
         fused = take() if take else None
         if not fused:
+            return None
+        # Fusion confirms a MOVING cat, so it shares the room's motion window —
+        # otherwise one cat walking through logs a "motion" row and a "track" row
+        # seconds apart, two entries for one event.
+        if gate is not None and not gate.allow():
             return None
         snap = self.snapshots.save(detector.annotated_jpeg())
         sighting = self.cats.record(
@@ -801,12 +816,12 @@ class DetectionLoop:
         backoff = 1.0
         last_cam_error = ""
         connected = False
-        motion_gate = dice.RollGate(_MOTION_LOG_INTERVAL)   # throttle motion notes
+        motion_gate = dice.RollGate(_MOTION_LOG_INTERVAL)   # 'something moved' notes
+        cat_gate = dice.RollGate(_CAT_SIGHTING_INTERVAL)    # THIS room's cat sightings   # throttle motion notes
         streak = 0
         confirm_frames = max(1, int(spec["confirm_frames"]))
         interval = 1.0 / max(1.0, float(spec["scan_fps"]))
         last_scan = 0.0          # monotonic time the net last ran (motion or forced)
-        cat_seen_still = False   # was a cat present on the previous *forced* still scan?
         resting = False          # round-robin: currently asleep (capture released)
         # A camera may skip the net during the shared cooldown only if it has
         # nothing to do then: it rolls (so the closed gate blocks it anyway) AND
@@ -951,7 +966,7 @@ class DetectionLoop:
                 # Temporal fusion (0.37.0): a string of weak YOLO hits that chained
                 # and MOVED was confirmed as one cat — record it like any sighting.
                 if track_cats:
-                    self._record_fused(name, cam_label, spec, detector)
+                    self._record_fused(name, cam_label, spec, detector, cat_gate)
                 self._drain_fusion_events(name, detector)   # no-op unless fusion_debug
 
                 # Periodic still-cat scan with no real motion: the net ran anyway and
@@ -981,23 +996,25 @@ class DetectionLoop:
                         f"🔍 Still scan on {cam_label} — "
                         + (f"{_shown_label(cat[0])} {cat[1]:.2f}" if cat
                            else "no cat"))
-                    if cat is not None:
-                        if not cat_seen_still:
-                            label, score, box = cat
-                            snap = self.snapshots.save(detector.annotated_jpeg())
-                            sighting = self.cats.record(
-                                name, box, detector.frame_size, score, image=snap, label=label,
-                                source="still-scan",
-                                zone=zone_for(box, spec.get("zones"), spec.get("roi")))
-                            spot = sighting.get("zone") or sighting["region"]
-                            where = f" ({spot})" if spot else ""
-                            self.activity.add(
-                                "motion",
-                                f"🐱 Still {_shown_label(label)} seen{where} on {cam_label} — tracked, no roll.",
-                                image=snap)
-                        cat_seen_still = True
-                    else:
-                        cat_seen_still = False
+                    # EVERY scan that finds her is recorded (0.64.0). The old
+                    # rising-edge rule logged a two-hour nap once, which cannot be
+                    # told apart from "she left unseen thirty seconds later" — and
+                    # it logged MORE for a flaky detection that kept crossing the
+                    # threshold than for a solid one. Repetition is the signal: the
+                    # scan interval is what controls volume, not a dedup rule.
+                    if cat is not None and cfg.log_still_scan_sightings:
+                        label, score, box = cat
+                        snap = self.snapshots.save(detector.annotated_jpeg())
+                        sighting = self.cats.record(
+                            name, box, detector.frame_size, score, image=snap, label=label,
+                            source="still-scan",
+                            zone=zone_for(box, spec.get("zones"), spec.get("roi")))
+                        spot = sighting.get("zone") or sighting["region"]
+                        where = f" ({spot})" if spot else ""
+                        self.activity.add(
+                            "motion",
+                            f"🐱 Still {_shown_label(label)} seen{where} on {cam_label} — tracked, no roll.",
+                            image=snap)
                     self._stop.wait(interval)
                     continue
 
@@ -1018,16 +1035,18 @@ class DetectionLoop:
                     streak = 0
                     self._stop.wait(interval)
                     continue
-                cat_seen_still = False   # a real-motion / live-active frame supersedes the scan edge
 
                 # Motion, not a person: record a cat sighting (if this camera tracks
                 # cats) or just note the mover, throttled, with a snapshot.
                 if not outcome.person:
                     streak = 0
-                    if motion_gate.allow():
-                        snap = self.snapshots.save(detector.annotated_jpeg())
-                        cat = _locator_hit(detector, outcome) if track_cats else None
-                        if cat is not None:
+                    # The cat check comes BEFORE any throttle. It used to sit behind
+                    # the "something moved" gate, so a curtain at t=11 spent the
+                    # budget and a cat plainly detected at t=12 was never recorded.
+                    cat = _locator_hit(detector, outcome) if track_cats else None
+                    if cat is not None:
+                        if cat_gate.allow():
+                            snap = self.snapshots.save(detector.annotated_jpeg())
                             label, score, box = cat
                             sighting = self.cats.record(
                                 name, box, detector.frame_size, score, image=snap, label=label,
@@ -1039,14 +1058,19 @@ class DetectionLoop:
                                 "motion",
                                 f"🐱 {_shown_label(label).capitalize()} seen{where} on {cam_label} — tracked, no roll.",
                                 image=snap)
-                        elif outcome.motion:
-                            # Only a genuine motion frame logs "something moved" —
-                            # a motion-off frame with no cat isn't movement (#101).
-                            what = outcome.labels[0] if outcome.labels else "something"
-                            self.activity.add(
-                                "motion",
-                                f"Non-human motion on {cam_label} — {what} moved.",
-                                image=snap)
+                    elif outcome.motion and motion_gate.allow():
+                        # A mover the net couldn't name. Activity log only, and on
+                        # its OWN throttle — it must never be able to spend the
+                        # budget a cat sighting needs. (Only a genuine motion frame
+                        # counts: a motion-off frame with no cat isn't movement,
+                        # #101.) Kevin keeps these for tuning motion settings —
+                        # some of them are cats too unclear to detect.
+                        snap = self.snapshots.save(detector.annotated_jpeg())
+                        what = outcome.labels[0] if outcome.labels else "something"
+                        self.activity.add(
+                            "motion",
+                            f"Non-human motion on {cam_label} — {what} moved.",
+                            image=snap)
                     self._stop.wait(interval)
                     continue
 

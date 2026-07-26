@@ -123,7 +123,7 @@ def _run_loop(cfg, monkeypatch, tmp_path, seconds=0.4):
     dummy_caster = type("C", (), {"start_keepalive": lambda *a: None, "close": lambda *a: None})()
     monkeypatch.setattr(loopmod.DetectionLoop, "_caster_for", lambda self, cfg: dummy_caster)
     lp = loopmod.DetectionLoop()
-    lp.cats = CatTracker(path=str(tmp_path / "cats.log"))
+    lp.cats = CatTracker(directory=str(tmp_path / "cats"))
     lp.start()
     time.sleep(seconds)
     return lp, treats
@@ -222,7 +222,7 @@ def test_dog_not_recorded_by_default(monkeypatch, tmp_path):
 
 
 def test_cats_record_stores_label(tmp_path):
-    ct = CatTracker(path=str(tmp_path / "c.log"))
+    ct = CatTracker(directory=str(tmp_path / "cats"))
     assert ct.record("Cam", (1, 2, 3, 4), (64, 48), 0.8, label="dog")["label"] == "dog"
     assert ct.record("Cam", (1, 2, 3, 4), (64, 48), 0.8)["label"] == "cat"   # default
 
@@ -305,16 +305,39 @@ def test_still_cat_not_scanned_when_disabled(monkeypatch, tmp_path):
         lp.stop()
 
 
-def test_always_on_scan_dedupes_still_cat(monkeypatch, tmp_path):
-    # cat_scan_interval == 0 = always-on: many scans of the same motionless cat must
-    # record ONE sighting (rising edge), not one per scan.
+def test_every_still_scan_that_finds_her_is_recorded(monkeypatch, tmp_path):
+    # 0.64.0 removed the rising-edge dedup. One row per nap could not be told apart
+    # from "she left unseen thirty seconds later", which is the question the log
+    # exists to answer — and it logged MORE for a flaky detection that kept
+    # re-crossing the threshold than for a solid one. The scan interval controls
+    # volume now, not a dedup rule.
+    global OUTCOMES
+    OUTCOMES = {"rtsp://nap/s": FrameOutcome(False, False, labels=("cat",))}
+    cfg = _base_cfg([_cam("Nap", "rtsp://nap/s", roll=False, track_cats=True)],
+                    cat_scan_interval=0)                 # always-on: a scan per frame
+    lp, _ = _run_loop(cfg, monkeypatch, tmp_path, seconds=0.5)
+    try:
+        rows = lp.cats.recent()
+        assert len(rows) > 1                             # not deduped to one
+        assert all(r["source"] == "still-scan" for r in rows)
+    finally:
+        lp.stop()
+
+
+def test_the_still_scan_sighting_toggle_silences_the_log_but_not_the_scan(
+        monkeypatch, tmp_path):
+    # What makes a 5-second interval usable for testing: the scan still runs and
+    # still reports in the activity log, it just doesn't fill the sightings log.
     global OUTCOMES
     OUTCOMES = {"rtsp://nap/s": FrameOutcome(False, False, labels=("cat",))}
     cfg = _base_cfg([_cam("Nap", "rtsp://nap/s", roll=False, track_cats=True)],
                     cat_scan_interval=0)
+    cfg.log_still_scan_sightings = False
     lp, _ = _run_loop(cfg, monkeypatch, tmp_path, seconds=0.5)
     try:
-        assert len(lp.cats.recent()) == 1
+        assert lp.cats.recent() == []                    # no sightings…
+        scans = [e for e in lp.activity.entries() if e.get("kind") == "scan"]
+        assert scans                                     # …but it plainly ran
     finally:
         lp.stop()
 

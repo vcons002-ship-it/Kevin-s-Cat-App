@@ -30,6 +30,9 @@ snapshot.jpg
 
 # Detection snapshots written at runtime
 snapshots/
+# Cat sightings, one file per day (unbounded history)
+cats/
+cats.log.migrated
 # Screenshots taken by hand from the live feed (kept, never pruned)
 screenshots/
 

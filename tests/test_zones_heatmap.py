@@ -38,10 +38,10 @@ def test_box_in_exit_zone_only_matches_exits():
 
 def test_record_stores_zone_and_old_records_load(tmp_path):
     path = str(tmp_path / "cats.log")
-    t = CatTracker(path=path)
+    t = CatTracker(directory=path)
     t.record("Cam", (150, 120, 190, 160), (640, 360), 0.8, zone="the couch")
     t.record("Cam", (10, 10, 30, 30), (640, 360), 0.7)             # no zone
-    again = CatTracker(path=path)
+    again = CatTracker(directory=path)
     zones = [s.get("zone") for s in again.recent()]
     assert zones == [None, "the couch"]
 
@@ -54,7 +54,7 @@ def _ts_at_hour(hour):
 
 
 def test_by_hour_and_likely_cameras(tmp_path):
-    t = CatTracker(path=str(tmp_path / "cats.log"))
+    t = CatTracker(directory=str(tmp_path / "cats"))
     for _ in range(3):
         t.record("Kitchen", (1, 1, 9, 9), (100, 100), 0.5, ts=_ts_at_hour(15))
     t.record("Bedroom", (1, 1, 9, 9), (100, 100), 0.5, ts=_ts_at_hour(15))
@@ -97,7 +97,7 @@ def _running_loop_with_fake_camera(cam="Room"):
 
 def test_api_cats_exposes_prior(tmp_path):
     loop, _ = _running_loop_with_fake_camera()
-    loop.cats = CatTracker(path=str(tmp_path / "cats.log"))
+    loop.cats = CatTracker(directory=str(tmp_path / "cats"))
     loop.cats.record("Kitchen", (1, 1, 9, 9), (100, 100), 0.5)
     body = create_app(loop).test_client().get("/api/cats").get_json()
     assert len(body["by_hour"]) == 24 and sum(body["by_hour"]) == 1
@@ -106,7 +106,7 @@ def test_api_cats_exposes_prior(tmp_path):
 
 def test_api_heatmap_serves_jpeg_and_degrades(tmp_path):
     loop, det = _running_loop_with_fake_camera()
-    loop.cats = CatTracker(path=str(tmp_path / "cats.log"))
+    loop.cats = CatTracker(directory=str(tmp_path / "cats"))
     c = create_app(loop).test_client()
     det._publish_frame(np.full((360, 640, 3), 110, np.uint8))
     # no sightings yet → 404

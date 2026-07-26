@@ -78,6 +78,7 @@ saturation: 1.0           # colour intensity: 0 = greyscale, 1.0 = off, >1 = pun
 
 # --- Cat check (a still/sleeping cat makes no motion to trip the net) ---
 cat_scan_interval: 30.0   # how often (sec) a cat-tracking camera runs the net even with NO motion, to catch a sleeping cat: >0 = every N seconds (30 default), 0 = always on (net every frame, most CPU), <0 = off (motion only). Measured from the last STILL-SCAN — before 0.62.0 any net run reset it, including motion, so a room with a person in it never scanned at all.
+log_still_scan_sightings: true  # write a sighting every time the still scan finds a cat. ON is the point of the log: repeated rows are how you tell "she stayed in that room for two hours" from "she left unseen after thirty seconds". Turn it off only to run a short interval for testing without filling the log.
 cat_scan_trigger: timer   # "timer" = every cat_scan_interval seconds, whatever else is happening. "quiet" = every interval, but skipped while a cat has already been detected on that camera within the same window (don't hunt for one you just found).
 
 # --- Quiet time (no chimes during this daily window; leave blank to disable) ---

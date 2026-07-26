@@ -73,10 +73,18 @@ measured, not guessed. Per watched camera, for every frame:
    one. The scan can run its own
    **Scan model** (heavier than the live one — it gets one hard static look,
    where live detection gets many frames of a moving cat), and each camera
-   card shows *"still scan: Ns ago — cat found / no cat"*. **Run the still scan**
-   chooses *on a timer* (every interval, whatever else is happening) or *only when
-   no cat was found* (skipped while one has already been detected there in the same
-   window). Frame averaging is currently inert — see the CHANGELOG for 0.62.0.
+   card shows *"still scan: Ns ago — cat found / no cat"*. **Check for a still cat**
+   is `Off | Always | Every [m] [s]`, and **Run the still scan** chooses *on a
+   timer* (every interval, whatever else is happening) or *only when no cat was
+   found* (skipped while one has already been detected there in the same window).
+   Frame averaging is currently inert — see the CHANGELOG for 0.62.0.
+
+   **Every scan that finds her writes a sighting.** That repetition is the point:
+   one row per nap can't be told apart from "she left unseen thirty seconds
+   later", while a row every 15 minutes for two hours says plainly that she stayed
+   put. Volume is controlled by the interval, not by a dedup rule — and **Log
+   still-scan sightings** turns the rows off entirely if you want a short interval
+   for testing.
 
 Nothing else runs on its own. The VLM, the escalation ladder, the temporal
 check — all **on-demand buttons**, and live-camera use of them sits behind an
@@ -141,6 +149,22 @@ that comparison only means anything if the pixels are the ones the detector
 actually judged. Those are kept indefinitely; the automatic
 detection snapshots in the activity log are not. Each camera's chip in **Setup**
 shows how far behind the live edge it is, if it ever falls behind.
+
+**The sightings log.** A row is written when:
+
+| Source | When |
+|---|---|
+| `still-scan` | every periodic scan that finds her |
+| `find` | every "Show me the cat!" that finds her |
+| `motion` | a moving cat — then that **room** is held for 60 s |
+| `track` | fusion confirms a moving cat; shares the same room window |
+
+Nothing else suppresses a sighting. "Something moved" (a mover the net couldn't
+name) goes to the **activity log** only, on its own throttle — it's useful for
+tuning motion settings, and some of those movers are cats too unclear to detect.
+
+History is **unbounded**, one file per day under `cats/`. The card shows the most
+recent 40; **See full log** opens `/sightings`, a day at a time.
 
 ### 🔬 Test detection
 

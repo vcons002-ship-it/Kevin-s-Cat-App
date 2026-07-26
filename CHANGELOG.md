@@ -7,6 +7,54 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 Version numbers below were assigned retroactively (the repo isn't tagged yet);
 everything through the latest entry is on `main`.
 
+## [0.64.0] — 2026-07-25
+
+### Changed
+- **The sightings log has one rule per source instead of four gates you couldn't
+  predict.** Kevin: *"I can never tell when something goes in there."* Fairly, as
+  it turned out — there were five write paths with four different gating rules:
+
+  * **Motion**'s throttle was checked *before anything looked for a cat*, and it
+    was shared with the "something moved" note. So a curtain moving at `t=11`
+    spent the budget and a cat plainly detected at `t=12` never reached the log.
+  * **Still-scan** logged on a rising edge, so a two-hour nap wrote one row —
+    indistinguishable from "she left unseen after thirty seconds", which is the
+    question the log exists to answer. Worse, a *flaky* detection that kept
+    re-crossing the threshold logged **more** rows than a solid one.
+  * **Track fusion** had its own cooldown, so one cat walking through could log a
+    `motion` row and a `track` row seconds apart — two entries, one event.
+
+  Now: **still-scan and find always log if they find her.** A **moving** cat logs
+  and then holds *that room* for 60 s — per camera and nothing else, so a cat
+  tearing around the kitchen has no bearing on whether the office may log. Fusion
+  shares the motion window (keeping its own `track` tag). **"Something moved"
+  never enters the sightings log at all** and keeps its own throttle, so it can no
+  longer suppress a sighting.
+
+  Repetition is now the signal, not noise: a row every scan is how you see that
+  she stayed put. Volume is controlled by the scan interval.
+
+- **Sightings are unbounded, stored one file per day** (`cats/YYYY-MM-DD.jsonl`).
+  The old store kept 500 and truncated the file — roughly one busy day. Startup
+  reads only the newest day or two to fill the in-memory window the GUI shows, so
+  it stays constant-time however much history accumulates, and the full-log page
+  opens exactly the day you asked for. A pre-0.64 `cats.log` is split into daily
+  files once and renamed, never deleted.
+- **Snapshots are unbounded too** (`MAX_FILES = 0`). They pruned at 60 — minutes
+  of history — so scrolling back showed rows with missing pictures.
+
+### Added
+- **`/sightings` — the full log**, one calendar day at a time with a day picker,
+  linked from the Cat-cam card. The card shows the recent 40; this answers "what
+  happened on Tuesday".
+- **A still-scan interval picker**: `Off | Always | Every [m] [s]`, replacing the
+  fixed dropdown that stopped at 5 minutes. One config number still, but the three
+  modes are chosen explicitly — "0m 0s" silently meaning "run the net on every
+  frame" would have been a nasty surprise.
+- **"Log still-scan sightings"** toggle. Off, the scan still runs and still writes
+  its activity-log line; it just doesn't write sightings. That's what makes a
+  5-second interval usable for testing.
+
 ## [0.63.0] — 2026-07-25
 
 ### Changed

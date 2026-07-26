@@ -5,9 +5,14 @@ drop them silently it records each sighting here so the GUI can answer "show me
 the cat" — when it was seen, on which camera, roughly where in the frame, and an
 annotated snapshot.
 
-Mirrors :class:`d20app.activitylog.ActivityLog`: a thread-safe, bounded,
-file-backed list so the history survives a restart, with best-effort disk I/O
-that never breaks the detection loop.
+Storage is **one file per day** (``cats/YYYY-MM-DD.jsonl``) and unbounded: the
+whole point of the log is answering "did she stay in that room all afternoon?",
+which a rolling window of the last N sightings cannot do. Daily files keep that
+affordable — startup reads only the newest day or two to fill the in-memory
+window the GUI shows, and the full-log viewer opens exactly the day you asked
+for instead of scanning a year of history to find it.
+
+Disk I/O is best-effort throughout and never breaks the detection loop.
 
 Each sighting carries a ``camera`` field even though the app watches one camera
 today — that's the seam for the planned multi-camera "show cat" (switch the live
@@ -25,9 +30,19 @@ from collections import deque
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_PKG_DIR)
 
-# cats.log lives at the repo root next to config.yaml (override for tests).
-CATS_PATH = os.environ.get("D20_CATS_LOG", os.path.join(_REPO_ROOT, "cats.log"))
-MAX_SIGHTINGS = 500
+# One file per day under cats/, at the repo root next to config.yaml.
+CATS_DIR = os.environ.get("D20_CATS_DIR", os.path.join(_REPO_ROOT, "cats"))
+# The single-file store this replaced; split into daily files once, then left alone.
+LEGACY_CATS_PATH = os.environ.get("D20_CATS_LOG", os.path.join(_REPO_ROOT, "cats.log"))
+# How many recent sightings stay in memory. NOT a retention limit — the files keep
+# everything. This only bounds what the GUI card and the time-of-day prior read,
+# so startup stays constant-time however much history has accumulated.
+MEMORY_SIGHTINGS = 2000
+
+
+def day_key(ts: float) -> str:
+    """The local calendar day a timestamp belongs to — the filename stem."""
+    return time.strftime("%Y-%m-%d", time.localtime(ts))
 
 
 def describe_region(box, frame_size) -> str:
@@ -87,54 +102,104 @@ def box_in_exit_zone(box, zones, roi=None) -> bool:
 
 
 class CatTracker:
-    """A thread-safe, bounded, file-backed list of cat sightings."""
+    """Thread-safe, file-backed cat sightings — unbounded history, one file per day."""
 
-    def __init__(self, path: str = CATS_PATH, max_sightings: int = MAX_SIGHTINGS) -> None:
-        self.path = path
-        self.max_sightings = max_sightings
+    def __init__(self, directory: str = CATS_DIR,
+                 memory: int = MEMORY_SIGHTINGS,
+                 legacy_path: str = LEGACY_CATS_PATH) -> None:
+        self.directory = directory
+        self.memory = memory
+        self.legacy_path = legacy_path
         self._lock = threading.Lock()
-        self._sightings: deque = deque(maxlen=max_sightings)
+        self._sightings: deque = deque(maxlen=memory)
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError:
+            pass
+        self._migrate_legacy()
         self._load()
 
     # -- persistence ---------------------------------------------------------
-    def _load(self) -> None:
-        if not self.path or not os.path.exists(self.path):
-            return
-        total = 0
-        try:
-            with open(self.path, "r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        s = json.loads(line)
-                    except ValueError:
-                        continue
-                    if isinstance(s, dict) and "ts" in s:
-                        total += 1
-                        self._sightings.append(s)
-        except OSError:
-            return
-        if total > self.max_sightings:
-            self._rewrite()
+    def _day_path(self, key: str) -> str:
+        return os.path.join(self.directory, f"{key}.jsonl")
 
-    def _append_to_file(self, sighting: dict) -> None:
-        if not self.path:
-            return
+    def days(self) -> list:
+        """Every day that has sightings, newest first (``["2026-07-25", …]``)."""
         try:
-            with open(self.path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(sighting) + "\n")
+            names = os.listdir(self.directory)
+        except OSError:
+            return []
+        return sorted((n[:-6] for n in names if n.endswith(".jsonl")), reverse=True)
+
+    @staticmethod
+    def _read(path: str, limit: int | None = None) -> list:
+        """Sightings from one day file, oldest first. ``limit`` keeps only the tail.
+
+        The deque trick bounds MEMORY on a pathological day (Always-mode scanning
+        can write thousands of rows) without needing to know the length first.
+        """
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                lines = deque(fh, maxlen=limit) if limit else fh.readlines()
+        except OSError:
+            return []
+        out = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                s = json.loads(line)
+            except ValueError:
+                continue                      # a torn final line survives a crash
+            if isinstance(s, dict) and "ts" in s:
+                out.append(s)
+        return out
+
+    def _load(self) -> None:
+        """Fill the in-memory window from the newest days backwards.
+
+        Constant-time in the size of the history: it stops as soon as the window
+        is full, so a year of files costs the same as a week.
+        """
+        collected: list = []
+        for key in self.days():
+            need = self.memory - len(collected)
+            if need <= 0:
+                break
+            collected = self._read(self._day_path(key), limit=need) + collected
+        with self._lock:
+            self._sightings.clear()
+            self._sightings.extend(collected[-self.memory:])
+
+    def _migrate_legacy(self) -> None:
+        """Split a pre-0.64 ``cats.log`` into daily files, once.
+
+        Renamed rather than deleted afterwards — losing someone's sighting history
+        to a migration would be unforgivable, and the file is small.
+        """
+        path = self.legacy_path
+        if not path or not os.path.exists(path):
+            return
+        if self.days():
+            return                            # already migrated (or a fresh install)
+        by_day: dict = {}
+        for s in self._read(path):
+            by_day.setdefault(day_key(s.get("ts", 0)), []).append(s)
+        try:
+            for key, items in by_day.items():
+                with open(self._day_path(key), "a", encoding="utf-8") as fh:
+                    for s in items:
+                        fh.write(json.dumps(s) + "\n")
+            os.replace(path, path + ".migrated")
         except OSError:
             pass
 
-    def _rewrite(self) -> None:
-        if not self.path:
-            return
+    def _append_to_file(self, sighting: dict) -> None:
         try:
-            with open(self.path, "w", encoding="utf-8") as fh:
-                for s in self._sightings:
-                    fh.write(json.dumps(s) + "\n")
+            with open(self._day_path(day_key(sighting["ts"])), "a",
+                      encoding="utf-8") as fh:
+                fh.write(json.dumps(sighting) + "\n")
         except OSError:
             pass
 
@@ -232,10 +297,23 @@ class CatTracker:
         return self.count_since(midnight)
 
     def clear(self) -> None:
+        """Wipe every sighting, in memory and on disk. Deliberately total: the GUI
+        offers this as "Clear log", and leaving old days behind for the full-log
+        viewer to still show would make the button a lie."""
         with self._lock:
             self._sightings.clear()
-            if self.path and os.path.exists(self.path):
+            for key in self.days():
                 try:
-                    open(self.path, "w").close()
+                    os.remove(self._day_path(key))
                 except OSError:
                     pass
+
+    def day(self, key: str) -> list:
+        """Every sighting for one calendar day, newest first — the full-log view.
+
+        Reads exactly that day's file, so it costs the same whether the app has a
+        week of history or five years.
+        """
+        if not key or any(c in key for c in "/\\.") or len(key) != 10:
+            return []                          # a filename, not a path
+        return list(reversed(self._read(self._day_path(key))))

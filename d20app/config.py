@@ -79,6 +79,7 @@ class Config:
     # --- Still-cat scan settings (#101/#102): GLOBAL, not per-camera — one
     # coherent "check for still cat" group. The scan gets ONE hard static look, so
     # it wants its own heavy model/tiling regardless of a camera's live settings.
+    log_still_scan_sightings: bool = True   # write a sighting every time a still-scan finds a cat. ON is the point of the log: repetition is how you tell "she stayed in that room for two hours" from "she left unseen after thirty seconds". Turn it off only to run a short interval for testing without filling the log.
     cat_scan_trigger: str = "timer"       # WHEN the still-cat scan runs. "timer" = every cat_scan_interval seconds, full stop. "quiet" = every cat_scan_interval seconds, but only while no cat has been detected on that camera within the same window — don't go looking for a cat we just found. Before 0.62.0 the cadence was reset by ANY net run, including motion, so a busy room (a person at a desk) suppressed the still-scan entirely — which is exactly the room where a sleeping cat goes unseen.
     cat_scan_model: str = ""             # "" = each camera's own live model; else a specific heavy model for the scan (#94)
     cat_scan_confidence: float = 0.0     # cat threshold for the scan; 0 = use each camera's cat_confidence

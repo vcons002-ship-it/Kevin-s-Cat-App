@@ -67,7 +67,10 @@ def test_cat_cam_controls_were_relocated_into_the_popup():
     # (scan_frames was removed in 0.62.0 — the frame averaging it controls stopped
     #  running when network cameras moved to the continuous-read path in 0.59.0, so
     #  the control was advertising a setting that did nothing.)
-    moved = ["cat_scan_interval", "cat_scan_model", "scan_tiling",
+    # (cat_scan_interval became cat_scan_mode + scan_every_min/sec in 0.64.0 — one
+    #  config number, but three modes the boxes alone can't express.)
+    moved = ["cat_scan_mode", "scan_every_min", "scan_every_sec",
+             "log_still_scan_sightings", "cat_scan_model", "scan_tiling",
              "scan_tile_overlap", "scan_confidence",
              "find_scan", "find_model", "find_tiling", "find_tile_overlap",
              "find_confidence"]

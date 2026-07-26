@@ -29,7 +29,7 @@ class _Alive:
 def _loop(tmp_path, cams=("Room", "Kitchen")):
     loop = DetectionLoop()
     loop._thread = _Alive()
-    loop.cats = CatTracker(path=str(tmp_path / "cats.log"))
+    loop.cats = CatTracker(directory=str(tmp_path / "cats"))
     loop.snapshots = SnapshotStore(directory=str(tmp_path / "snaps"))
     # Register the cameras in config so the find endpoint's watched-set filter
     # (#103, camera_targets) recognises them as watched.

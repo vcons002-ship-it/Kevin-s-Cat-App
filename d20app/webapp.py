@@ -13,6 +13,7 @@ Serves the config page plus JSON endpoints:
   POST /api/stop       -> stop the detection loop
   GET  /api/status     -> live loop status (running, last roll, counts)
   GET  /api/stream     -> live MJPEG feed (?camera=<name> selects which camera)
+  GET  /sightings     -> the full sightings log, one day at a time
   GET  /api/diagnostics/detectors -> live detector settings vs the saved config
   POST /api/live/screenshot -> save the current picture of a camera, to keep
   POST /api/cameras/active -> set which saved cameras are watched at once
@@ -229,6 +230,49 @@ _BENCH_MAX_RUNS = 24            # cap the matrix so one request can't run foreve
 # /guide: a deliberately tiny markdown-to-HTML converter — headings, bold/italic,
 # inline + fenced code, lists, links, hr. Enough for docs/USER_GUIDE.md; NOT a
 # general renderer (tables/images/nesting unsupported — keep the guide simple).
+_SIGHTINGS_PAGE = """<!doctype html><meta charset="utf-8">
+<title>Sightings — {day}</title>
+<style>
+ body {{ margin:0; background:#0f1320; color:#e8ecf6; line-height:1.45;
+        font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }}
+ main {{ max-width:900px; margin:0 auto; padding:24px 16px 60px; }}
+ h1 {{ font-size:1.4rem; margin:0 0 4px; }}
+ .sub {{ color:#8b93a7; font-size:.9rem; margin:0 0 16px; }}
+ form {{ margin:0 0 16px; }}
+ select {{ background:#1a2032; color:#e8ecf6; border:1px solid #2a3350;
+          border-radius:8px; padding:6px 10px; font:inherit; }}
+ table {{ border-collapse:collapse; width:100%; background:#1a2032;
+         border:1px solid #2a3350; border-radius:12px; overflow:hidden; }}
+ th, td {{ padding:8px 10px; border-bottom:1px solid #2a3350; text-align:left;
+          font-size:.9rem; vertical-align:middle; }}
+ th {{ color:#8b93a7; font-weight:600; font-size:.8rem; text-transform:uppercase;
+      letter-spacing:.04em; }}
+ tr:last-child td {{ border-bottom:0; }}
+ td.t {{ font-variant-numeric:tabular-nums; white-space:nowrap; }}
+ td.n {{ font-variant-numeric:tabular-nums; text-align:right; }}
+ td.empty {{ color:#8b93a7; text-align:center; padding:28px; }}
+ img {{ width:120px; height:68px; object-fit:cover; border-radius:6px;
+       border:1px solid #2a3350; cursor:zoom-in; display:block; }}
+ .noimg {{ display:block; width:120px; height:68px; border-radius:6px;
+          background:#0f1320; border:1px solid #2a3350; }}
+ a {{ color:#6cd0ff; }}
+</style>
+<main>
+ <h1>🐾 Sightings — {day}</h1>
+ <p class="sub">{count} recorded · {summary} · <a href="/">back to the app</a></p>
+ <form method="get">
+   <select name="day" onchange="this.form.submit()">{options}</select>
+   <noscript><button type="submit">Show</button></noscript>
+ </form>
+ <table>
+  <tr><th></th><th>Time</th><th>Camera</th><th>Where</th><th>How</th>
+      <th>Label</th><th>Score</th></tr>
+  {rows}
+ </table>
+</main>
+"""
+
+
 _GUIDE_STYLE = (
     "<!DOCTYPE html><html><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width, initial-scale=1'>"
@@ -1016,6 +1060,46 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     def api_version():
         return jsonify({"version": __version__})
 
+    @app.get("/sightings")
+    def sightings_page():
+        """The full sightings log, one calendar day at a time.
+
+        A page rather than a panel in the GUI: the card shows the recent handful,
+        this answers "what happened on Tuesday". Reads exactly one day's file, so
+        it costs the same at five years of history as at five days.
+        """
+        cats = app.config["loop"].cats
+        days = cats.days()
+        day = request.args.get("day") or (days[0] if days else
+                                          time.strftime("%Y-%m-%d"))
+        rows = cats.day(day)
+        opts = "".join(
+            f'<option value="{esc(d)}"{" selected" if d == day else ""}>{esc(d)}</option>'
+            for d in days) or '<option>(none yet)</option>'
+        body = []
+        for r in rows:
+            spot = esc(str(r.get("zone") or r.get("region") or ""))
+            img = (f'<img src="/snapshots/{esc(str(r["image"]))}" alt="" '
+                   f'onclick="window.open(this.src)"/>' if r.get("image")
+                   else '<span class="noimg"></span>')
+            body.append(
+                f'<tr><td>{img}</td>'
+                f'<td class="t">{esc(time.strftime("%H:%M:%S", time.localtime(r.get("ts", 0))))}</td>'
+                f'<td>{esc(str(r.get("camera") or ""))}</td>'
+                f'<td>{spot}</td>'
+                f'<td>{esc(str(r.get("source") or ""))}</td>'
+                f'<td>{esc(str(r.get("label") or ""))}</td>'
+                f'<td class="n">{float(r.get("score") or 0):.2f}</td></tr>')
+        counts: dict = {}
+        for r in rows:
+            counts[r.get("camera") or "?"] = counts.get(r.get("camera") or "?", 0) + 1
+        summary = " · ".join(f"{esc(str(c))} {n}" for c, n in
+                             sorted(counts.items(), key=lambda kv: -kv[1])) or "nothing"
+        return Response(_SIGHTINGS_PAGE.format(
+            day=esc(day), options=opts, rows="".join(body) or
+            '<tr><td colspan="7" class="empty">No sightings recorded this day.</td></tr>',
+            count=len(rows), summary=summary), mimetype="text/html")
+
     @app.get("/guide")
     def guide():
         # The user & workflow guide (docs/USER_GUIDE.md) served in-app so "what does
@@ -1473,7 +1557,7 @@ def create_app(loop: DetectionLoop | None = None) -> Flask:
     # -- cat sightings ("show cat") -----------------------------------------
     @app.get("/api/cats")
     def api_cats():
-        limit = request.args.get("limit", default=20, type=int)
+        limit = request.args.get("limit", default=40, type=int)
         loop = app.config["loop"]
         return jsonify({
             "last": loop.cats.last(),

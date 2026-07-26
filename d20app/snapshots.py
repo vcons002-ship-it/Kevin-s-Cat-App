@@ -16,7 +16,10 @@ _REPO_ROOT = os.path.dirname(_PKG_DIR)
 SNAPSHOTS_DIR = os.environ.get(
     "D20_SNAPSHOTS_DIR", os.path.join(_REPO_ROOT, "snapshots")
 )
-MAX_FILES = 60
+# 0 = keep everything. Sightings are unbounded (see cats.py) and each row shows
+# its snapshot, so pruning these would leave older rows with missing pictures —
+# exactly when you're scrolling back to see what actually happened.
+MAX_FILES = 0
 
 
 class SnapshotStore:
@@ -54,6 +57,8 @@ class SnapshotStore:
         return os.path.join(self.directory, name)
 
     def _prune(self) -> None:
+        if self.max_files <= 0:
+            return                      # unbounded: a sighting keeps its picture
         try:
             files = [
                 os.path.join(self.directory, f)

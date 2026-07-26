@@ -121,7 +121,7 @@ def _running_loop(tmp_path, cam="Room"):
     det = PersonDetector(source="unused")
     loop._detectors = {cam: det}
     loop._live_name = cam
-    loop.cats = CatTracker(path=str(tmp_path / "cats.log"))   # isolate from repo file
+    loop.cats = CatTracker(directory=str(tmp_path / "cats"))   # isolate from repo file
     return loop, det
 
 
@@ -133,7 +133,7 @@ def test_boost_detection_passes_the_box_to_the_detector(tmp_path):
 
 
 def test_last_for_picks_the_camera(tmp_path):
-    t = CatTracker(path=str(tmp_path / "c.log"))
+    t = CatTracker(directory=str(tmp_path / "cats"))
     t.record("A", (1, 1, 5, 5), (100, 100), 0.5)
     t.record("B", (2, 2, 6, 6), (100, 100), 0.6)
     t.record("A", (3, 3, 7, 7), (100, 100), 0.7)

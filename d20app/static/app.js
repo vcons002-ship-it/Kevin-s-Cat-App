@@ -536,8 +536,9 @@ async function loadConfig() {
   $("round_robin").checked = !!cfg.round_robin;
   $("round_robin_size").value = cfg.round_robin_size;
   $("round_robin_interval").value = cfg.round_robin_interval;
-  if ($("cat_scan_interval") && cfg.cat_scan_interval !== undefined && cfg.cat_scan_interval !== null)
-    $("cat_scan_interval").value = String(cfg.cat_scan_interval);
+  setScanInterval(cfg.cat_scan_interval);
+  if ($("log_still_scan_sightings"))
+    $("log_still_scan_sightings").checked = cfg.log_still_scan_sightings !== false;
   $("use_speech").checked = !!cfg.use_speech;
   if (cfg.speech_text) $("speech_text").value = cfg.speech_text;
   applySpeechVisibility();
@@ -592,7 +593,8 @@ function gatherConfig() {
     round_robin: $("round_robin").checked,
     round_robin_size: Number($("round_robin_size").value),
     round_robin_interval: Number($("round_robin_interval").value),
-    cat_scan_interval: Number($("cat_scan_interval").value),
+    cat_scan_interval: readScanInterval(),
+    log_still_scan_sightings: $("log_still_scan_sightings").checked,
     quiet_start: $("quiet_start").value,
     quiet_end: $("quiet_end").value,
     dont_interrupt_playback: $("dont_interrupt_playback").checked,
@@ -941,6 +943,39 @@ function updateSecondFeed(slot) {
   }
 }
 
+// The still-scan interval is ONE number in the config, with two special values:
+// -1 off, 0 always-on (net every frame). Minutes-and-seconds boxes can't express
+// those — and "0m 0s" silently meaning "run on every single frame" would be a
+// nasty surprise — so the mode is picked explicitly and the boxes only apply to
+// "Every…".
+function setScanInterval(seconds) {
+  const mode = $("cat_scan_mode");
+  if (!mode) return;
+  const v = Number(seconds);
+  const every = Number.isFinite(v) && v > 0 ? v : 900;   // remember a sane gap
+  mode.value = v < 0 ? "off" : v === 0 ? "always" : "every";
+  $("scan_every_min").value = Math.floor(every / 60);
+  $("scan_every_sec").value = Math.round(every % 60);
+  syncScanIntervalRow();
+}
+
+function readScanInterval() {
+  const mode = $("cat_scan_mode");
+  if (!mode) return 30;
+  if (mode.value === "off") return -1;
+  if (mode.value === "always") return 0;
+  const secs = Number($("scan_every_min").value || 0) * 60
+    + Number($("scan_every_sec").value || 0);
+  // "Every 0s" would mean always-on, which is a different mode entirely — floor
+  // it rather than silently switching the user into the most expensive setting.
+  return Math.max(1, secs);
+}
+
+function syncScanIntervalRow() {
+  const row = $("scan-every-row"), mode = $("cat_scan_mode");
+  if (row && mode) row.style.display = mode.value === "every" ? "" : "none";
+}
+
 // ---- cat sightings ("show cat") --------------------------------------------
 // Rotation: when Show-cat is engaged and >1 camera is seeing a cat, cycle the
 // live feed between those rooms. `catRotate` is armed by showCat() and disarmed
@@ -1048,7 +1083,7 @@ async function loadCats() {
 // How many sightings the log renders. The list is height-capped and scrolls, so
 // this is "how deep the history goes", not "how many fit on screen" — raise it
 // (and the server's /api/cats?limit=) to keep more.
-const SIGHTINGS_SHOWN = 20;
+const SIGHTINGS_SHOWN = 40;
 
 // #93: the cats-only sightings log — every entry tagged with HOW it was found
 // (motion / still-scan / track / find / zoom+yolo…), images open in the lightbox.
@@ -2143,7 +2178,11 @@ function wire() {
     updateSecondFeed(null);   // #116: move the 2nd feed off a collision with this one
     refreshStatus();
   };
-  $("cat_scan_interval").onchange = saveConfig;
+  for (const id of ["cat_scan_mode", "scan_every_min", "scan_every_sec",
+                    "log_still_scan_sightings"]) {
+    const el = $(id);
+    if (el) el.onchange = () => { syncScanIntervalRow(); saveConfig(); };
+  }
   $("live-img").onerror = () => { if (liveOn) { liveOn = false; $("live-img").classList.add("hidden"); } };
 
   // #102 save-behavior audit: every setting on the page auto-saves on change,
